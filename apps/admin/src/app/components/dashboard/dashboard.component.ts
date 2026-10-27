@@ -147,6 +147,15 @@ import {
           >
             🔌 Offline
           </button>
+
+          <button
+            class="btn btn-sm"
+            style="background: linear-gradient(135deg, #06b6d4, #2563eb); color: #fff; border: none; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 10px rgba(6, 182, 212, 0.3); margin-left: auto;"
+            (click)="openMessageModal('all')"
+            title="Broadcast instant screen message to all connected PCs"
+          >
+            📢 Broadcast to All PCs
+          </button>
         </div>
       </div>
 
@@ -252,6 +261,14 @@ import {
               </button>
               <div class="pc-secondary-actions">
                 <button
+                  class="btn btn-action-subtle"
+                  style="color: var(--accent-cyan); border-color: rgba(6, 182, 212, 0.35);"
+                  (click)="openMessageModal(pc)"
+                  title="Flash instant giant message on this PC screen"
+                >
+                  💬 Msg
+                </button>
+                <button
                   class="btn btn-action-subtle warning"
                   (click)="handleStaffPause(pc)"
                   title="Pause session and save remaining time"
@@ -284,23 +301,43 @@ import {
               >
                 ▶ Assign & Start Session
               </button>
-              <button
-                class="btn btn-action-subtle lock full-width"
-                (click)="toggleLock(pc)"
-                title="Lock terminal"
-              >
-                🔒 Lock Station
-              </button>
+              <div style="display:grid; grid-template-columns: 1fr auto; gap:6px; margin-top:6px;">
+                <button
+                  class="btn btn-action-subtle lock"
+                  (click)="toggleLock(pc)"
+                  title="Lock terminal"
+                >
+                  🔒 Lock Station
+                </button>
+                <button
+                  class="btn btn-action-subtle"
+                  style="color: var(--accent-cyan); border-color: rgba(6, 182, 212, 0.35); padding: 0 12px;"
+                  (click)="openMessageModal(pc)"
+                  title="Flash instant giant message on this PC screen"
+                >
+                  💬 Msg
+                </button>
+              </div>
             </ng-container>
 
             <!-- If Locked -->
             <ng-container *ngIf="pc.status === 'locked'">
-              <button
-                class="btn btn-primary-unlock"
-                (click)="toggleLock(pc)"
-              >
-                🔓 Unlock Station
-              </button>
+              <div style="display:grid; grid-template-columns: 1fr auto; gap:6px;">
+                <button
+                  class="btn btn-primary-unlock"
+                  (click)="toggleLock(pc)"
+                >
+                  🔓 Unlock Station
+                </button>
+                <button
+                  class="btn btn-action-subtle"
+                  style="color: var(--accent-cyan); border-color: rgba(6, 182, 212, 0.35); padding: 0 14px;"
+                  (click)="openMessageModal(pc)"
+                  title="Flash instant giant message on this PC screen"
+                >
+                  💬 Msg
+                </button>
+              </div>
             </ng-container>
 
             <!-- If Offline -->
@@ -576,6 +613,130 @@ import {
           </div>
         </div>
       </div>
+
+      <!-- Modal: Send Screen Announcement to PC(s) -->
+      <div *ngIf="messageModalTarget !== null" class="modal-backdrop">
+        <div class="modal-dialog" style="max-width: 540px;">
+          <div class="modal-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.4rem;">💬</span>
+              <h3 class="modal-title-text">
+                {{ messageModalTarget === 'all' ? 'Broadcast Message to All PCs' : 'Message to ' + getTargetPcName() }}
+              </h3>
+            </div>
+            <button class="btn btn-sm btn-secondary" (click)="closeMessageModal()">✕</button>
+          </div>
+
+          <div class="modal-body">
+            <!-- Info notice explaining the 8s popup -->
+            <div style="background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.25); border-radius: var(--radius-md); padding: 12px 14px; margin-bottom: 16px; font-size: 0.84rem; color: #cbd5e1; display: flex; align-items: flex-start; gap: 10px;">
+              <span style="font-size: 1.2rem; line-height: 1;">📢</span>
+              <div>
+                <strong style="color: var(--accent-cyan);">Screen Flash Announcement:</strong>
+                Mogawas dayon kini sa screen sa customer nga <strong>dako kaayong text</strong> ug <strong>awtomatikong mawala human sa {{ announcementDuration }} seconds</strong> (walay kailangan i-click ang customer).
+              </div>
+            </div>
+
+            <!-- Target Selection -->
+            <div class="form-group" style="margin-bottom: 14px;">
+              <label class="form-label">Target Terminals</label>
+              <select
+                class="form-select"
+                [ngModel]="messageModalTarget === 'all' ? 'all' : messageModalTarget.id"
+                (ngModelChange)="onMessageTargetChange($event)"
+              >
+                <option value="all">📢 All PCs (Broadcast to Entire Fleet)</option>
+                <option *ngFor="let p of state.pcs" [value]="p.id">
+                  🖥️ {{ p.name }} ({{ p.identifier }}) — {{ p.status | uppercase }}
+                  {{ p.activeCustomerName ? ' • ' + p.activeCustomerName : '' }}
+                </option>
+              </select>
+            </div>
+
+            <!-- Quick Preset Chips -->
+            <div class="form-group" style="margin-bottom: 14px;">
+              <label class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Quick Preset Messages (Click to fill)</span>
+                <span style="font-size: 0.72rem; color: var(--text-dim); text-transform: none;">Convenient Bisaya Prompts</span>
+              </label>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;">
+                <button
+                  type="button"
+                  *ngFor="let preset of announcementPresets"
+                  class="btn btn-sm btn-secondary"
+                  style="font-size: 0.76rem; padding: 5px 10px; border-radius: 9999px; text-align: left; background: rgba(255,255,255,0.04);"
+                  (click)="announcementText = preset.text"
+                >
+                  {{ preset.label }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Custom Message Textarea -->
+            <div class="form-group" style="margin-bottom: 16px;">
+              <label class="form-label">Message Content (Visible in GIANT text)</label>
+              <textarea
+                class="form-input"
+                rows="3"
+                placeholder="I-type diri ang imong mensahe sa customer..."
+                [(ngModel)]="announcementText"
+                style="font-size: 1rem; line-height: 1.4; resize: vertical;"
+                autofocus
+              ></textarea>
+              <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-dim); margin-top: 4px;">
+                <span>Tip: Gamita ang mubo ug diretsong mensahe para daling mabasa.</span>
+                <span>{{ announcementText.length }} characters</span>
+              </div>
+            </div>
+
+            <!-- Duration Selection -->
+            <div class="form-group" style="margin-bottom: 8px;">
+              <label class="form-label">Display Duration on Screen</label>
+              <div style="display: flex; gap: 10px;">
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
+                  <input type="radio" name="annDuration" [value]="8" [(ngModel)]="announcementDuration" /> 8 Seconds (Default)
+                </label>
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
+                  <input type="radio" name="annDuration" [value]="12" [(ngModel)]="announcementDuration" /> 12 Seconds
+                </label>
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
+                  <input type="radio" name="annDuration" [value]="15" [(ngModel)]="announcementDuration" /> 15 Seconds
+                </label>
+              </div>
+            </div>
+
+            <!-- Live Preview -->
+            <div *ngIf="announcementText.trim()" style="margin-top: 14px; background: #000; border: 1px dashed rgba(6, 182, 212, 0.4); border-radius: var(--radius-md); padding: 16px; text-align: center;">
+              <div style="font-size: 0.7rem; color: var(--accent-cyan); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 6px;">
+                Screen Preview (What Player Sees):
+              </div>
+              <div style="font-size: 1.25rem; font-weight: 900; color: #fff; text-shadow: 0 0 10px rgba(34, 211, 238, 0.8); line-height: 1.3;">
+                {{ announcementText }}
+              </div>
+            </div>
+
+            <!-- Feedback message -->
+            <div *ngIf="messageFeedback" [style.background]="messageFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)'" [style.color]="messageFeedback.type === 'success' ? '#6ee7b7' : '#fca5a5'" style="margin-top: 12px; padding: 10px 14px; border-radius: 8px; font-size: 0.85rem; border: 1px solid currentColor;">
+              {{ messageFeedback.text }}
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-secondary" (click)="closeMessageModal()" [disabled]="isSendingMessage">
+              Cancel
+            </button>
+            <button
+              class="btn btn-primary"
+              style="background: linear-gradient(135deg, #06b6d4, #2563eb); font-weight: 800;"
+              [disabled]="!announcementText.trim() || isSendingMessage"
+              (click)="confirmSendMessage()"
+            >
+              <span *ngIf="isSendingMessage">Sending...</span>
+              <span *ngIf="!isSendingMessage">🚀 Send to Screen ({{ announcementDuration }}s)</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   `,
   styles: [`
@@ -598,6 +759,22 @@ export class DashboardComponent implements OnInit, OnDestroy {
   paymentMethod: PaymentMethod = 'cash';
   isSubmittingPayment = false;
   endConfirmPc: PC | null = null;
+
+  // Announcement / Messaging Modal State
+  messageModalTarget: PC | 'all' | null = null;
+  announcementText = '';
+  announcementDuration = 8;
+  isSendingMessage = false;
+  messageFeedback: { text: string; type: 'success' | 'error' } | null = null;
+
+  announcementPresets = [
+    { label: '📢 Hapit Na Manira', text: 'HAPIT NA KITA MANIRA SA ARTEMIA PISONET. PALIHUG I-SAVE NA ANG INYONG MGA DUWA!' },
+    { label: '🔊 Hinayi Tingog / Headset', text: 'PALIHUG HINAYI ANG INYONG TINGOG O GAMITA ANG HEADSET ARON DILI MAKA-SAMOK SA UBAN.' },
+    { label: '👤 Duol sa Counter', text: 'PALIHUG DUOL KADIYOT DIRI SA COUNTER OPERATOR.' },
+    { label: '⚠️ System Restart Taud-taud', text: 'ADUNAY SYSTEM MAINTENANCE / RESTART SULOD SA 5 MINUTOS. PALIHUG I-SAVE ANG DUWA.' },
+    { label: '🛑 Human Na ang Session', text: 'HUMAN NA ANG IMONG PLAYING TIME. PALIHUG DUOL SA COUNTER KUNG GUSTO KA MO-EXTEND.' },
+    { label: '🎮 Enjoy Gaming!', text: 'ENJOY GAMING SA ARTEMIA PISONET! DUOL LANG SA COUNTER KUNG NAY PANGUTANA.' }
+  ];
 
   constructor(public adminState: AdminStateService) {}
 
@@ -800,5 +977,67 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.adminState.purchasePackage(this.quickTopUpCustomer.id, this.quickTopUpPackageId, this.quickTopUpPaymentMethod);
     this.isSubmittingQuickTopUp = false;
     this.quickTopUpCustomer = null;
+  }
+
+  // Announcement Action Methods
+  openMessageModal(target: PC | 'all') {
+    this.messageModalTarget = target;
+    this.announcementText = '';
+    this.announcementDuration = 8;
+    this.messageFeedback = null;
+    this.isSendingMessage = false;
+  }
+
+  closeMessageModal() {
+    this.messageModalTarget = null;
+    this.announcementText = '';
+    this.messageFeedback = null;
+  }
+
+  getTargetPcName(): string {
+    if (!this.messageModalTarget || this.messageModalTarget === 'all') return 'All PCs';
+    return this.messageModalTarget.name || this.messageModalTarget.identifier || 'PC';
+  }
+
+  onMessageTargetChange(targetId: string) {
+    if (targetId === 'all') {
+      this.messageModalTarget = 'all';
+    } else {
+      const pc = this.state.pcs.find(p => p.id === targetId);
+      if (pc) {
+        this.messageModalTarget = pc;
+      }
+    }
+  }
+
+  async confirmSendMessage() {
+    if (!this.announcementText.trim() || this.isSendingMessage) return;
+    this.isSendingMessage = true;
+    this.messageFeedback = null;
+
+    const targetPcId = this.messageModalTarget === 'all' ? 'all' : (this.messageModalTarget?.id || 'all');
+    const result = await this.adminState.sendPcAnnouncement(
+      targetPcId,
+      this.announcementText.trim(),
+      this.announcementDuration
+    );
+
+    this.isSendingMessage = false;
+    if (result.success) {
+      this.messageFeedback = {
+        type: 'success',
+        text: `✓ Mensahe malampusong napadala! Mogawas kini sa screen sulod sa ${this.announcementDuration} seconds.`
+      };
+      setTimeout(() => {
+        if (this.messageFeedback?.type === 'success') {
+          this.closeMessageModal();
+        }
+      }, 1500);
+    } else {
+      this.messageFeedback = {
+        type: 'error',
+        text: result.error || 'Failed to send message.'
+      };
+    }
   }
 }

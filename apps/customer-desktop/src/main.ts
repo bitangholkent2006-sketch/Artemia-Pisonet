@@ -21,6 +21,8 @@ interface WindowWithDesktop extends Window {
     cancelShutdown: () => Promise<boolean>;
     restoreWindow: () => Promise<void>;
     setOverlaySize: (width: number, height: number) => Promise<boolean>;
+    showAnnouncement?: (durationSeconds?: number) => Promise<boolean>;
+    hideAnnouncement?: () => Promise<boolean>;
   };
 }
 
@@ -92,6 +94,7 @@ class CustomerDesktopApp {
   private expiredNotice: boolean = false;
   private shutdownCountdown: number = 15;
   private shutdownInterval: any = null;
+  private announcementTimeout: any = null;
 
   private sessionInterval: any = null;
 
@@ -354,6 +357,20 @@ class CustomerDesktopApp {
           this.syncCustomerState();
         }
       });
+
+      // Real-time flash screen announcement from operator (Giant text, auto-dismiss in 8s)
+      this.socket.on('pc:announcement', (data: { targetPcId?: string; message: string; durationSeconds?: number; sender?: string }) => {
+        if (!data || !data.message) return;
+        const isTargeted =
+          !data.targetPcId ||
+          data.targetPcId === 'all' ||
+          data.targetPcId === this.currentPcId ||
+          data.targetPcId.toLowerCase() === this.currentPcId.toLowerCase();
+
+        if (isTargeted) {
+          this.displayAnnouncement(data.message, data.durationSeconds || 8, data.sender);
+        }
+      });
     } catch (e) {
       console.warn('Socket initialization error:', e);
     }
@@ -513,6 +530,101 @@ class CustomerDesktopApp {
       osc.start();
       osc.stop(this.audioContext.currentTime + 0.35);
     } catch {}
+  }
+
+  private playAnnouncementChime(): void {
+    try {
+      if (!this.audioContext) {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        this.audioContext = new AudioCtx();
+      }
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
+      }
+      const now = this.audioContext.currentTime;
+
+      // Note 1: 587.33 Hz (D5)
+      const osc1 = this.audioContext.createOscillator();
+      const gain1 = this.audioContext.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(587.33, now);
+      gain1.gain.setValueAtTime(0.2, now);
+      gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+      osc1.connect(gain1);
+      gain1.connect(this.audioContext.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.2);
+
+      // Note 2: 880 Hz (A5)
+      const osc2 = this.audioContext.createOscillator();
+      const gain2 = this.audioContext.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(880, now + 0.18);
+      gain2.gain.setValueAtTime(0.25, now + 0.18);
+      gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.55);
+      osc2.connect(gain2);
+      gain2.connect(this.audioContext.destination);
+      osc2.start(now + 0.18);
+      osc2.stop(now + 0.55);
+    } catch {}
+  }
+
+  private displayAnnouncement(message: string, durationSeconds: number = 8, _sender?: string): void {
+    // 1. Expand Electron window to full screen if in gameplay mode so giant text fits
+    desktopWindow.pisonetDesktop?.showAnnouncement?.(durationSeconds);
+
+    // 2. Clear any active announcement
+    if (this.announcementTimeout) {
+      clearTimeout(this.announcementTimeout);
+      this.announcementTimeout = null;
+    }
+    const existing = document.getElementById('fullscreen-announcement-overlay');
+    if (existing) {
+      existing.remove();
+    }
+
+    // 3. Play pleasant 2-tone audio chime
+    this.playAnnouncementChime();
+
+    // 4. Construct clean fullscreen overlay with ONLY giant text + progress bar
+    const overlay = document.createElement('div');
+    overlay.id = 'fullscreen-announcement-overlay';
+    overlay.className = 'announcement-fullscreen-overlay';
+
+    // Safe HTML text escaping
+    const safeMsg = message
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+
+    overlay.innerHTML = `
+      <div class="announcement-content-wrap">
+        <div class="announcement-header-tag">
+          <span class="announcement-icon-pulse">📢</span>
+          <span>PAHIBALO GIKAN SA COUNTER</span>
+        </div>
+        <div class="announcement-giant-text">
+          ${safeMsg}
+        </div>
+        <div class="announcement-progress-track">
+          <div class="announcement-progress-bar" style="animation-duration: ${durationSeconds}s;"></div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    // 5. Automatically dismiss after durationSeconds
+    this.announcementTimeout = setTimeout(() => {
+      overlay.classList.add('fade-out');
+      setTimeout(() => {
+        overlay.remove();
+        desktopWindow.pisonetDesktop?.hideAnnouncement?.();
+      }, 350);
+      this.announcementTimeout = null;
+    }, durationSeconds * 1000);
   }
 
   private showToast(message: string, type: 'info' | 'success' | 'error' | 'warning' = 'info'): void {

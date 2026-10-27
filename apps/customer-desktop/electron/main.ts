@@ -478,6 +478,78 @@ ipcMain.handle('window:set-overlay-size', (_event, width: number, height: number
   return true;
 });
 
+let announcementTimer: NodeJS.Timeout | null = null;
+
+// Real-time flash message / announcement: Temporarily expand window to full bounds during gameplay
+ipcMain.handle('window:show-announcement', (_event, durationSeconds: number = 8) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+
+  if (announcementTimer) {
+    clearTimeout(announcementTimer);
+    announcementTimer = null;
+  }
+
+  if (isGameplayMode) {
+    try {
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width, height } = primaryDisplay.workAreaSize;
+      mainWindow.setBounds({ x: 0, y: 0, width, height });
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.moveTop();
+      mainWindow.focus();
+
+      // Failsafe auto-shrink timer back to gameplay HUD
+      announcementTimer = setTimeout(() => {
+        if (isGameplayMode && mainWindow && !mainWindow.isDestroyed()) {
+          const { width: currentW } = screen.getPrimaryDisplay().workAreaSize;
+          const overlayW = 324;
+          const overlayH = 100;
+          mainWindow.setBounds({
+            x: currentW - overlayW - 24,
+            y: 16,
+            width: overlayW,
+            height: overlayH
+          });
+          mainWindow.setAlwaysOnTop(true, 'status');
+        }
+      }, (durationSeconds + 0.5) * 1000);
+    } catch (e) {
+      console.warn('Error expanding window for announcement:', e);
+    }
+  } else {
+    // If locked, window is already full screen
+    mainWindow.moveTop();
+    mainWindow.focus();
+  }
+  return true;
+});
+
+ipcMain.handle('window:hide-announcement', () => {
+  if (announcementTimer) {
+    clearTimeout(announcementTimer);
+    announcementTimer = null;
+  }
+  if (mainWindow && !mainWindow.isDestroyed() && isGameplayMode) {
+    try {
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width } = primaryDisplay.workAreaSize;
+      const overlayW = 324;
+      const overlayH = 100;
+      mainWindow.setBounds({
+        x: width - overlayW - 24,
+        y: 16,
+        width: overlayW,
+        height: overlayH
+      });
+      mainWindow.setAlwaysOnTop(true, 'status');
+    } catch (e) {
+      console.warn('Error shrinking window after announcement:', e);
+    }
+  }
+  return true;
+});
+
+
 let isUpdating = false;
 
 async function checkAndApplyClientUpdate() {

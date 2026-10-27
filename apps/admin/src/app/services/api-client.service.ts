@@ -219,6 +219,14 @@ export class ApiClientService {
     });
   }
 
+  public async sendPcAnnouncement(targetPcId: string, message: string, durationSeconds: number = 8) {
+    return this.request<{ success: boolean; message: string; data: any }>('/api/v1/pcs/message', {
+      method: 'POST',
+      body: JSON.stringify({ targetPcId, message, durationSeconds })
+    });
+  }
+
+
   // Sessions
   public async startSession(customerId: string, pcId: string, idempotencyKey?: string) {
     return this.request<{ success: boolean; data: Session; remainingSeconds: number }>('/api/v1/sessions/start', {

@@ -15,6 +15,8 @@ export interface PisonetDesktopApi {
   cancelShutdown: () => Promise<boolean>;
   restoreWindow: () => Promise<void>;
   setOverlaySize: (width: number, height: number) => Promise<boolean>;
+  showAnnouncement: (durationSeconds?: number) => Promise<boolean>;
+  hideAnnouncement: () => Promise<boolean>;
 }
 
 const api: PisonetDesktopApi = {
@@ -31,7 +33,10 @@ const api: PisonetDesktopApi = {
   shutdownPC: (timeoutSeconds?: number) => ipcRenderer.invoke('system:shutdown', timeoutSeconds),
   cancelShutdown: () => ipcRenderer.invoke('system:cancel-shutdown'),
   restoreWindow: () => ipcRenderer.invoke('window:restore'),
-  setOverlaySize: (width: number, height: number) => ipcRenderer.invoke('window:set-overlay-size', width, height)
+  setOverlaySize: (width: number, height: number) => ipcRenderer.invoke('window:set-overlay-size', width, height),
+  showAnnouncement: (durationSeconds?: number) => ipcRenderer.invoke('window:show-announcement', durationSeconds),
+  hideAnnouncement: () => ipcRenderer.invoke('window:hide-announcement')
 };
 
 contextBridge.exposeInMainWorld('pisonetDesktop', api);
+

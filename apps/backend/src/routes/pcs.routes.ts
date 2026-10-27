@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { requireAuth, requireStaff, AppEnv } from '../middleware/auth.middleware';
 import { PcService } from '../services/pc.service';
+import { broadcastRealtimeEvent } from '../socket/socket-server';
 import { PCStatus } from '@pisonet/shared';
 
 export const pcRoutes = new Hono<AppEnv>();
@@ -156,3 +157,61 @@ pcRoutes.post('/:id/wol', requireStaff, async (c) => {
     message: `Wake-on-LAN packet request queued for MAC: ${pc.macAddress} on subnet ${pc.ipAddress}. (Requires local subnet relay agent).`
   });
 });
+
+// Send Announcement to All Terminals or Targeted PC (Staff or Admin)
+pcRoutes.post('/message', requireStaff, async (c) => {
+  const staff = c.get('user');
+  const body = await c.req.json();
+  const { targetPcId, message, durationSeconds = 8 } = body;
+
+  if (!message || !message.trim()) {
+    return c.json({ success: false, message: 'Message text is required.' }, 400);
+  }
+
+  const payload = {
+    targetPcId: targetPcId || 'all',
+    message: message.trim(),
+    durationSeconds: Math.max(3, Math.min(60, Number(durationSeconds) || 8)),
+    sender: staff?.fullName || staff?.username || 'Counter Operator',
+    timestamp: new Date().toISOString()
+  };
+
+  broadcastRealtimeEvent('pc:announcement', payload);
+
+  return c.json({
+    success: true,
+    message: targetPcId && targetPcId !== 'all'
+      ? `Announcement sent to terminal ${targetPcId}.`
+      : 'Announcement broadcast to all PC terminals.',
+    data: payload
+  });
+});
+
+// Send Announcement to specific PC by ID
+pcRoutes.post('/:id/message', requireStaff, async (c) => {
+  const staff = c.get('user');
+  const targetPcId = c.req.param('id');
+  const body = await c.req.json();
+  const { message, durationSeconds = 8 } = body;
+
+  if (!message || !message.trim()) {
+    return c.json({ success: false, message: 'Message text is required.' }, 400);
+  }
+
+  const payload = {
+    targetPcId,
+    message: message.trim(),
+    durationSeconds: Math.max(3, Math.min(60, Number(durationSeconds) || 8)),
+    sender: staff?.fullName || staff?.username || 'Counter Operator',
+    timestamp: new Date().toISOString()
+  };
+
+  broadcastRealtimeEvent('pc:announcement', payload);
+
+  return c.json({
+    success: true,
+    message: `Announcement sent to PC station ${targetPcId}.`,
+    data: payload
+  });
+});
+

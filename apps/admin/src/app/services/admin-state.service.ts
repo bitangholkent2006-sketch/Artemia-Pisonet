@@ -432,6 +432,23 @@ export class AdminStateService {
     }
   }
 
+  public async sendPcAnnouncement(
+    targetPcId: string,
+    message: string,
+    durationSeconds: number = 8
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+      const res = await this.apiClient.sendPcAnnouncement(targetPcId, message, durationSeconds);
+      if (res.success) {
+        return { success: true, message: res.message };
+      }
+      return { success: false, error: res.message || 'Failed to send announcement.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to send announcement.' };
+    }
+  }
+
+
   // -------------------------------------------------------------
   // Settings
   // -------------------------------------------------------------
