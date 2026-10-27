@@ -126,7 +126,7 @@ app.get('/download/client/app.asar', (c) => {
   return c.text('Release app.asar package not found.', 404);
 });
 
-// Direct Client App Download route for shop PCs on LAN
+// Direct Client App Download route: serves local package if present or redirects to GitHub Releases CDN
 app.get('/download/client', (c) => {
   const possiblePaths = [
     path.resolve(process.cwd(), 'dist-client/Artemia-Customer-Terminal-PC.zip'),
@@ -140,8 +140,11 @@ app.get('/download/client', (c) => {
     c.header('Content-Type', 'application/zip');
     return c.body(fs.readFileSync(zipPath));
   }
-  return c.text('Client ZIP package not found.', 404);
+
+  // Cloud fallback: redirect to pre-packaged release zip on GitHub Releases CDN
+  return c.redirect('https://github.com/bitangholkent2006-sketch/Artemia-Pisonet/releases/download/v1.0.0/Artemia-Customer-Terminal-PC.zip', 302);
 });
+
 
 // 404 handler
 app.notFound((c) => {
