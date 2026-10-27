@@ -566,6 +566,16 @@ import {
                     <input type="number" class="form-input" style="width:100%;" [(ngModel)]="emailConfig.smtpPort" placeholder="465" />
                   </div>
                 </div>
+
+                <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border-subtle);">
+                  <div style="font-size:0.78rem; font-weight:700; color:var(--accent-cyan); margin-bottom:4px;">
+                    ⚡ Render Free Tier Relay (Google Apps Script Webhook)
+                  </div>
+                  <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 8px;">
+                    Kon gibabagan sa Render Free Tier ang direct SMTP ports, i-paste diri ang imong Google Script Webhook URL para HTTPS (Port 443) ang agianan nga walay timeout:
+                  </p>
+                  <input type="url" class="form-input" style="width:100%; font-size:0.8rem;" placeholder="https://script.google.com/macros/s/.../exec" [(ngModel)]="emailConfig.webhookUrl" />
+                </div>
               </div>
             </div>
 
@@ -699,6 +709,7 @@ export class ReportsComponent implements OnInit, OnDestroy {
     smtpPort: 465,
     smtpUser: '',
     smtpPass: '',
+    webhookUrl: '',
     fromEmail: '"Artemia\'s Pisonet" <reports@artemiapisonet.com>',
     lastSentDate: ''
   };

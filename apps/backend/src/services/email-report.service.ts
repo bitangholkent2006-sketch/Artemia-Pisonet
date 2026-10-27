@@ -11,6 +11,7 @@ export interface EmailReportConfig {
   smtpPort?: number;
   smtpUser?: string;
   smtpPass?: string;
+  webhookUrl?: string;
   fromEmail?: string;
   lastSentDate?: string; // YYYY-MM-DD
   updatedAt?: Date;
@@ -391,7 +392,52 @@ export class DailyReportEmailService {
       const htmlBody = DailyReportEmailService.generateEmailHtml(salesData);
       const subject = `[Artemia's Pisonet] Daily Sales Report — ${salesData.dateStr} (${salesData.todayGrossPhp})`;
 
-      // Check if SMTP is configured
+      // 1. If HTTPS Webhook URL is configured (bypasses Render Free Tier SMTP port blocking via Port 443)
+      if (config.webhookUrl) {
+        console.log(`[EmailReport] Dispatching via HTTPS Webhook to ${config.webhookUrl}...`);
+        try {
+          const resp = await fetch(config.webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: recipient,
+              subject,
+              html: htmlBody
+            })
+          });
+
+          if (resp.ok) {
+            console.log(`[EmailReport] Successfully dispatched via HTTPS Webhook to ${recipient}`);
+            const collections = getCollections();
+            const todayStr = new Date().toISOString().slice(0, 10);
+            await collections.systemSettings.updateOne(
+              { _id: 'email_report_config' },
+              { $set: { lastSentDate: todayStr, updatedAt: new Date() } },
+              { upsert: true }
+            );
+
+            await AuditService.log(
+              'DAILY_SALES_EMAIL_SENT',
+              `Daily sales report sent via HTTPS Webhook to ${recipient} (Gross: ${salesData.todayGrossPhp}).`,
+              options.manualTriggerBy || 'system',
+              'Staff',
+              'staff'
+            );
+
+            return {
+              success: true,
+              message: `✓ Daily sales report sent to ${recipient} via HTTPS Webhook (${salesData.todayGrossPhp})!`
+            };
+          } else {
+            const errText = await resp.text().catch(() => '');
+            console.warn(`[EmailReport] Webhook returned status ${resp.status}:`, errText);
+          }
+        } catch (webhookErr: any) {
+          console.warn('[EmailReport] Webhook dispatch error:', webhookErr.message);
+        }
+      }
+
+      // 2. Check if SMTP is configured
       if (!config.smtpUser || !config.smtpPass) {
         console.log(`[EmailReport] SMTP credentials not set. Compiled report for ${recipient}: Gross ${salesData.todayGrossPhp}, ${salesData.transactionCount} transactions.`);
         
@@ -424,9 +470,9 @@ export class DailyReportEmailService {
               user: config.smtpUser,
               pass: cleanPass
             },
-            connectionTimeout: 15000,
-            greetingTimeout: 10000,
-            socketTimeout: 20000
+            connectionTimeout: 10000,
+            greetingTimeout: 8000,
+            socketTimeout: 15000
           }
         : {
             host: config.smtpHost || 'smtp.gmail.com',
@@ -436,9 +482,9 @@ export class DailyReportEmailService {
               user: config.smtpUser,
               pass: cleanPass
             },
-            connectionTimeout: 15000,
-            greetingTimeout: 10000,
-            socketTimeout: 20000
+            connectionTimeout: 10000,
+            greetingTimeout: 8000,
+            socketTimeout: 15000
           };
 
       const transporter = nodemailer.createTransport(transportOptions);
@@ -475,9 +521,13 @@ export class DailyReportEmailService {
       };
     } catch (err: any) {
       console.error('[EmailReport] Error sending daily email report:', err);
+      const isTimeout = err.message && (err.message.includes('timeout') || err.message.includes('ETIMEDOUT'));
+      const msg = isTimeout
+        ? 'Connection timeout: Gibabagan sa Render Free Tier ang direct SMTP ports (465/587). Aron molahos kini 100% nga walay timeout, gamita ang Google Webhook URL sa ubos.'
+        : `Failed to dispatch email: ${err.message || 'Unknown SMTP error'}`;
       return {
         success: false,
-        message: `Failed to dispatch email: ${err.message || 'Unknown SMTP error'}`
+        message: msg
       };
     } finally {
       DailyReportEmailService.isSending = false;
