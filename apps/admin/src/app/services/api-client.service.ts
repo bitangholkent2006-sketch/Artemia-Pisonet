@@ -42,14 +42,10 @@ export class ApiClientService {
   }
 
   public get baseUrl(): string {
-    // Configurable via localStorage or environment, fallback to current origin or default backend port
+    // Configurable via localStorage or environment, fallback to Render cloud backend
     const stored = localStorage.getItem('pisonet_backend_url');
     if (stored) return stored;
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      return 'http://localhost:3000';
-    }
-    // In production, backend URL can be configured or relative
-    return window.location.origin;
+    return 'https://artemia-pisonet-backend.onrender.com';
   }
 
   public setBackendUrl(url: string): void {

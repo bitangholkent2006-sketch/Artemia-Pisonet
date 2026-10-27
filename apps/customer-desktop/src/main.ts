@@ -63,15 +63,11 @@ interface LiveSession {
   startedAt: string;
 }
 
-// Smart API base resolver: Supports LAN IP (192.168.1.7) for remote PC 1, custom saved URL, or localhost
+// Smart API base resolver: Defaults to live cloud backend on Render, or custom saved URL
 function getApiBaseUrl(): string {
   const saved = localStorage.getItem('artemia_server_url');
   if (saved) return saved.trim().replace(/\/$/, '');
-  if (typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-    return `http://${window.location.hostname}:3000`;
-  }
-  // Default to server machine LAN IP so client PCs connect across the Wi-Fi/Ethernet network
-  return 'http://192.168.1.7:3000';
+  return 'https://artemia-pisonet-backend.onrender.com';
 }
 
 const desktopWindow = window as unknown as WindowWithDesktop;
