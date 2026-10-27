@@ -138,6 +138,9 @@ export class PcService {
   ): Promise<void> {
     const collections = getCollections();
     const now = new Date();
+    const pc = await collections.pcs.findOne({ id: pcId });
+    if (!pc) return;
+
     const updates: Record<string, unknown> = {
       lastHeartbeat: now,
       connectionState: 'connected',
@@ -145,7 +148,24 @@ export class PcService {
     };
     if (ipAddress) updates['ipAddress'] = ipAddress;
 
+    let statusChanged = false;
+    let newStatus = pc.status;
+    if (pc.status === 'offline') {
+      newStatus = pc.activeSessionId ? 'in-use' : 'available';
+      updates['status'] = newStatus;
+      statusChanged = true;
+    }
+
     await collections.pcs.updateOne({ id: pcId }, { $set: updates });
+
+    if (statusChanged) {
+      try {
+        const { broadcastRealtimeEvent } = await import('../socket/socket-server');
+        broadcastRealtimeEvent('pc:status', { pcId, status: newStatus });
+        broadcastRealtimeEvent('pc:status-changed', { pcId, status: newStatus, activeCustomerName: pc.activeCustomerName });
+        broadcastRealtimeEvent('pc:updated', { ...pc, ...updates, status: newStatus, connectionState: 'connected' });
+      } catch {}
+    }
   }
 
   public static async verifyDeviceCredentials(

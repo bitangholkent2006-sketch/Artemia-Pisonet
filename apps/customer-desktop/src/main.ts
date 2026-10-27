@@ -96,6 +96,7 @@ class CustomerDesktopApp {
   private shutdownInterval: any = null;
   private announcementTimeout: any = null;
   private speedMultiplier: number = 1.08;
+  private heartbeatInterval: any = null;
 
   private sessionInterval: any = null;
 
@@ -161,6 +162,7 @@ class CustomerDesktopApp {
       this.socket.on('connect', () => {
         this.isConnected = true;
         this.updateConnectionIndicator();
+        this.socket?.emit('pc:heartbeat', { pcId: this.currentPcId });
         this.fetchPcs();
         if (this.token) {
           this.syncCustomerState();
@@ -170,6 +172,25 @@ class CustomerDesktopApp {
       this.socket.on('disconnect', () => {
         this.isConnected = false;
         this.updateConnectionIndicator();
+      });
+
+      // Periodic heartbeat every 10 seconds to keep connectionState alive and renew session lease
+      if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = setInterval(() => {
+        if (this.socket && this.socket.connected) {
+          this.socket.emit('pc:heartbeat', { pcId: this.currentPcId });
+          if (this.activeSession && this.activeSession.status === 'active') {
+            this.socket.emit('session:heartbeat', { sessionId: this.activeSession.id });
+          }
+        }
+      }, 10000);
+
+      window.addEventListener('beforeunload', () => {
+        if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+        if (this.socket) {
+          this.socket.emit('pc:heartbeat', { pcId: this.currentPcId });
+          this.socket.disconnect();
+        }
       });
 
       // Real-time station status updates from Admin Portal (e.g. Lock PC)

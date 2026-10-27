@@ -626,6 +626,13 @@ export class SessionService {
       .toArray();
 
     for (const session of activeFixedSessions) {
+      // 1. Lease Expiry Check: If PC terminal stopped heartbeating (powered off, app killed), auto-pause session
+      if (session.leaseExpiresAt && session.leaseExpiresAt.getTime() < now.getTime()) {
+        console.log(`[SessionWorker] Session ${session.id} on ${session.pcName} lease expired (${session.leaseExpiresAt.toISOString()}). Auto-pausing session and marking PC offline.`);
+        await SessionService.pauseSession(session.id, 'system', 'system', undefined, undefined, 'offline');
+        continue;
+      }
+
       const resumedTime = session.lastResumedAt ? new Date(session.lastResumedAt).getTime() : now.getTime();
       const elapsedMs = Math.max(0, now.getTime() - resumedTime);
       const consumedSeconds = Math.floor((elapsedMs / 1000) * speedMultiplier);
@@ -701,6 +708,27 @@ export class SessionService {
           pcId: session.pcId
         });
         SessionService.emitEvent('balance:updated', { customerId: session.customerId, remainingSeconds: 0 }, `customer:${session.customerId}`);
+      }
+    }
+
+    // 2. Idle Stale PCs Check: If a PC terminal has sent no heartbeat for > 60 seconds, mark as offline
+    const staleHeartbeatTime = new Date(now.getTime() - 60000);
+    const stalePcs = await collections.pcs.find({
+      status: { $in: ['available', 'in-use'] },
+      lastHeartbeat: { $lt: staleHeartbeatTime }
+    }).toArray();
+
+    for (const pc of stalePcs) {
+      if (pc.activeSessionId) {
+        console.log(`[SessionWorker] Auto-pausing abandoned session on stale PC ${pc.id}`);
+        await SessionService.pauseSession(pc.activeSessionId, 'system', 'system', undefined, undefined, 'offline');
+      } else {
+        await collections.pcs.updateOne(
+          { id: pc.id },
+          { $set: { status: 'offline', connectionState: 'disconnected', updatedAt: now } }
+        );
+        SessionService.emitEvent('pc:status-changed', { pcId: pc.id, status: 'offline', activeCustomerName: null });
+        SessionService.emitEvent('pc:status', { pcId: pc.id, status: 'offline' });
       }
     }
   }

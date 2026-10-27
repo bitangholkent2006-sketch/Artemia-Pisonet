@@ -105,14 +105,15 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     if (pcId) {
       authSocket.join(`pc:${pcId}`);
       authSocket.join('fleet');
+      // Immediately register PC heartbeat and mark connected
+      PcService.recordHeartbeat(pcId).catch(() => {});
     }
 
     // PC Terminal Heartbeat Event
     authSocket.on('pc:heartbeat', async (data: { pcId: string }) => {
-      if (authType === 'device' && pcId) {
-        await PcService.recordHeartbeat(pcId);
-      } else if (data?.pcId) {
-        await PcService.recordHeartbeat(data.pcId);
+      const targetId = pcId || data?.pcId;
+      if (targetId) {
+        await PcService.recordHeartbeat(targetId);
       }
     });
 
@@ -124,7 +125,36 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     authSocket.on('disconnect', () => {
-      // Disconnection handling
+      if (pcId && io) {
+        setTimeout(async () => {
+          if (!io) return;
+          const roomSockets = io.sockets.adapter.rooms.get(`pc:${pcId}`)?.size || 0;
+          if (roomSockets === 0) {
+            console.log(`[Socket] PC ${pcId} disconnected with 0 active connections. Transitioning to offline.`);
+            try {
+              const { getCollections } = await import('../database/connection');
+              const collections = getCollections();
+              const pc = await collections.pcs.findOne({ id: pcId });
+              if (pc) {
+                if (pc.activeSessionId) {
+                  console.log(`[Socket] Auto-pausing active session ${pc.activeSessionId} on disconnected PC ${pcId}`);
+                  await SessionService.pauseSession(pc.activeSessionId, 'system', 'system', undefined, undefined, 'offline');
+                } else {
+                  await collections.pcs.updateOne(
+                    { id: pcId },
+                    { $set: { connectionState: 'disconnected', status: 'offline', updatedAt: new Date() } }
+                  );
+                  broadcastRealtimeEvent('pc:status-changed', { pcId, status: 'offline', activeCustomerName: null });
+                  broadcastRealtimeEvent('pc:status', { pcId, status: 'offline' });
+                  broadcastRealtimeEvent('pc:updated', { ...pc, status: 'offline', connectionState: 'disconnected' });
+                }
+              }
+            } catch (err) {
+              console.warn('[Socket] Disconnect handling error for PC:', pcId, err);
+            }
+          }
+        }, 2000);
+      }
     });
   });
 
