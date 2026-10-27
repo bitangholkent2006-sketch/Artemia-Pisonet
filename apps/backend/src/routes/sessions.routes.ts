@@ -18,9 +18,22 @@ sessionRoutes.get('/', requireStaff, async (c) => {
     .limit(100)
     .toArray();
 
+  const now = new Date();
+  const pricing = await collections.pricing.findOne({ _id: 'global_pricing' });
+  const speedMultiplier = pricing?.speedMultiplier || 1.08;
+
   const safeSessions = sessions.map((sess: any) => {
     const { _id, ...rest } = sess;
-    return rest;
+    let computedRemaining = Number(rest.remainingSecondsAtResume ?? rest.remainingSeconds) || 0;
+    if (rest.status === 'active' && rest.type === 'fixed-time') {
+      const resumeTime = rest.lastResumedAt ? new Date(rest.lastResumedAt).getTime() : now.getTime();
+      const elapsedMs = Math.max(0, now.getTime() - resumeTime);
+      computedRemaining = Math.max(0, computedRemaining - Math.floor((elapsedMs / 1000) * speedMultiplier));
+    }
+    return {
+      ...rest,
+      remainingSeconds: computedRemaining
+    };
   });
   return c.json({ success: true, data: safeSessions });
 });

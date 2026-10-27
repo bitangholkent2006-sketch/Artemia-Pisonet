@@ -3,13 +3,17 @@
  * All core balances and durations are handled in SECONDS.
  */
 
-export function formatSecondsToDigital(totalSeconds: number): string {
-  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+export function formatSecondsToDigital(totalSeconds: number | null | undefined): string {
+  const num = Number(totalSeconds);
+  if (!isFinite(num) || isNaN(num) || num <= 0) {
+    return '00:00';
+  }
+  const safeSeconds = Math.max(0, Math.floor(num));
   const hours = Math.floor(safeSeconds / 3600);
   const minutes = Math.floor((safeSeconds % 3600) / 60);
   const seconds = safeSeconds % 60;
 
-  const pad = (num: number) => num.toString().padStart(2, '0');
+  const pad = (val: number) => val.toString().padStart(2, '0');
 
   if (hours > 0) {
     return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
@@ -17,8 +21,12 @@ export function formatSecondsToDigital(totalSeconds: number): string {
   return `${pad(minutes)}:${pad(seconds)}`;
 }
 
-export function formatSecondsToHumanReadable(totalSeconds: number): string {
-  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+export function formatSecondsToHumanReadable(totalSeconds: number | null | undefined): string {
+  const num = Number(totalSeconds);
+  if (!isFinite(num) || isNaN(num) || num <= 0) {
+    return '0s';
+  }
+  const safeSeconds = Math.max(0, Math.floor(num));
   const hours = Math.floor(safeSeconds / 3600);
   const minutes = Math.floor((safeSeconds % 3600) / 60);
   const seconds = safeSeconds % 60;

@@ -248,10 +248,28 @@ class CustomerDesktopApp {
 
       this.socket.on('session:resumed', (data: any) => {
         if (this.user && data.customerId === this.user.id) {
-          const rem = data.remainingSeconds ?? (this.user.balance?.remainingSeconds || 0);
+          const rem = Number(data.remainingSeconds ?? (this.user.balance?.remainingSeconds || 0)) || 0;
           if (this.activeSession) {
-            this.activeSession.remainingSeconds = Number(rem) || 0;
+            this.activeSession.remainingSeconds = rem;
             this.activeSession.status = 'active';
+            if (data.pcId) this.activeSession.pcId = data.pcId;
+          } else {
+            this.activeSession = {
+              id: data.sessionId || `sess-${Date.now()}`,
+              pcId: data.pcId || this.currentPcId,
+              customerId: this.user.id,
+              customerName: this.user.fullName,
+              type: 'fixed-time',
+              status: 'active',
+              remainingSeconds: rem,
+              totalActiveSeconds: 0,
+              rateMinorUnitsPerHour: 2000,
+              accruedChargesMinorUnits: 0,
+              startedAt: new Date().toISOString()
+            };
+          }
+          if (this.user.balance) {
+            this.user.balance.remainingSeconds = rem;
           }
           this.currentScreen = 'session';
           this.expiredNotice = false;
@@ -472,24 +490,26 @@ class CustomerDesktopApp {
       if (!this.activeSession || this.activeSession.status !== 'active') return;
 
       if (this.activeSession.type === 'fixed-time') {
-        // Guard against undefined or NaN remainingSeconds
-        if (this.activeSession.remainingSeconds === undefined || isNaN(this.activeSession.remainingSeconds)) {
-          this.activeSession.remainingSeconds = this.user?.balance?.remainingSeconds || 0;
+        let rem = Number(this.activeSession.remainingSeconds);
+        if (!isFinite(rem) || isNaN(rem) || rem < 0) {
+          rem = Number(this.user?.balance?.remainingSeconds) || 0;
         }
 
-        if (this.activeSession.remainingSeconds > 0) {
-          this.activeSession.remainingSeconds--;
+        if (rem > 0) {
+          rem = Math.max(0, rem - 1);
+          this.activeSession.remainingSeconds = rem;
           if (this.user?.balance) {
-            this.user.balance.remainingSeconds = this.activeSession.remainingSeconds;
+            this.user.balance.remainingSeconds = rem;
           }
-          this.checkThresholds(this.activeSession.remainingSeconds);
+          this.checkThresholds(rem);
         } else {
-          // Time expired! Re-lock desktop immediately, logout user, and trigger PC shutdown
+          this.activeSession.remainingSeconds = 0;
           this.handleTimeExpired();
           return;
         }
       } else {
-        this.activeSession.totalActiveSeconds++;
+        const activeSec = Number(this.activeSession.totalActiveSeconds) || 0;
+        this.activeSession.totalActiveSeconds = activeSec + 1;
       }
 
       this.updateClockDisplay();
@@ -1089,15 +1109,16 @@ class CustomerDesktopApp {
     const pauseClock = document.getElementById('pause-confirm-clock');
 
     if (pauseClock && this.activeSession) {
+      const rem = Number(this.activeSession.remainingSeconds) || 0;
       pauseClock.textContent = this.activeSession.type === 'fixed-time'
-        ? formatSecondsToDigital(this.activeSession.remainingSeconds)
-        : formatSecondsToDigital(this.activeSession.totalActiveSeconds);
+        ? formatSecondsToDigital(rem)
+        : formatSecondsToDigital(Number(this.activeSession.totalActiveSeconds) || 0);
     }
 
     if (!mainClock || !this.activeSession) return;
 
     if (this.activeSession.type === 'fixed-time') {
-      const rem = this.activeSession.remainingSeconds;
+      const rem = Number(this.activeSession.remainingSeconds) || 0;
       mainClock.textContent = formatSecondsToDigital(rem);
       if (rem <= 60) {
         mainClock.className = 'hud-digits critical-time';
@@ -1110,7 +1131,8 @@ class CustomerDesktopApp {
         subClock.textContent = formatSecondsToHumanReadable(rem);
       }
     } else {
-      mainClock.textContent = formatSecondsToDigital(this.activeSession.totalActiveSeconds);
+      const active = Number(this.activeSession.totalActiveSeconds) || 0;
+      mainClock.textContent = formatSecondsToDigital(active);
       if (subClock) {
         subClock.textContent = `Accrued: ${formatMinorUnitsToCurrency(this.activeSession.accruedChargesMinorUnits)}`;
       }
@@ -1439,7 +1461,7 @@ class CustomerDesktopApp {
 
   private renderActiveSessionScreen(session: LiveSession, pc?: PublicPC): string {
     const isFixed = session.type === 'fixed-time';
-    const remaining = session.remainingSeconds;
+    const remaining = Number(session.remainingSeconds) || 0;
     const isLowTime = isFixed && remaining <= 300;
     const isCritical = isFixed && remaining <= 60;
 

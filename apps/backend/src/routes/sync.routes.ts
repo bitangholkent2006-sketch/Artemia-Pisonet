@@ -18,15 +18,25 @@ syncRoutes.get('/', requireAuth, async (c) => {
     return rest;
   });
 
-  // 2. Active Sessions
+  // 2. Pricing
+  const pricing = await collections.pricing.findOne({ _id: 'global_pricing' });
+  const speedMultiplier = pricing?.speedMultiplier || 1.08;
+
+  // 3. Active Sessions with dynamic remainingSeconds calculation
   const activeSessions = await collections.sessions.find({ status: 'active' }).toArray();
   const safeSessions = activeSessions.map((s: any) => {
     const { _id, ...rest } = s;
-    return rest;
+    let computedRemaining = Number(rest.remainingSecondsAtResume ?? rest.remainingSeconds) || 0;
+    if (rest.status === 'active' && rest.type === 'fixed-time') {
+      const resumeTime = rest.lastResumedAt ? new Date(rest.lastResumedAt).getTime() : now.getTime();
+      const elapsedMs = Math.max(0, now.getTime() - resumeTime);
+      computedRemaining = Math.max(0, computedRemaining - Math.floor((elapsedMs / 1000) * speedMultiplier));
+    }
+    return {
+      ...rest,
+      remainingSeconds: computedRemaining
+    };
   });
-
-  // 3. Pricing
-  const pricing = await collections.pricing.findOne({ _id: 'global_pricing' });
 
   // 4. Role-specific context
   let customerContext: any = null;
@@ -36,9 +46,25 @@ syncRoutes.get('/', requireAuth, async (c) => {
       customerId: user.id,
       status: { $in: ['active', 'paused'] }
     });
+    let safeMySession: any = null;
+    if (mySession) {
+      const { _id, ...rest } = mySession;
+      let computedRemaining = Number(rest.remainingSecondsAtResume ?? rest.remainingSeconds) || 0;
+      if (rest.status === 'active' && rest.type === 'fixed-time') {
+        const resumeTime = rest.lastResumedAt ? new Date(rest.lastResumedAt).getTime() : now.getTime();
+        const elapsedMs = Math.max(0, now.getTime() - resumeTime);
+        computedRemaining = Math.max(0, computedRemaining - Math.floor((elapsedMs / 1000) * speedMultiplier));
+      } else if (rest.status === 'paused') {
+        computedRemaining = custData?.balance?.remainingSeconds ?? rest.remainingSecondsAtResume ?? 0;
+      }
+      safeMySession = {
+        ...rest,
+        remainingSeconds: computedRemaining
+      };
+    }
     customerContext = {
       customer: custData,
-      currentSession: mySession ? (({ _id: _, ...rest }: any) => rest)(mySession) : null
+      currentSession: safeMySession
     };
   }
 
