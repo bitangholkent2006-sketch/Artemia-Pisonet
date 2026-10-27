@@ -28,22 +28,21 @@ import {
           </p>
         </div>
 
-        <div style="display:flex; gap:12px; align-items:center;">
+        <div class="table-toolbar-controls">
           <!-- Search Bar -->
-          <div style="position:relative;">
+          <div class="table-search-wrapper">
             <input
               type="text"
-              class="form-input"
-              style="width:240px; padding-left:32px;"
-              placeholder="Search name or username..."
+              class="form-input table-search-input"
+              placeholder="Search customer name or username..."
               [(ngModel)]="searchQuery"
             />
-            <svg style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text-dim);" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg class="table-search-icon" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
             </svg>
           </div>
 
-          <button class="btn btn-primary" (click)="openRegisterModal()">
+          <button class="btn btn-primary btn-register-customer" (click)="openRegisterModal()">
             + Register Customer
           </button>
         </div>

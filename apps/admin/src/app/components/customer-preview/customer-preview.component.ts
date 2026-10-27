@@ -30,8 +30,8 @@ import {
       </div>
 
       <!-- Station Selector Bar -->
-      <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-card); padding:14px 20px; border-radius:var(--radius-lg); border:1px solid var(--border-subtle); margin-bottom:24px;">
-        <div style="display:flex; align-items:center; gap:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-card); padding:14px 20px; border-radius:var(--radius-lg); border:1px solid var(--border-subtle); margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
           <span style="font-size:0.85rem; font-weight:700; color:var(--text-dim); text-transform:uppercase;">Select Station Terminal:</span>
           <select class="form-select" style="font-weight:700; color:var(--accent-cyan);" [(ngModel)]="currentPcId" (change)="onPcChanged()">
             <option *ngFor="let pc of state.pcs" [value]="pc.id">
