@@ -77,7 +77,28 @@ export class AdminStateService {
     }
   }
 
+  private isSyncing = false;
+  private lastSyncTime = 0;
+  private pendingSyncTimeout: any = null;
+
   public async syncFromBackend() {
+    const now = Date.now();
+    if (this.isSyncing) return;
+
+    // Throttle to at most once every 1000ms to eliminate visual jitter & HTTP storms
+    if (now - this.lastSyncTime < 1000) {
+      if (!this.pendingSyncTimeout) {
+        this.pendingSyncTimeout = setTimeout(() => {
+          this.pendingSyncTimeout = null;
+          this.syncFromBackend();
+        }, 1000 - (now - this.lastSyncTime));
+      }
+      return;
+    }
+
+    this.isSyncing = true;
+    this.lastSyncTime = Date.now();
+
     try {
       const snapshot = await this.apiClient.fetchSync();
       if (snapshot && snapshot.pcs) {
@@ -99,6 +120,8 @@ export class AdminStateService {
       }
     } catch (err: any) {
       console.warn('[AdminState] Live sync snapshot:', err.message);
+    } finally {
+      this.isSyncing = false;
     }
   }
 

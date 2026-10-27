@@ -63,7 +63,7 @@ import {
             </tr>
           </thead>
           <tbody>
-            <tr *ngFor="let c of filteredCustomers">
+            <tr *ngFor="let c of filteredCustomers; trackBy: trackByCustomerId">
               <td>
                 <div style="font-weight:700; color:#fff;">{{ c.fullName }}</div>
                 <div style="font-size:0.75rem; color:var(--accent-cyan); font-family:var(--font-mono);">
@@ -352,7 +352,7 @@ import {
   `,
   styles: [`
     .customers-view {
-      animation: fadeIn 0.2s ease-out;
+      /* Keep container stationary */
     }
     .text-emerald { color: var(--accent-emerald); }
     .text-rose { color: var(--accent-rose); }
@@ -361,6 +361,10 @@ import {
 export class CustomersComponent implements OnInit, OnDestroy {
   state!: PisonetAppState;
   private sub!: Subscription;
+
+  trackByCustomerId(index: number, c: CustomerProfile): string {
+    return c.id;
+  }
 
   searchQuery = '';
   showRegisterModal = false;

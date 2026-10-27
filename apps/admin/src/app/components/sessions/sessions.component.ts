@@ -62,7 +62,7 @@ import {
             </tr>
           </thead>
           <tbody>
-            <tr *ngFor="let s of currentAndPausedSessions">
+            <tr *ngFor="let s of currentAndPausedSessions; trackBy: trackBySessionId">
               <td>
                 <div style="font-weight:700; color:#fff;">{{ s.customerName }}</div>
                 <div style="font-size:0.72rem; color:var(--accent-cyan); font-family:var(--font-mono);">
@@ -363,13 +363,17 @@ import {
   `,
   styles: [`
     .sessions-view {
-      animation: fadeIn 0.2s ease-out;
+      /* Keep container stationary */
     }
   `]
 })
 export class SessionsComponent implements OnInit, OnDestroy {
   state!: PisonetAppState;
   private sub!: Subscription;
+
+  trackBySessionId(index: number, s: Session): string {
+    return s.id;
+  }
 
   showAuthModal = false;
   authCustomerId = '';

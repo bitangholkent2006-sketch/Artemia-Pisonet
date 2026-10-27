@@ -179,7 +179,7 @@ import {
         </div>
 
         <div
-          *ngFor="let pc of filteredPcs"
+          *ngFor="let pc of filteredPcs; trackBy: trackByPcId"
           class="pc-card"
           [ngClass]="pc.status"
         >
@@ -411,7 +411,7 @@ import {
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let c of filteredCustomerBalances">
+              <tr *ngFor="let c of filteredCustomerBalances; trackBy: trackByCustomerId">
                 <td>
                   <div style="font-weight:800; color:#fff; font-size:0.95rem;">{{ c.fullName }}</div>
                   <div style="font-size:0.75rem; color:var(--accent-cyan); font-family:var(--font-mono);">
@@ -751,13 +751,21 @@ import {
   `,
   styles: [`
     .dashboard-container {
-      animation: fadeIn 0.2s ease-out;
+      /* Keep container stationary without shaking/re-animating */
     }
   `]
 })
 export class DashboardComponent implements OnInit, OnDestroy {
   state!: PisonetAppState;
   private sub!: Subscription;
+
+  trackByPcId(index: number, pc: PC): string {
+    return pc.id;
+  }
+
+  trackByCustomerId(index: number, c: CustomerProfile): string {
+    return c.id;
+  }
 
   statusFilter: 'all' | 'available' | 'in-use' | 'offline' = 'all';
 

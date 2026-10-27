@@ -112,7 +112,7 @@ import {
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let p of filteredPayments">
+              <tr *ngFor="let p of filteredPayments; trackBy: trackByPaymentId">
                 <td style="font-family:var(--font-mono); font-size:0.8rem; font-weight:700;">
                   {{ p.referenceNumber || p.id }}
                 </td>
@@ -428,13 +428,17 @@ import {
   `,
   styles: [`
     .reports-view {
-      animation: fadeIn 0.2s ease-out;
+      /* Keep container stationary */
     }
   `]
 })
 export class ReportsComponent implements OnInit, OnDestroy {
   state!: PisonetAppState;
   private sub!: Subscription;
+
+  trackByPaymentId(index: number, p: any): string {
+    return p.id;
+  }
 
   activeTab: 'payments' | 'outstanding' | 'sessions' | 'audit' | 'pricing' = 'payments';
 

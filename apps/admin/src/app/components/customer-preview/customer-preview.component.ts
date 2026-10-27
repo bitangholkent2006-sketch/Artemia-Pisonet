@@ -227,7 +227,7 @@ import {
   `,
   styles: [`
     .kiosk-simulator-view {
-      animation: fadeIn 0.2s ease-out;
+      /* Keep container stationary */
     }
     .kiosk-frame {
       background: #090d16;

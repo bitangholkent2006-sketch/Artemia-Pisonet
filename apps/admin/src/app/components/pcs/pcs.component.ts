@@ -57,7 +57,7 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
             </tr>
           </thead>
           <tbody>
-            <tr *ngFor="let pc of state.pcs">
+            <tr *ngFor="let pc of state.pcs; trackBy: trackByPcId">
               <td>
                 <div style="font-weight:800; color:#fff;">{{ pc.name }}</div>
                 <div *ngIf="pc.activeCustomerName" style="font-size:0.75rem; color:var(--accent-cyan);">
@@ -202,13 +202,17 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
   `,
   styles: [`
     .pcs-view {
-      animation: fadeIn 0.2s ease-out;
+      /* Keep container stationary */
     }
   `]
 })
 export class PcsComponent implements OnInit, OnDestroy {
   state!: PisonetAppState;
   private sub!: Subscription;
+
+  trackByPcId(index: number, pc: PC): string {
+    return pc.id;
+  }
 
   showRegisterModal = false;
   newPcName = '';

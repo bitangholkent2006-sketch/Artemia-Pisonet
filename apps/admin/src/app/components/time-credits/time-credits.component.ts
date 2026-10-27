@@ -281,7 +281,7 @@ import {
   `,
   styles: [`
     .time-credits-view {
-      animation: fadeIn 0.2s ease-out;
+      /* Keep container stationary */
     }
     .active-pkg {
       border-color: var(--primary) !important;

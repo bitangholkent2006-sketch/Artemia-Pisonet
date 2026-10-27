@@ -58,7 +58,8 @@ export class PisonetStateService {
     this.storage.subscribe((payload) => {
       if (payload.key === STATE_STORAGE_KEY && payload.data) {
         this.state = payload.data as PisonetAppState;
-        this.emitState();
+        // MUST pass false so receiving an external tab update does not echo back into storage in an infinite loop
+        this.emitState(false);
       }
     });
 
