@@ -1074,34 +1074,32 @@ class CustomerDesktopApp {
     return `
       <header class="demo-topbar">
         <div class="brand-wrapper">
-          <div class="brand-logo" style="background:linear-gradient(135deg, #06b6d4, #6366f1); font-weight:800; display:flex; align-items:center; justify-content:center; color:#fff;">AP</div>
+          <div class="brand-logo-cyber">
+            <span>AP</span>
+          </div>
           <div class="brand-info">
-            <h1 style="font-size:0.95rem; font-weight:700; color:#fff;">Artemia's Cyber Lounge & Pisonet</h1>
-            <span style="font-size:0.75rem; color:#94a3b8;">Client Terminal OS • Station Lock</span>
+            <h1 class="brand-title">ARTEMIA ESPORTS & PISONET LOUNGE</h1>
+            <span class="brand-subtitle">High-Performance Gaming Terminal</span>
           </div>
         </div>
 
-        <div class="demo-controls-wrapper" style="display:flex; align-items:center; gap:16px;">
-          <!-- Station Terminal Selector -->
-          <div class="terminal-pill" style="display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.05); padding:6px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1);">
-            <label for="pc-selector" style="font-size:0.75rem; color:#94a3b8; font-weight:700;">Station:</label>
-            <select id="pc-selector" style="background:transparent; border:none; color:#22d3ee; font-weight:700; font-family:inherit; outline:none; cursor:pointer;">
-              ${this.pcs.length > 0
-                ? this.pcs.map((p) => `<option value="${p.id}" ${p.id === this.currentPcId ? 'selected' : ''}>${p.name} (${p.status.toUpperCase()})</option>`).join('')
-                : `<option value="">No Stations Available</option>`}
-            </select>
+        <div class="station-meta-wrapper">
+          <!-- Station Badge -->
+          <div class="station-pill-highlight">
+            <span class="station-icon">🖥️</span>
+            <span class="station-name">${pc ? pc.name : 'PC 01'}</span>
           </div>
 
-          <!-- Server Settings Button -->
-          <button id="server-setup-btn" title="Configure Server IP Address" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 10px; color:#94a3b8; font-size:0.75rem; cursor:pointer; display:flex; align-items:center; gap:4px;">
-            ⚙️ Server
+          <!-- Live Cloud Health Indicator -->
+          <div class="station-cloud-status" title="${this.isConnected ? 'Connected to 24/7 Cloud' : 'Connecting to Cloud...'}">
+            <span class="cloud-dot ${this.isConnected ? 'online' : 'offline'}"></span>
+            <span class="cloud-text">${this.isConnected ? 'CLOUD LIVE' : 'CONNECTING'}</span>
+          </div>
+
+          <!-- Hidden gear settings button for setup -->
+          <button id="server-setup-btn" class="btn-subtle-gear" title="Terminal Settings">
+            ⚙️
           </button>
-
-          <!-- Connection Status Indicator -->
-          <div class="status-indicator connected" style="display:flex; align-items:center; gap:8px;">
-            <span id="conn-dot" class="dot" style="width:8px; height:8px; border-radius:50%; background:${this.isConnected ? '#10b981' : '#f43f5e'}; box-shadow:0 0 10px ${this.isConnected ? '#10b981' : '#f43f5e'};"></span>
-            <span id="conn-label" style="font-size:0.8rem; font-weight:600; color:${this.isConnected ? '#10b981' : '#f43f5e'};">${this.isConnected ? 'Atlas Cloud Online' : 'Server Offline'}</span>
-          </div>
         </div>
       </header>
     `;
@@ -1109,62 +1107,82 @@ class CustomerDesktopApp {
 
   private renderLoginScreen(pc?: PublicPC): string {
     const isLocked = this.stationLockedMessage || (pc ? pc.status === 'locked' || pc.status === 'offline' || pc.status === 'maintenance' : false);
-    const hasPcs = this.pcs.length > 0;
 
     return `
-      <div class="auth-card" style="max-width:460px; margin:40px auto; background:rgba(15, 23, 42, 0.88); backdrop-filter:blur(24px); border:1px solid rgba(255,255,255,0.1); border-radius:20px; padding:36px; box-shadow:0 24px 48px rgba(0,0,0,0.6);">
-        <h2 class="card-title" style="font-size:1.6rem; font-weight:800; color:#fff; margin-bottom:4px;">Customer Sign In</h2>
-        <p class="card-subtitle" style="font-size:0.85rem; color:#94a3b8; margin-bottom:20px;">
-          Signed into <strong id="current-pc-badge" style="color:#22d3ee;">${pc ? pc.name : 'Unknown Station'}</strong>
-        </p>
-
-        ${isLocked ? `
-          <div class="callout-danger" style="background:rgba(244, 63, 94, 0.2); border:1px solid #f43f5e; border-radius:12px; padding:16px; margin-bottom:20px; color:#fecdd3; text-align:center;">
-            <div style="font-size:2rem; margin-bottom:4px;">🔒</div>
-            <strong style="font-size:1.05rem; color:#fff; display:block;">STATION LOCKED BY COUNTER STAFF</strong>
-            <div style="font-size:0.85rem; margin-top:4px;">This PC is locked. Please approach the shop counter to activate or unlock this terminal.</div>
-          </div>
-        ` : ''}
-
-        ${!hasPcs ? `
-          <div class="callout-warning" style="background:rgba(245, 158, 11, 0.15); border:1px solid #f59e0b; border-radius:10px; padding:12px; margin-bottom:18px; color:#fde68a; font-size:0.82rem;">
-            <strong>No PC Stations Registered Yet</strong>
-            <div style="margin-top:2px;">Go to the Admin Portal at <a href="http://192.168.1.7:4200" target="_blank" style="color:#22d3ee; text-decoration:underline;">localhost:4200</a>, click <strong>+ Register PC</strong>, and add this terminal station to activate gameplay.</div>
-          </div>
-        ` : ''}
-
-        <div id="login-error-msg" style="display:none; background:rgba(244, 63, 94, 0.15); border:1px solid #f43f5e; border-radius:8px; padding:10px; color:#fecdd3; font-size:0.82rem; margin-bottom:14px;"></div>
-
-        <form id="customer-login-form">
-          <div class="form-group" style="margin-bottom:16px;">
-            <label class="form-label" for="login-username" style="display:block; font-size:0.75rem; font-weight:700; text-transform:uppercase; color:#94a3b8; margin-bottom:6px;">Username</label>
-            <div class="input-wrapper">
-              <input id="login-username" class="input-field" type="text" placeholder="Enter your username" required autocomplete="username" ${isLocked ? 'disabled' : ''} style="width:100%; padding:12px 14px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:#fff; font-family:inherit; outline:none;" />
+      <div class="auth-card-wrapper">
+        <div class="auth-card premium-card">
+          <div class="auth-header">
+            <div class="auth-avatar-shield">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
             </div>
+            <h2 class="card-title">Customer Sign In</h2>
+            <p class="card-subtitle">
+              Pagsulod sa imong account aron makadula sa <strong class="station-highlight">${pc ? pc.name : 'Terminal'}</strong>
+            </p>
           </div>
 
-          <div class="form-group" style="margin-bottom:20px;">
-            <label class="form-label" for="login-password" style="display:block; font-size:0.75rem; font-weight:700; text-transform:uppercase; color:#94a3b8; margin-bottom:6px;">Password</label>
-            <div class="input-wrapper" style="position:relative;">
-              <input id="login-password" class="input-field" type="password" placeholder="Enter password" required autocomplete="current-password" ${isLocked ? 'disabled' : ''} style="width:100%; padding:12px 14px; padding-right:60px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:#fff; font-family:inherit; outline:none;" />
-              <button type="button" class="toggle-password-btn" id="toggle-password-btn" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:#22d3ee; font-size:0.75rem; font-weight:700; cursor:pointer;">
-                Show
-              </button>
+          ${isLocked ? `
+            <div class="locked-banner">
+              <div class="locked-icon">🔒</div>
+              <div class="locked-text">
+                <strong>NAKA-LOCK KINI NGA STATION</strong>
+                <p>Naka-lock kini sa counter. Palihug duol sa tindahan aron ma-activate o ma-unlock kini nga PC.</p>
+              </div>
             </div>
-          </div>
+          ` : ''}
 
-          <button id="login-submit-btn" type="submit" class="btn btn-primary" ${isLocked ? 'disabled' : ''} style="width:100%; padding:14px; background:linear-gradient(135deg, #06b6d4, #3b82f6); border:none; border-radius:10px; color:#fff; font-weight:700; font-size:0.95rem; cursor:pointer; box-shadow:0 4px 15px rgba(6,182,212,0.3);">
-            Sign In to Terminal
-          </button>
-        </form>
+          <div id="login-error-msg" class="login-alert-error" style="display:none;"></div>
 
-        <div class="callout-info" style="margin-top:20px; display:flex; gap:10px; background:rgba(99, 102, 241, 0.1); border:1px solid rgba(99, 102, 241, 0.3); border-radius:10px; padding:12px; font-size:0.8rem; color:#c7d2fe;">
-          <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="flex-shrink:0;">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <div>
-            <strong style="color:#fff;">Need an Account?</strong>
-            <div style="margin-top:2px;">Approach shop staff at the counter to register your account and purchase time credits.</div>
+          <form id="customer-login-form" class="auth-form">
+            <div class="form-group">
+              <label class="form-label" for="login-username">Account Username</label>
+              <div class="input-with-icon">
+                <span class="input-icon">👤</span>
+                <input
+                  id="login-username"
+                  class="input-field"
+                  type="text"
+                  placeholder="I-type imong username"
+                  required
+                  autocomplete="username"
+                  ${isLocked ? 'disabled' : ''}
+                />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="login-password">Password</label>
+              <div class="input-with-icon">
+                <span class="input-icon">🔑</span>
+                <input
+                  id="login-password"
+                  class="input-field"
+                  type="password"
+                  placeholder="I-type imong password"
+                  required
+                  autocomplete="current-password"
+                  ${isLocked ? 'disabled' : ''}
+                />
+                <button type="button" class="btn-toggle-eye" id="toggle-password-btn">
+                  Show
+                </button>
+              </div>
+            </div>
+
+            <button id="login-submit-btn" type="submit" class="btn-primary-gaming" ${isLocked ? 'disabled' : ''}>
+              <span>🎮 SIGN IN & PLAY</span>
+            </button>
+          </form>
+
+          <div class="helper-box-counter">
+            <span class="helper-icon">💡</span>
+            <div class="helper-content">
+              <strong>Bag-o ka sa Artemia Pisonet?</strong>
+              <p>Duol lang sa counter/bantay aron magpa-rehistro sa imong account ug magpa-load og oras.</p>
+            </div>
           </div>
         </div>
       </div>
@@ -1173,29 +1191,45 @@ class CustomerDesktopApp {
 
   private renderPasswordChangeScreen(user: CustomerUser): string {
     return `
-      <div class="auth-card" style="max-width:440px; margin:40px auto; background:rgba(15, 23, 42, 0.85); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.1); border-radius:18px; padding:32px; box-shadow:0 20px 40px rgba(0,0,0,0.5);">
-        <h2 class="card-title" style="font-size:1.5rem; font-weight:800; color:#fff; margin-bottom:4px;">First-Login Password Setup</h2>
-        <p class="card-subtitle" style="font-size:0.85rem; color:#94a3b8; margin-bottom:20px;">
-          Welcome, <strong style="color:#22d3ee;">${user.fullName}</strong>! Since this is your first sign in with a temporary password, please create your personal security password to continue.
-        </p>
-
-        <div id="password-error-msg" style="display:none; background:rgba(244, 63, 94, 0.15); border:1px solid #f43f5e; border-radius:8px; padding:10px; color:#fecdd3; font-size:0.82rem; margin-bottom:14px;"></div>
-
-        <form id="change-password-form">
-          <div class="form-group" style="margin-bottom:16px;">
-            <label class="form-label" for="new-password" style="display:block; font-size:0.75rem; font-weight:700; text-transform:uppercase; color:#94a3b8; margin-bottom:6px;">New Personal Password</label>
-            <input id="new-password" class="input-field" type="password" placeholder="At least 6 characters" required style="width:100%; padding:12px 14px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:#fff; font-family:inherit; outline:none;" />
+      <div class="auth-card-wrapper">
+        <div class="auth-card premium-card">
+          <div class="auth-header">
+            <div class="auth-avatar-shield" style="border-color:#10b981; color:#10b981;">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <h2 class="card-title">Setup Personal Password</h2>
+            <p class="card-subtitle">
+              Maayong pag-abot, <strong style="color:#22d3ee;">${user.fullName}</strong>! Palihug paghimo sa imong kaugalingong password aron mas luwas ang imong account.
+            </p>
           </div>
 
-          <div class="form-group" style="margin-bottom:20px;">
-            <label class="form-label" for="confirm-password" style="display:block; font-size:0.75rem; font-weight:700; text-transform:uppercase; color:#94a3b8; margin-bottom:6px;">Confirm Password</label>
-            <input id="confirm-password" class="input-field" type="password" placeholder="Re-enter new password" required style="width:100%; padding:12px 14px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:#fff; font-family:inherit; outline:none;" />
-          </div>
+          <div id="password-error-msg" class="login-alert-error" style="display:none;"></div>
 
-          <button id="save-password-btn" type="submit" class="btn btn-success" style="width:100%; padding:14px; background:linear-gradient(135deg, #10b981, #059669); border:none; border-radius:10px; color:#fff; font-weight:700; font-size:0.95rem; cursor:pointer;">
-            Save Password & Continue
-          </button>
-        </form>
+          <form id="change-password-form" class="auth-form">
+            <div class="form-group">
+              <label class="form-label" for="new-password">Bag-ong Password</label>
+              <div class="input-with-icon">
+                <span class="input-icon">🔒</span>
+                <input id="new-password" class="input-field" type="password" placeholder="Labing menos 6 ka letra o numero" required />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="confirm-password">I-confirm ang Password</label>
+              <div class="input-with-icon">
+                <span class="input-icon">✓</span>
+                <input id="confirm-password" class="input-field" type="password" placeholder="I-type usab ang bag-ong password" required />
+              </div>
+            </div>
+
+            <button id="save-password-btn" type="submit" class="btn-primary-gaming" style="background:linear-gradient(135deg, #10b981, #059669);">
+              <span>✓ I-SAVE UG PADAYON</span>
+            </button>
+          </form>
+        </div>
       </div>
     `;
   }
@@ -1207,62 +1241,67 @@ class CustomerDesktopApp {
     const canPlay = (hasRemainingTime || isAuthorizedOpenTime) && user.status === 'active';
 
     return `
-      <div class="account-card" style="max-width:540px; margin:40px auto; background:rgba(15, 23, 42, 0.88); backdrop-filter:blur(24px); border:1px solid rgba(255,255,255,0.1); border-radius:20px; padding:32px; box-shadow:0 24px 48px rgba(0,0,0,0.6);">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px;">
-          <div>
-            <span style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:#94a3b8; font-weight:700;">Account Overview</span>
-            <h2 class="card-title" style="font-size:1.4rem; font-weight:800; color:#fff; margin-top:2px;">${user.fullName}</h2>
-            <div style="font-size:0.85rem; color:#22d3ee; font-weight:600;">@${user.username}</div>
+      <div class="auth-card-wrapper">
+        <div class="account-card premium-card">
+          <div class="account-header">
+            <div class="user-greeting-box">
+              <div class="user-avatar-badge">${(user.fullName || user.username).charAt(0).toUpperCase()}</div>
+              <div>
+                <span class="greeting-subtitle">Maayong pag-abot,</span>
+                <h2 class="user-full-name">${user.fullName}</h2>
+                <div class="user-handle">@${user.username}</div>
+              </div>
+            </div>
+
+            <button id="logout-btn" class="btn-signout" title="Sign out safely">
+              🚪 Sign Out
+            </button>
           </div>
 
-          <button id="logout-btn" class="btn btn-secondary" style="padding:8px 14px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.15); border-radius:8px; color:#fff; font-size:0.8rem; font-weight:600; cursor:pointer;">
-            Sign Out
-          </button>
-        </div>
+          ${!hasRemainingTime && !isAuthorizedOpenTime ? `
+            <div class="topup-required-banner">
+              <div class="banner-icon">⛔</div>
+              <div class="banner-text">
+                <strong>ZERO BALANCE (0 MINUTO NA LANG)</strong>
+                <p>Naka-lock ang desktop access. Palihug duol sa counter aron mag-load o mag-top up sa imong account.</p>
+              </div>
+            </div>
+          ` : ''}
 
-        ${!hasRemainingTime && !isAuthorizedOpenTime ? `
-          <div class="callout-danger" style="background:rgba(244,63,94,0.2); border:1px solid #f43f5e; padding:18px; border-radius:14px; margin-bottom:20px; text-align:center;">
-            <div style="font-size:2.2rem; margin-bottom:4px;">⛔</div>
-            <strong style="font-size:1.15rem; color:#fff; display:block;">PLEASE TOP UP: 0 BALANCE REMAINING</strong>
-            <div style="font-size:0.9rem; color:#fecdd3; margin-top:6px;">
-              Desktop access is locked. You cannot unlock this PC until you load time credits. Approach the counter staff to top up your account.
+          <!-- Giant Digital Timer Hero -->
+          <div class="hero-time-card ${remaining <= 300 && hasRemainingTime ? 'low-time-alert' : ''}">
+            <span class="time-card-label">IMONG ORAS NGA PWEDE GAMITON:</span>
+            <div class="giant-digital-clock">
+              ${formatSecondsToDigital(remaining)}
+            </div>
+            <div class="human-time-badge">
+              ${hasRemainingTime ? formatSecondsToHumanReadable(remaining) : 'Walay nahabilin nga oras'}
             </div>
           </div>
-        ` : ''}
 
-        <!-- Balance Hero -->
-        <div class="balance-hero" style="background:linear-gradient(135deg, rgba(6,182,212,0.15), rgba(99,102,241,0.15)); border:1px solid rgba(6,182,212,0.3); border-radius:14px; padding:24px; text-align:center; margin-bottom:20px;">
-          <div class="balance-label" style="font-size:0.8rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#94a3b8; margin-bottom:8px;">Remaining Playing Time</div>
-          <div class="digital-timer ${remaining <= 300 && hasRemainingTime ? 'low-time' : ''}" style="font-size:3.2rem; font-family:'JetBrains Mono', monospace; font-weight:800; color:#22d3ee; line-height:1;">
-            ${formatSecondsToDigital(remaining)}
+          <!-- Station Specs Info Row -->
+          <div class="station-info-row">
+            <div class="info-item">
+              <span class="info-label">Active Terminal</span>
+              <strong class="info-val">${pc ? pc.name : 'PC 01'}</strong>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Account Status</span>
+              <strong class="info-val status-active">✓ Active & Ready</strong>
+            </div>
           </div>
-          <div class="balance-human" style="font-size:0.9rem; color:#cbd5e1; margin-top:8px;">
-            ${hasRemainingTime ? formatSecondsToHumanReadable(remaining) : 'Zero balance remaining'}
-          </div>
+
+          <!-- Primary Start Button -->
+          ${canPlay ? `
+            <button id="start-session-btn" class="btn-start-gaming">
+              <span>🚀 SUGDI ANG PAGDULA (START PLAYING)</span>
+            </button>
+          ` : `
+            <button class="btn-disabled-topup" disabled>
+              <span>⛔ DUOL SA COUNTER ARON MAG-TOP UP</span>
+            </button>
+          `}
         </div>
-
-        <!-- Details Grid -->
-        <div class="account-details-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px;">
-          <div class="detail-box" style="background:rgba(255,255,255,0.03); padding:12px; border-radius:10px; border:1px solid rgba(255,255,255,0.05);">
-            <div class="detail-label" style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase;">Station Terminal</div>
-            <div class="detail-value" style="font-size:0.95rem; font-weight:700; color:#fff;">${pc ? pc.name : 'N/A'}</div>
-          </div>
-          <div class="detail-box" style="background:rgba(255,255,255,0.03); padding:12px; border-radius:10px; border:1px solid rgba(255,255,255,0.05);">
-            <div class="detail-label" style="font-size:0.7rem; color:#94a3b8; text-transform:uppercase;">Account Status</div>
-            <div class="detail-value" style="font-size:0.95rem; font-weight:700; color:#10b981;">Active</div>
-          </div>
-        </div>
-
-        <!-- Start Playing CTA -->
-        ${canPlay ? `
-          <button id="start-session-btn" class="btn btn-primary" style="width:100%; padding:16px; background:linear-gradient(135deg, #10b981, #06b6d4); border:none; border-radius:10px; color:#fff; font-weight:800; font-size:1.05rem; cursor:pointer; box-shadow:0 4px 15px rgba(16,185,129,0.3);">
-            ▶ Start Playing on ${pc ? pc.name : 'Terminal'}
-          </button>
-        ` : `
-          <button class="btn btn-secondary" disabled style="width:100%; padding:16px; background:rgba(244,63,94,0.15); border:1px solid #f43f5e; border-radius:10px; color:#fecdd3; font-weight:800; font-size:0.95rem; cursor:not-allowed;">
-            ⛔ Desktop Locked (0 Balance) — Please Top Up at Counter
-          </button>
-        `}
       </div>
     `;
   }

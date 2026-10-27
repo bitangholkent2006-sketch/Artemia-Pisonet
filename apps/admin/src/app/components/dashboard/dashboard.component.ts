@@ -106,6 +106,19 @@ import {
         </div>
 
         <div class="filter-controls-row">
+          <div class="pc-search-box">
+            <svg class="search-icon-sm" width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <input
+              type="text"
+              class="form-input pc-search-input"
+              placeholder="Quick search PC or player..."
+              [(ngModel)]="pcSearchQuery"
+            />
+            <button *ngIf="pcSearchQuery" type="button" class="btn-clear-search" (click)="pcSearchQuery = ''">✕</button>
+          </div>
+
           <button
             class="btn btn-sm"
             [ngClass]="statusFilter === 'all' ? 'btn-primary' : 'btn-secondary'"
@@ -118,27 +131,34 @@ import {
             [ngClass]="statusFilter === 'available' ? 'btn-primary' : 'btn-secondary'"
             (click)="statusFilter = 'available'"
           >
-            Available ({{ availablePcs }})
+            🟢 Available ({{ availablePcs }})
           </button>
           <button
             class="btn btn-sm"
             [ngClass]="statusFilter === 'in-use' ? 'btn-primary' : 'btn-secondary'"
             (click)="statusFilter = 'in-use'"
           >
-            In Use ({{ activeSessionsCount }})
+            🔵 In Use ({{ activeSessionsCount }})
           </button>
           <button
             class="btn btn-sm"
             [ngClass]="statusFilter === 'offline' ? 'btn-primary' : 'btn-secondary'"
             (click)="statusFilter = 'offline'"
           >
-            Offline
+            🔌 Offline
           </button>
         </div>
       </div>
 
       <!-- PC Grid Cards -->
       <div class="pc-cards-grid">
+        <div *ngIf="filteredPcs.length === 0" class="empty-fleet-state">
+          <div class="empty-icon">🔍</div>
+          <div class="empty-title">Walay PC Nakit-an</div>
+          <p class="empty-sub">Walay terminal nga ni-match sa filter o search query: "{{ pcSearchQuery }}"</p>
+          <button class="btn btn-sm btn-secondary" (click)="pcSearchQuery = ''; statusFilter = 'all'">I-reset ang Filter</button>
+        </div>
+
         <div
           *ngFor="let pc of filteredPcs"
           class="pc-card"
@@ -220,64 +240,66 @@ import {
           </div>
 
           <!-- Card Actions Footer -->
-          <div class="pc-actions-row">
+          <div class="pc-actions-container">
             <!-- If In Use -->
             <ng-container *ngIf="pc.status === 'in-use'">
               <button
-                class="btn btn-sm btn-secondary"
+                class="btn btn-primary-topup"
                 (click)="openAddTimeToSessionModal(pc)"
-                title="Add purchased time to active customer"
+                title="Top-up time credits to this playing customer"
               >
-                + Add Time
+                💳 + Add Time / Top-Up
               </button>
-              <button
-                class="btn btn-sm btn-warning"
-                (click)="handleStaffPause(pc)"
-                title="Pause and release station (saves remaining balance)"
-              >
-                ⏸ Pause
-              </button>
-              <button
-                class="btn btn-sm btn-secondary"
-                (click)="toggleLock(pc)"
-                title="Lock terminal station immediately (saves balance & blocks PC)"
-              >
-                🔒 Lock PC
-              </button>
-              <button
-                class="btn btn-sm btn-danger"
-                (click)="openEndSessionConfirm(pc)"
-                title="Force end session"
-              >
-                End
-              </button>
+              <div class="pc-secondary-actions">
+                <button
+                  class="btn btn-action-subtle warning"
+                  (click)="handleStaffPause(pc)"
+                  title="Pause session and save remaining time"
+                >
+                  ⏸ Pause
+                </button>
+                <button
+                  class="btn btn-action-subtle lock"
+                  (click)="toggleLock(pc)"
+                  title="Lock terminal screen immediately"
+                >
+                  🔒 Lock
+                </button>
+                <button
+                  class="btn btn-action-subtle danger"
+                  (click)="openEndSessionConfirm(pc)"
+                  title="Force end session"
+                >
+                  ✕ End
+                </button>
+              </div>
             </ng-container>
 
             <!-- If Available -->
             <ng-container *ngIf="pc.status === 'available'">
               <button
-                class="btn btn-sm btn-primary"
+                class="btn btn-primary-start"
                 (click)="openStartSessionModal(pc)"
-                title="Staff assign eligible customer to station"
+                title="Staff assign customer to station"
               >
-                ▶ Assign Session
+                ▶ Assign & Start Session
               </button>
               <button
-                class="btn btn-sm btn-secondary"
+                class="btn btn-action-subtle lock full-width"
                 (click)="toggleLock(pc)"
                 title="Lock terminal"
               >
-                Lock
+                🔒 Lock Station
               </button>
             </ng-container>
 
             <!-- If Locked -->
             <ng-container *ngIf="pc.status === 'locked'">
               <button
-                class="btn btn-sm btn-success"
+                class="btn btn-primary-unlock"
                 (click)="toggleLock(pc)"
               >
-                Unlock
+                🔓 Unlock Station
               </button>
             </ng-container>
 
@@ -620,9 +642,22 @@ export class DashboardComponent implements OnInit, OnDestroy {
       .reduce((sum, a) => sum + a.currentAccruedMinorUnits, 0);
   }
 
+  pcSearchQuery = '';
+
   get filteredPcs(): PC[] {
-    if (this.statusFilter === 'all') return this.state.pcs;
-    return this.state.pcs.filter((p) => p.status === this.statusFilter);
+    let list = this.state.pcs || [];
+    if (this.statusFilter !== 'all') {
+      list = list.filter((p) => p.status === this.statusFilter);
+    }
+    if (this.pcSearchQuery && this.pcSearchQuery.trim()) {
+      const q = this.pcSearchQuery.trim().toLowerCase();
+      list = list.filter((p) =>
+        (p.name && p.name.toLowerCase().includes(q)) ||
+        (p.identifier && p.identifier.toLowerCase().includes(q)) ||
+        (p.activeCustomerName && p.activeCustomerName.toLowerCase().includes(q))
+      );
+    }
+    return list;
   }
 
   get eligibleCustomers(): CustomerProfile[] {
