@@ -1,0 +1,37 @@
+{
+  "name": "artemias-pisonet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Full-stack real-time computer shop timer and customer account management system",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build:shared": "npm run build --workspace=packages/shared",
+    "dev:backend": "npm run dev --workspace=apps/backend",
+    "build:backend": "npm run build --workspace=apps/backend",
+    "start:backend": "npm run start --workspace=apps/backend",
+    "start:admin": "npm run start --workspace=apps/admin",
+    "build:admin": "npm run build --workspace=apps/admin",
+    "dev:customer": "npm run dev --workspace=apps/customer-desktop",
+    "build:customer": "npm run build --workspace=apps/customer-desktop",
+    "start:customer": "npm run start --workspace=apps/customer-desktop",
+    "build:all": "npm run build:shared && npm run build:backend && npm run build:admin && npm run build:customer",
+    "typecheck:shared": "npm run typecheck --workspace=packages/shared",
+    "seed:admin": "npm run bootstrap:admin --workspace=apps/backend",
+    "test:suite": "tsx tests/verify-phase2.ts"
+  },
+  "keywords": [
+    "pisonet",
+    "cybercafe",
+    "timer",
+    "electron",
+    "angular",
+    "hono",
+    "socket.io",
+    "mongodb-atlas"
+  ],
+  "author": "Artemia Team",
+  "license": "MIT"
+}

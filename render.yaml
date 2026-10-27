@@ -1,0 +1,64 @@
+services:
+  # ----------------------------------------------------------------------------
+  # Backend API & Real-Time Engine (Render Web Service)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: artemia-pisonet-backend
+    runtime: node
+    plan: free
+    region: singapore # Closest low-latency region to Philippines
+    buildCommand: npm install && npm run build:shared && npm run build:backend
+    startCommand: npm run start:backend
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: MONGODB_DB_NAME
+        value: artemias_pisonet
+      - key: MONGODB_URI
+        sync: false # Set securely in Render dashboard
+      - key: JWT_SECRET
+        generateValue: true # Render will generate a cryptographically strong 256-bit secret
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: SESSION_LEASE_DURATION_SECONDS
+        value: "90"
+      - key: DISCONNECT_GRACE_PERIOD_SECONDS
+        value: "60"
+      - key: ADMIN_ORIGIN
+        value: https://artemia-pisonet-admin.onrender.com
+      - key: ELECTRON_ORIGIN
+        value: "*"
+      - key: ADMIN_INIT_USERNAME
+        value: artemia_admin
+      - key: ADMIN_INIT_PASSWORD
+        sync: false # Optional: Set to configure custom initial admin password
+
+  # ----------------------------------------------------------------------------
+  # Admin Portal (Render Static Site)
+  # ----------------------------------------------------------------------------
+  - type: static
+    name: artemia-pisonet-admin
+    buildCommand: npm install && npm run build:shared && npm run build:admin
+    staticPublishPath: apps/admin/dist/admin/browser
+    autoDeploy: true
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=31536000; includeSubDomains; preload

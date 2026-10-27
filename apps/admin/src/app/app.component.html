@@ -1,0 +1,213 @@
+<div class="admin-cyber-bg"></div>
+
+<!-- 1. AUTH SCREEN (LIVE MONGODB LOGIN) -->
+<app-login
+  *ngIf="!isAuthenticated"
+  (loggedIn)="setActiveNav('dashboard')"
+></app-login>
+
+<!-- 2. AUTHENTICATED ADMIN PORTAL -->
+<div *ngIf="isAuthenticated" class="app-layout">
+  <!-- SIDEBAR NAVIGATION -->
+  <aside class="sidebar" [ngClass]="{'open': mobileSidebarOpen}">
+    <div class="sidebar-header">
+      <div class="brand-badge">AP</div>
+      <div>
+        <div class="brand-title">Artemia's Pisonet</div>
+        <div class="brand-tagline">Cyber Cafe Management</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Fleet Operations</div>
+
+      <button
+        type="button"
+        class="nav-link"
+        [ngClass]="{'active': activeNav === 'dashboard'}"
+        (click)="setActiveNav('dashboard')"
+      >
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+        </svg>
+        <span>Dashboard Fleet</span>
+        <span *ngIf="activeSessionsCount > 0" class="nav-badge">{{ activeSessionsCount }} live</span>
+      </button>
+
+      <button
+        type="button"
+        class="nav-link"
+        [ngClass]="{'active': activeNav === 'customers'}"
+        (click)="setActiveNav('customers')"
+      >
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+        </svg>
+        <span>Customers & Accounts</span>
+      </button>
+
+      <button
+        type="button"
+        class="nav-link"
+        [ngClass]="{'active': activeNav === 'time-credits'}"
+        (click)="setActiveNav('time-credits')"
+      >
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>Time Credits & Cashier</span>
+      </button>
+
+      <button
+        type="button"
+        class="nav-link"
+        [ngClass]="{'active': activeNav === 'sessions'}"
+        (click)="setActiveNav('sessions')"
+      >
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>Sessions & Open-Time</span>
+      </button>
+
+      <button
+        type="button"
+        class="nav-link"
+        [ngClass]="{'active': activeNav === 'pcs'}"
+        (click)="setActiveNav('pcs')"
+      >
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+        <span>PC Fleet Inventory</span>
+      </button>
+
+      <div class="nav-section-label">Analytics & System</div>
+
+      <button
+        type="button"
+        class="nav-link"
+        [ngClass]="{'active': activeNav === 'reports'}"
+        (click)="setActiveNav('reports')"
+      >
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        <span>Reports & Pricing</span>
+      </button>
+
+      <button
+        type="button"
+        class="nav-link"
+        [ngClass]="{'active': activeNav === 'customer-preview'}"
+        (click)="setActiveNav('customer-preview')"
+        style="border-color:rgba(6, 182, 212, 0.4); background:rgba(6, 182, 212, 0.08);"
+      >
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color:var(--accent-cyan);">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+        </svg>
+        <span style="color:#fff; font-weight:700;">Customer Terminal</span>
+        <span class="session-type-pill fixed" style="font-size:0.65rem;">Live</span>
+      </button>
+    </nav>
+
+    <!-- Sidebar Footer with User Details -->
+    <div class="sidebar-footer">
+      <div class="user-card">
+        <div class="user-avatar">
+          {{ (currentUser?.fullName?.charAt(0)) || 'A' }}
+        </div>
+        <div class="user-info">
+          <div class="user-name">{{ currentUser?.fullName || 'Artemia Admin' }}</div>
+          <span class="user-role-badge">{{ (currentUser?.role || 'admin') | uppercase }}</span>
+        </div>
+        <button
+          type="button"
+          class="btn btn-sm btn-secondary logout-btn"
+          (click)="handleLogout()"
+          title="Sign Out"
+        >
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          Exit
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT AREA -->
+  <div class="content-area">
+    <!-- Top Navbar -->
+    <header class="top-navbar">
+      <div class="navbar-left">
+        <button
+          type="button"
+          class="mobile-menu-toggle"
+          (click)="toggleMobileSidebar()"
+          aria-label="Toggle Navigation Menu"
+        >
+          <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+
+        <h1 class="page-header-title">
+          {{ activeNav === 'dashboard' ? 'Fleet Overview & Terminal Matrix' :
+             activeNav === 'customers' ? 'Customer Accounts Directory' :
+             activeNav === 'time-credits' ? 'Cashier & Time Purchases' :
+             activeNav === 'sessions' ? 'Live Session Controls' :
+             activeNav === 'pcs' ? 'PC Hardware Inventory' :
+             activeNav === 'reports' ? 'Business Reports & Settings' :
+             'Customer Terminal Interface' }}
+        </h1>
+      </div>
+
+      <div class="navbar-right">
+        <!-- Live Cloud Status Pill -->
+        <div class="status-indicator connected">
+          <span class="dot"></span>
+          <span>ATLAS CLOUD ONLINE</span>
+        </div>
+
+        <!-- Manual Re-Sync Button -->
+        <button
+          type="button"
+          class="btn btn-sm btn-secondary refresh-btn"
+          (click)="adminState.syncFromBackend()"
+          title="Sync latest data from MongoDB Atlas"
+        >
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          <span>Sync Atlas</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Operational Status Banner -->
+    <div class="server-reminder-banner">
+      <div class="banner-left">
+        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color:var(--accent-cyan); flex-shrink:0;">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7" />
+        </svg>
+        <span>
+          <strong>Live Production Mode:</strong> Connected to live MongoDB Atlas cluster. All customer balances, time purchases, and terminal sessions persist in real-time.
+        </span>
+      </div>
+    </div>
+
+    <!-- Active View Router -->
+    <main class="page-container">
+      <app-dashboard *ngIf="activeNav === 'dashboard'"></app-dashboard>
+      <app-customers *ngIf="activeNav === 'customers'"></app-customers>
+      <app-time-credits *ngIf="activeNav === 'time-credits'"></app-time-credits>
+      <app-sessions *ngIf="activeNav === 'sessions'"></app-sessions>
+      <app-pcs *ngIf="activeNav === 'pcs'"></app-pcs>
+      <app-reports *ngIf="activeNav === 'reports'"></app-reports>
+      <app-customer-preview *ngIf="activeNav === 'customer-preview'"></app-customer-preview>
+    </main>
+  </div>
+</div>

@@ -1,0 +1,24 @@
+{
+  "name": "customer-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Customer PC desktop application for Artemia's Pisonet",
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build:renderer": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "build": "npm run build:renderer && npm run build:electron",
+    "start": "npm run build && electron ."
+  },
+  "dependencies": {
+    "@pisonet/shared": "*",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "electron": "^34.2.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.2.0"
+  }
+}
