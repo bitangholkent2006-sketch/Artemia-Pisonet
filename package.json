@@ -16,7 +16,7 @@
     "build:backend": "npm run build --workspace=apps/backend",
     "start:backend": "npm run start --workspace=apps/backend",
     "start:admin": "npm run start --workspace=apps/admin",
-    "build:admin": "npm run build --workspace=apps/admin",
+    "build:admin": "npm run build:shared && npm run build --workspace=apps/admin",
     "dev:customer": "npm run dev --workspace=apps/customer-desktop",
     "build:customer": "npm run build --workspace=apps/customer-desktop",
     "start:customer": "npm run start --workspace=apps/customer-desktop",
