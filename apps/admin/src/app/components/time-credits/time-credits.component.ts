@@ -17,261 +17,375 @@ import {
   imports: [CommonModule, FormsModule],
   template: `
     <div class="time-credits-view">
-      <!-- Header -->
-      <div class="section-header-row">
+      <!-- Header Row with Quick Stats -->
+      <div class="section-header-row cashier-header-row">
         <div>
           <h2 class="section-title">
-            <span>Time Credit Purchases & Cashier</span>
+            <span class="cashier-title-badge">💳</span>
+            <span>POS Cashier & Time Dispenser</span>
           </h2>
-          <p style="font-size:0.82rem; color:var(--text-dim); margin-top:2px;">
-            Top up playing balances for registered customers. Keep purchased time, payments, and open-time distinct.
+          <p class="cashier-subtitle">
+            Top up customer balances, dispense prepaid time cards, and process cash or e-wallet payments.
           </p>
         </div>
 
-        <div style="display:flex; gap:12px; align-items:center;">
-          <span style="font-size:0.8rem; color:var(--text-dim);">
-            Base Rate: <strong style="color:#fff;">{{ adminState.formatCurrency(state.pricing.baseHourlyRateMinorUnits) }}/hr</strong>
-          </span>
+        <div class="cashier-header-badges">
+          <div class="pos-status-badge">
+            <span class="dot pulse"></span>
+            <span>REGISTER 01 • ACTIVE</span>
+          </div>
+          <div class="rate-badge-pill">
+            <span class="rate-label">BASE RATE:</span>
+            <strong class="rate-val">{{ adminState.formatCurrency(state.pricing.baseHourlyRateMinorUnits) }}/hr</strong>
+          </div>
         </div>
       </div>
 
-      <!-- Main Responsive Cashier Grid -->
-      <div class="cashier-responsive-grid">
-        <!-- Left: Purchase Form Card -->
-        <div class="cashier-card">
-          <div class="card-header-clean">
-            <h3 class="card-clean-title">
-              💳 Record Time Credit Purchase
-            </h3>
-            <span class="rate-badge">
-              Base: {{ adminState.formatCurrency(state.pricing.baseHourlyRateMinorUnits) }}/hr
-            </span>
-          </div>
+      <!-- Main POS Split Workspace -->
+      <div class="pos-workspace-grid">
+        <!-- LEFT PANEL: CUSTOMER & PACKAGE SELECTION -->
+        <div class="pos-left-panel">
+          <!-- 1. Customer Selection Card -->
+          <div class="pos-card customer-pos-card">
+            <div class="pos-card-header">
+              <div class="pos-step-badge">1</div>
+              <div class="pos-step-info">
+                <h3 class="pos-step-title">Select Customer Account</h3>
+                <span class="pos-step-sub">Select who receives the playing time</span>
+              </div>
+              <span class="active-count-chip">{{ activeCustomers.length }} Registered</span>
+            </div>
 
-          <!-- Step 1: Select Customer -->
-          <div class="form-group">
-            <label class="form-label">1. Select Customer *</label>
-            <select class="form-select full-width-select" [(ngModel)]="selectedCustomerId" (change)="onCustomerChanged()">
-              <option value="" disabled selected>-- Choose Customer Account --</option>
-              <option *ngFor="let c of activeCustomers" [value]="c.id">
-                {{ c.fullName }} (&#64;{{ c.username }}) — Balance: {{ adminState.formatHuman(c.balance.remainingSeconds) }}
-                {{ c.activePcId ? ' [Playing on ' + getPcName(c.activePcId) + ']' : '' }}
-              </option>
-            </select>
-          </div>
+            <div class="customer-picker-wrap">
+              <select class="form-select pos-customer-select" [(ngModel)]="selectedCustomerId" (change)="onCustomerChanged()">
+                <option value="" disabled selected>-- Search or select customer account --</option>
+                <option *ngFor="let c of activeCustomers" [value]="c.id">
+                  {{ c.fullName }} (&#64;{{ c.username }}) — Current: {{ adminState.formatHuman(c.balance.remainingSeconds) }}
+                  {{ c.activePcId ? ' • [Playing on ' + getPcName(c.activePcId) + ']' : '' }}
+                </option>
+              </select>
+            </div>
 
-          <!-- Active Customer Playing Notice -->
-          <div *ngIf="selectedCustomer?.activePcId" class="callout-info">
-            <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            <div>
-              <strong>Active Session in Progress</strong>
-              <div>Customer is currently playing on <strong>{{ getPcName(selectedCustomer?.activePcId || '') }}</strong>. Time added will immediately extend their running countdown without logout.</div>
+            <!-- Selected Customer Quick Profile Box -->
+            <div *ngIf="selectedCustomer" class="selected-customer-pill-card">
+              <div class="cust-avatar-ring">
+                {{ selectedCustomer.fullName.charAt(0).toUpperCase() }}
+              </div>
+              <div class="cust-info-col">
+                <div class="cust-name-row">
+                  <span class="cust-fullname">{{ selectedCustomer.fullName }}</span>
+                  <span class="cust-username">&#64;{{ selectedCustomer.username }}</span>
+                </div>
+                <div class="cust-telemetry-row">
+                  <span class="cust-balance-chip" [ngClass]="selectedCustomer.balance.remainingSeconds > 0 ? 'has-balance' : 'zero-balance'">
+                    ⏳ Balance: <strong>{{ adminState.formatHuman(selectedCustomer.balance.remainingSeconds) }}</strong>
+                    ({{ adminState.formatDigital(selectedCustomer.balance.remainingSeconds) }})
+                  </span>
+                  <span *ngIf="selectedCustomer.activePcId" class="cust-station-chip in-game">
+                    🟢 Playing on <strong>{{ getPcName(selectedCustomer.activePcId) }}</strong>
+                  </span>
+                  <span *ngIf="!selectedCustomer.activePcId" class="cust-station-chip idle">
+                    ⚪ Desktop Locked (Not Playing)
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- In-game notification banner -->
+            <div *ngIf="selectedCustomer?.activePcId" class="live-gameplay-banner">
+              <span class="live-icon">⚡</span>
+              <div>
+                <strong>Active PC Session Detected:</strong> Time added will immediately extend their running countdown on <strong>{{ getPcName(selectedCustomer?.activePcId || '') }}</strong> without logging out!
+              </div>
             </div>
           </div>
 
-          <!-- Step 2: Mode (Package vs Custom Time) -->
-          <div class="form-group">
-            <label class="form-label">2. Purchase Mode</label>
-            <div class="mode-toggle-group">
-              <button
-                type="button"
-                class="btn mode-btn"
-                [ngClass]="purchaseMode === 'package' ? 'btn-primary' : 'btn-secondary'"
-                (click)="purchaseMode = 'package'"
-              >
-                Standard Packages
-              </button>
-              <button
-                type="button"
-                class="btn mode-btn"
-                [ngClass]="purchaseMode === 'custom' ? 'btn-primary' : 'btn-secondary'"
-                (click)="purchaseMode = 'custom'"
-              >
-                Custom Minutes
-              </button>
-            </div>
-          </div>
+          <!-- 2. Package & Duration Card -->
+          <div class="pos-card package-pos-card">
+            <div class="pos-card-header">
+              <div class="pos-step-badge">2</div>
+              <div class="pos-step-info">
+                <h3 class="pos-step-title">Choose Time Credit Package</h3>
+                <span class="pos-step-sub">Select a pre-set coin package or custom minutes</span>
+              </div>
 
-          <!-- Packages Grid -->
-          <div *ngIf="purchaseMode === 'package'" class="form-group">
-            <label class="form-label">Select Package</label>
-            <div class="packages-grid">
+              <!-- Mode Toggle Tabs -->
+              <div class="pos-mode-switch">
+                <button
+                  type="button"
+                  class="pos-mode-tab"
+                  [class.active]="purchaseMode === 'package'"
+                  (click)="purchaseMode = 'package'"
+                >
+                  ⚡ Pre-sets ({{ state.pricing.packages.length }})
+                </button>
+                <button
+                  type="button"
+                  class="pos-mode-tab"
+                  [class.active]="purchaseMode === 'custom'"
+                  (click)="purchaseMode = 'custom'"
+                >
+                  ⏱ Custom Minutes
+                </button>
+              </div>
+            </div>
+
+            <!-- Mode A: Packages Grid -->
+            <div *ngIf="purchaseMode === 'package'" class="pos-packages-deck">
               <div
                 *ngFor="let pkg of state.pricing.packages"
-                class="package-card"
-                [ngClass]="{'active-pkg': selectedPackageId === pkg.id}"
+                class="pos-pkg-tile"
+                [class.selected]="selectedPackageId === pkg.id"
                 (click)="selectedPackageId = pkg.id"
               >
-                <div class="pkg-header">
-                  <span class="chip-name">{{ pkg.name }}</span>
-                  <span *ngIf="pkg.badge" class="session-type-pill fixed">{{ pkg.badge }}</span>
+                <!-- Selection Checkmark -->
+                <div class="pkg-selected-indicator" *ngIf="selectedPackageId === pkg.id">
+                  ✓
                 </div>
-                <div class="pkg-price">
-                  {{ adminState.formatCurrency(pkg.priceMinorUnits) }}
+
+                <div class="pkg-top-row">
+                  <span class="pkg-title">{{ pkg.name }}</span>
+                  <span *ngIf="pkg.badge" class="pkg-tier-badge" [ngClass]="getBadgeClass(pkg.badge)">
+                    {{ pkg.badge }}
+                  </span>
                 </div>
-                <div class="pkg-duration">
-                  {{ pkg.durationMinutes }} mins ({{ pkg.durationSeconds }}s)
+
+                <div class="pkg-price-row">
+                  <span class="pkg-currency-symbol">₱</span>
+                  <span class="pkg-price-number">{{ (pkg.priceMinorUnits / 100).toFixed(2) }}</span>
+                </div>
+
+                <div class="pkg-bottom-row">
+                  <span class="pkg-clock-icon">⏱</span>
+                  <span class="pkg-duration-text">{{ formatDurationLabel(pkg.durationMinutes) }}</span>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Custom Time Input -->
-          <div *ngIf="purchaseMode === 'custom'" class="form-group">
-            <label class="form-label">Enter Custom Minutes</label>
-            <div class="custom-minutes-row">
-              <input
-                type="number"
-                min="5"
-                step="5"
-                class="form-input custom-min-input"
-                [(ngModel)]="customMinutes"
-                (input)="calculateCustomPrice()"
-              />
-              <span class="custom-min-unit">minutes</span>
-              <div class="custom-price-display">
-                <span class="label">Calculated Price:</span>
-                <strong class="price-val">{{ adminState.formatCurrency(customCalculatedPriceMinorUnits) }}</strong>
+            <!-- Mode B: Custom Minutes Calculator -->
+            <div *ngIf="purchaseMode === 'custom'" class="pos-custom-calculator">
+              <div class="custom-calc-main">
+                <div class="custom-input-box">
+                  <label class="calc-label">Duration (Minutes):</label>
+                  <div class="input-with-controls">
+                    <button type="button" class="btn-step" (click)="setCustomMinutes(customMinutes - 15)">-15m</button>
+                    <input
+                      type="number"
+                      min="5"
+                      step="5"
+                      class="calc-numeric-input"
+                      [(ngModel)]="customMinutes"
+                      (input)="calculateCustomPrice()"
+                    />
+                    <button type="button" class="btn-step" (click)="setCustomMinutes(customMinutes + 15)">+15m</button>
+                  </div>
+                </div>
+
+                <div class="custom-price-readout-card">
+                  <span class="calc-sub">CALCULATED PRICE:</span>
+                  <div class="calc-price-big">
+                    {{ adminState.formatCurrency(customCalculatedPriceMinorUnits) }}
+                  </div>
+                  <span class="calc-rate-note">&#64; ₱{{ (state.pricing.baseHourlyRateMinorUnits / 100).toFixed(2) }} per hour</span>
+                </div>
+              </div>
+
+              <!-- Quick Presets -->
+              <div class="quick-presets-row">
+                <span class="presets-label">Quick Add:</span>
+                <button type="button" class="preset-chip" (click)="setCustomMinutes(30)">30 Mins</button>
+                <button type="button" class="preset-chip" (click)="setCustomMinutes(60)">1 Hour</button>
+                <button type="button" class="preset-chip" (click)="setCustomMinutes(120)">2 Hours</button>
+                <button type="button" class="preset-chip" (click)="setCustomMinutes(180)">3 Hours</button>
+                <button type="button" class="preset-chip" (click)="setCustomMinutes(300)">5 Hours</button>
               </div>
             </div>
           </div>
-
-          <!-- Step 3: Payment Method -->
-          <div class="form-group">
-            <label class="form-label">3. Payment Tender</label>
-            <div class="tender-grid">
-              <button
-                type="button"
-                class="btn btn-secondary tender-btn"
-                [ngClass]="{'btn-primary': paymentMethod === 'cash'}"
-                (click)="paymentMethod = 'cash'"
-              >
-                💵 Cash
-              </button>
-              <button
-                type="button"
-                class="btn btn-secondary tender-btn"
-                [ngClass]="{'btn-primary': paymentMethod === 'gcash'}"
-                (click)="paymentMethod = 'gcash'"
-              >
-                📱 GCash
-              </button>
-              <button
-                type="button"
-                class="btn btn-secondary tender-btn"
-                [ngClass]="{'btn-primary': paymentMethod === 'maya'}"
-                (click)="paymentMethod = 'maya'"
-              >
-                💳 Maya
-              </button>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Reference Number (Optional)</label>
-            <input
-              type="text"
-              class="form-input"
-              style="width:100%;"
-              placeholder="e.g. GCash Ref # or Cash Slip"
-              [(ngModel)]="referenceNumber"
-            />
-          </div>
-
-          <!-- Live Inline Order Summary Bar -->
-          <div class="inline-summary-box">
-            <div class="summary-item">
-              <span class="summary-label">Customer</span>
-              <strong class="summary-val">{{ selectedCustomer ? selectedCustomer.fullName : 'None Selected' }}</strong>
-            </div>
-            <div class="summary-item">
-              <span class="summary-label">Credit</span>
-              <strong class="summary-val text-cyan">
-                {{ purchaseMode === 'package' ? (selectedPackage?.name || 'No package') : customMinutes + ' Mins' }}
-              </strong>
-            </div>
-            <div class="summary-item total">
-              <span class="summary-label">Total Due</span>
-              <strong class="summary-val text-emerald price-lg">
-                {{ adminState.formatCurrency(currentOrderTotalMinorUnits) }}
-              </strong>
-            </div>
-          </div>
-
-          <!-- Submit Button -->
-          <button
-            type="button"
-            class="btn-confirm-purchase"
-            [disabled]="!selectedCustomerId || isProcessing"
-            (click)="handleConfirmPurchase()"
-          >
-            <span *ngIf="!isProcessing">
-              ✓ Confirm & Credit Time ({{ adminState.formatCurrency(currentOrderTotalMinorUnits) }})
-            </span>
-            <span *ngIf="isProcessing">
-              Processing Payment & Crediting Account...
-            </span>
-          </button>
         </div>
 
-        <!-- Right: Order Summary Card (On desktop beside, on mobile stacks below) -->
-        <div class="summary-sidebar-col">
-          <div class="cashier-card">
-            <h4 class="card-clean-title" style="margin-bottom:12px;">
-              📋 Transaction Details
-            </h4>
-
-            <div class="summary-details-card">
-              <div class="detail-row">
-                <span class="label">Customer Account:</span>
-                <span class="val">{{ selectedCustomer ? selectedCustomer.fullName : 'None Selected' }}</span>
+        <!-- RIGHT PANEL: POS CASHIER RECEIPT & CHECKOUT -->
+        <div class="pos-right-panel">
+          <div class="pos-terminal-register">
+            <!-- Terminal Header -->
+            <div class="terminal-header">
+              <div class="terminal-brand-row">
+                <div class="register-icon">🧾</div>
+                <div>
+                  <h3 class="terminal-title">POS CASHIER REGISTER</h3>
+                  <div class="terminal-sub">ARTEMIA ESPORTS LOUNGE</div>
+                </div>
               </div>
-              <div class="detail-row">
-                <span class="label">Purchased Credit:</span>
-                <span class="val text-cyan">
+              <span class="terminal-chip">INSTANT CREDIT</span>
+            </div>
+
+            <!-- Receipt Body Details -->
+            <div class="receipt-body">
+              <!-- Customer Line -->
+              <div class="receipt-item-row">
+                <span class="receipt-key">Customer Account</span>
+                <span class="receipt-val" [class.highlight]="selectedCustomer">
+                  {{ selectedCustomer ? selectedCustomer.fullName : 'None Selected' }}
+                </span>
+              </div>
+
+              <div *ngIf="selectedCustomer" class="receipt-item-row sub-row">
+                <span class="receipt-key">Username & ID</span>
+                <span class="receipt-val font-mono">&#64;{{ selectedCustomer.username }}</span>
+              </div>
+
+              <!-- Time Credit Line -->
+              <div class="receipt-item-row">
+                <span class="receipt-key">Purchased Time</span>
+                <span class="receipt-val text-cyan font-bold">
                   {{ purchaseMode === 'package' ? (selectedPackage?.name || 'None') : customMinutes + ' Minutes' }}
                 </span>
               </div>
-              <div class="detail-row">
-                <span class="label">Payment Tender:</span>
-                <span class="val uppercase">{{ paymentMethod }}</span>
-              </div>
-              <div class="detail-divider"></div>
-              <div class="detail-row total-row">
-                <span>Total Amount Due:</span>
-                <span class="text-emerald total-price">
-                  {{ adminState.formatCurrency(currentOrderTotalMinorUnits) }}
+
+              <div class="receipt-item-row sub-row">
+                <span class="receipt-key">Playable Credit</span>
+                <span class="receipt-val text-emerald font-bold">
+                  + {{ purchaseMode === 'package' && selectedPackage ? adminState.formatHuman(selectedPackage.durationSeconds) : adminState.formatHuman(customMinutes * 60) }}
                 </span>
               </div>
-            </div>
 
-            <!-- Last Transaction Success Confirmation Card -->
-            <div *ngIf="lastPaymentSuccess" class="callout-info success-payment-callout">
-              <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color:var(--accent-emerald); flex-shrink:0;">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div>
-                <strong style="color:var(--accent-emerald);">Payment Recorded & Credited!</strong>
-                <div style="font-size:0.82rem; margin-top:2px;">
-                  Receipt #{{ lastPaymentSuccess.referenceNumber }} • Added {{ adminState.formatHuman(lastPaymentSuccess.timeAddedSeconds) }} to {{ lastPaymentSuccess.customerName }}.
+              <div class="receipt-divider"></div>
+
+              <!-- Grand Total Price Display -->
+              <div class="grand-total-display-card">
+                <div class="grand-total-label-row">
+                  <span class="total-label-text">TOTAL AMOUNT DUE</span>
+                  <span class="total-currency-code">PHP</span>
+                </div>
+                <div class="grand-total-digits">
+                  {{ adminState.formatCurrency(currentOrderTotalMinorUnits) }}
                 </div>
               </div>
-            </div>
-          </div>
 
-          <!-- Information Callout on Distinctions -->
-          <div class="callout-info info-distinction">
-            <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="flex-shrink:0;">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div>
-              <strong>Visual & Ledger Distinction</strong>
-              <div style="font-size:0.8rem; margin-top:4px; line-height:1.45;">
-                • <strong>Purchased Time:</strong> Pre-paid fixed balance in seconds.<br/>
-                • <strong>Recorded Payments:</strong> Fully settled cashier receipts.<br/>
-                • <strong>Unpaid Open-Time Charges:</strong> Accrued post-paid gameplay settled upon checkout.
+              <!-- Step 3: Payment Tender Selection -->
+              <div class="payment-method-section">
+                <label class="pos-section-label">SELECT PAYMENT METHOD</label>
+                <div class="tender-cards-grid">
+                  <!-- Cash -->
+                  <button
+                    type="button"
+                    class="tender-card cash"
+                    [class.selected]="paymentMethod === 'cash'"
+                    (click)="paymentMethod = 'cash'"
+                  >
+                    <span class="tender-icon">💵</span>
+                    <span class="tender-name">Cash</span>
+                    <span class="tender-sub">Physical Counter</span>
+                  </button>
+
+                  <!-- GCash -->
+                  <button
+                    type="button"
+                    class="tender-card gcash"
+                    [class.selected]="paymentMethod === 'gcash'"
+                    (click)="paymentMethod = 'gcash'"
+                  >
+                    <span class="tender-icon">📱</span>
+                    <span class="tender-name">GCash</span>
+                    <span class="tender-sub">QR / Express</span>
+                  </button>
+
+                  <!-- Maya -->
+                  <button
+                    type="button"
+                    class="tender-card maya"
+                    [class.selected]="paymentMethod === 'maya'"
+                    (click)="paymentMethod = 'maya'"
+                  >
+                    <span class="tender-icon">💳</span>
+                    <span class="tender-name">Maya</span>
+                    <span class="tender-sub">Wallet / Card</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Cash Change Calculator (When Cash Selected) -->
+              <div *ngIf="paymentMethod === 'cash'" class="cash-tender-calculator">
+                <div class="cash-calc-header">
+                  <span class="pos-section-label">CASH TENDERED & CHANGE</span>
+                  <button type="button" class="btn-exact" (click)="setTendered(currentOrderTotalMinorUnits / 100)">
+                    Exact
+                  </button>
+                </div>
+
+                <!-- Quick Cash Buttons -->
+                <div class="quick-cash-chips">
+                  <button type="button" class="cash-chip" (click)="setTendered(20)">₱20</button>
+                  <button type="button" class="cash-chip" (click)="setTendered(50)">₱50</button>
+                  <button type="button" class="cash-chip" (click)="setTendered(100)">₱100</button>
+                  <button type="button" class="cash-chip" (click)="setTendered(200)">₱200</button>
+                  <button type="button" class="cash-chip" (click)="setTendered(500)">₱500</button>
+                </div>
+
+                <div class="tendered-change-row">
+                  <div class="tendered-input-col">
+                    <span class="tender-label-sm">Cash Received:</span>
+                    <div class="tender-input-wrap">
+                      <span>₱</span>
+                      <input
+                        type="number"
+                        class="form-input tender-input"
+                        [(ngModel)]="tenderedAmount"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="change-readout-col" *ngIf="tenderedAmount > 0">
+                    <span class="tender-label-sm">Change to Customer:</span>
+                    <strong class="change-digits" [class.negative]="changeAmount < 0">
+                      ₱{{ changeAmount.toFixed(2) }}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Optional Reference input -->
+              <div class="reference-input-wrap">
+                <label class="pos-section-label">REFERENCE # / RECEIPT NOTE (OPTIONAL)</label>
+                <input
+                  type="text"
+                  class="form-input pos-ref-input"
+                  placeholder="e.g. GCash Ref 1234... or Cash Slip"
+                  [(ngModel)]="referenceNumber"
+                />
+              </div>
+
+              <!-- Big Checkout Confirm Button -->
+              <button
+                type="button"
+                class="pos-checkout-btn"
+                [disabled]="!selectedCustomerId || isProcessing"
+                (click)="handleConfirmPurchase()"
+              >
+                <span *ngIf="!isProcessing" class="btn-checkout-content">
+                  <span class="checkout-icon">✓</span>
+                  <span>CONFIRM & CREDIT TIME ({{ adminState.formatCurrency(currentOrderTotalMinorUnits) }})</span>
+                </span>
+                <span *ngIf="isProcessing" class="btn-checkout-content">
+                  <span class="spinner-sm"></span>
+                  <span>CREDITING ACCOUNT IN ATLAS...</span>
+                </span>
+              </button>
+
+              <!-- Prompt if no customer selected -->
+              <div *ngIf="!selectedCustomerId" class="pos-select-prompt">
+                👆 Please select a customer account in Step 1 to enable checkout.
+              </div>
+
+              <!-- Success Confirmation Flash Card -->
+              <div *ngIf="lastPaymentSuccess" class="pos-success-banner">
+                <div class="success-top-row">
+                  <span class="success-badge-icon">✓</span>
+                  <strong>PAYMENT SUCCESSFUL & CREDITED!</strong>
+                </div>
+                <div class="success-details-text">
+                  Receipt #{{ lastPaymentSuccess.referenceNumber || lastPaymentSuccess.id }} • Added <strong>{{ adminState.formatHuman(lastPaymentSuccess.timeAddedSeconds) }}</strong> to <strong>{{ lastPaymentSuccess.customerName }}</strong>.
+                </div>
               </div>
             </div>
           </div>
@@ -282,11 +396,6 @@ import {
   styles: [`
     .time-credits-view {
       /* Keep container stationary */
-    }
-    .active-pkg {
-      border-color: var(--primary) !important;
-      background: rgba(6, 182, 212, 0.12) !important;
-      box-shadow: 0 0 12px var(--primary-glow);
     }
   `]
 })
@@ -301,6 +410,7 @@ export class TimeCreditsComponent implements OnInit, OnDestroy {
   customCalculatedPriceMinorUnits = 2000;
   paymentMethod: PaymentMethod = 'cash';
   referenceNumber = '';
+  tenderedAmount = 0;
   isProcessing = false;
   lastPaymentSuccess: PaymentRecord | null = null;
 
@@ -338,6 +448,11 @@ export class TimeCreditsComponent implements OnInit, OnDestroy {
     return this.customCalculatedPriceMinorUnits;
   }
 
+  get changeAmount(): number {
+    const due = this.currentOrderTotalMinorUnits / 100;
+    return this.tenderedAmount - due;
+  }
+
   getPcName(pcId: string): string {
     return this.state.pcs.find((p) => p.id === pcId)?.name || 'PC';
   }
@@ -346,9 +461,36 @@ export class TimeCreditsComponent implements OnInit, OnDestroy {
     this.lastPaymentSuccess = null;
   }
 
+  setTendered(amount: number) {
+    this.tenderedAmount = amount;
+  }
+
+  setCustomMinutes(mins: number) {
+    this.customMinutes = Math.max(5, mins);
+    this.calculateCustomPrice();
+  }
+
   calculateCustomPrice() {
     const hourly = this.state.pricing.baseHourlyRateMinorUnits;
     this.customCalculatedPriceMinorUnits = Math.round((this.customMinutes / 60) * hourly);
+  }
+
+  formatDurationLabel(minutes: number): string {
+    if (minutes >= 60) {
+      const hrs = Math.floor(minutes / 60);
+      const rem = minutes % 60;
+      return rem > 0 ? `${hrs}h ${rem}m` : `${hrs} Hour${hrs > 1 ? 's' : ''}`;
+    }
+    return `${minutes} Mins`;
+  }
+
+  getBadgeClass(badge: string): string {
+    const b = (badge || '').toLowerCase();
+    if (b.includes('popular') || b.includes('10')) return 'emerald';
+    if (b.includes('gamer') || b.includes('20')) return 'indigo';
+    if (b.includes('vip') || b.includes('50')) return 'amber';
+    if (b.includes('marathon') || b.includes('100')) return 'rose';
+    return 'cyan';
   }
 
   async handleConfirmPurchase() {
