@@ -274,27 +274,33 @@ import { AdminStateService } from '../../services/admin-state.service';
     }
     .login-submit-btn {
       width: 100%;
-      padding: 14px;
-      border: none;
-      border-radius: 10px;
-      background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+      padding: 15px 20px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 12px;
+      background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 50%, #6366f1 100%);
       color: white;
-      font-size: 0.96rem;
-      font-weight: 700;
-      letter-spacing: 0.01em;
+      font-size: 0.98rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
       cursor: pointer;
-      transition: all 0.2s ease;
-      box-shadow: 0 4px 16px rgba(6, 182, 212, 0.3);
+      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 6px 22px rgba(6, 182, 212, 0.4);
+      user-select: none;
     }
     .login-submit-btn:hover:not(:disabled) {
-      transform: translateY(-1px);
-      box-shadow: 0 6px 22px rgba(6, 182, 212, 0.45);
-      background: linear-gradient(135deg, #0891b2 0%, #2563eb 100%);
+      transform: translateY(-2px);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 10px 32px rgba(6, 182, 212, 0.65);
+      filter: brightness(1.1);
+    }
+    .login-submit-btn:active:not(:disabled) {
+      transform: translateY(1px) scale(0.99);
     }
     .login-submit-btn:disabled {
-      opacity: 0.55;
+      opacity: 0.45;
       cursor: not-allowed;
+      filter: grayscale(0.5);
       transform: none;
+      box-shadow: none;
     }
     .btn-loading-state {
       display: flex;
