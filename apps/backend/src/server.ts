@@ -149,30 +149,47 @@ app.get('/download/client', (c) => {
 
 // Live Web Customer Terminal / Simulator routes (allows testing terminal on any browser/laptop)
 const possibleTerminalDirs = [
+  path.resolve(process.cwd(), 'apps/backend/public/terminal'),
+  path.resolve(process.cwd(), 'public/terminal'),
+  path.resolve(__dirname, '../public/terminal'),
+  path.resolve(__dirname, '../../public/terminal'),
   path.resolve(process.cwd(), 'apps/customer-desktop/dist/renderer'),
   path.resolve(__dirname, '../../customer-desktop/dist/renderer'),
-  path.resolve(__dirname, '../../../apps/customer-desktop/dist/renderer'),
-  path.resolve(process.cwd(), 'dist/public/terminal'),
-  path.resolve(process.cwd(), 'public/terminal'),
-  path.resolve(__dirname, '../public/terminal')
+  path.resolve(__dirname, '../../../apps/customer-desktop/dist/renderer')
 ];
-const terminalStaticDir = possibleTerminalDirs.find((d) => fs.existsSync(d) && fs.existsSync(path.join(d, 'index.html')));
 
-if (terminalStaticDir) {
-  const relRoot = path.relative(process.cwd(), terminalStaticDir).replace(/\\/g, '/');
-  const rootPath = relRoot.startsWith('.') ? relRoot : `./${relRoot}`;
-  app.use(
-    '/terminal/*',
-    serveStatic({
-      root: rootPath,
-      rewriteRequestPath: (reqPath) => reqPath.replace(/^\/terminal/, '') || '/index.html'
-    })
-  );
-  app.get('/terminal', (c) => {
-    const query = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    return c.redirect(`/terminal/index.html${query}`);
-  });
-}
+app.get('/terminal', (c) => {
+  const query = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+  return c.redirect(`/terminal/index.html${query}`);
+});
+
+app.get('/terminal/*', (c) => {
+  const reqSubPath = c.req.path.replace(/^\/terminal\/?/, '') || 'index.html';
+  const cleanPath = (reqSubPath === '' || reqSubPath === '/') ? 'index.html' : reqSubPath;
+
+  for (const dir of possibleTerminalDirs) {
+    const fullPath = path.resolve(dir, cleanPath);
+    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+      if (fullPath.endsWith('.html')) c.header('Content-Type', 'text/html; charset=utf-8');
+      else if (fullPath.endsWith('.css')) c.header('Content-Type', 'text/css; charset=utf-8');
+      else if (fullPath.endsWith('.js')) c.header('Content-Type', 'application/javascript; charset=utf-8');
+      else if (fullPath.endsWith('.svg')) c.header('Content-Type', 'image/svg+xml');
+      else if (fullPath.endsWith('.json')) c.header('Content-Type', 'application/json');
+      return c.body(fs.readFileSync(fullPath));
+    }
+  }
+
+  // SPA fallback to index.html
+  for (const dir of possibleTerminalDirs) {
+    const indexPath = path.resolve(dir, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      c.header('Content-Type', 'text/html; charset=utf-8');
+      return c.body(fs.readFileSync(indexPath));
+    }
+  }
+
+  return c.text('Terminal interface assets not found.', 404);
+});
 
 
 
