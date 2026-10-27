@@ -13,12 +13,12 @@
   },
   "dependencies": {
     "@pisonet/shared": "*",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "vite": "^6.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
     "electron": "^34.2.0",
-    "typescript": "^5.7.2",
-    "vite": "^6.2.0"
+    "typescript": "^5.7.2"
   }
 }
