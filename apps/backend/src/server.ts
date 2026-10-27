@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Server as HttpServer } from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -145,6 +146,34 @@ app.get('/download/client', (c) => {
   // Cloud fallback: redirect to pre-packaged release zip on GitHub Releases CDN
   return c.redirect('https://github.com/bitangholkent2006-sketch/Artemia-Pisonet/releases/download/v1.0.0/Artemia-Customer-Terminal-PC.zip', 302);
 });
+
+// Live Web Customer Terminal / Simulator routes (allows testing terminal on any browser/laptop)
+const possibleTerminalDirs = [
+  path.resolve(process.cwd(), 'apps/customer-desktop/dist/renderer'),
+  path.resolve(__dirname, '../../customer-desktop/dist/renderer'),
+  path.resolve(__dirname, '../../../apps/customer-desktop/dist/renderer'),
+  path.resolve(process.cwd(), 'dist/public/terminal'),
+  path.resolve(process.cwd(), 'public/terminal'),
+  path.resolve(__dirname, '../public/terminal')
+];
+const terminalStaticDir = possibleTerminalDirs.find((d) => fs.existsSync(d) && fs.existsSync(path.join(d, 'index.html')));
+
+if (terminalStaticDir) {
+  const relRoot = path.relative(process.cwd(), terminalStaticDir).replace(/\\/g, '/');
+  const rootPath = relRoot.startsWith('.') ? relRoot : `./${relRoot}`;
+  app.use(
+    '/terminal/*',
+    serveStatic({
+      root: rootPath,
+      rewriteRequestPath: (reqPath) => reqPath.replace(/^\/terminal/, '') || '/index.html'
+    })
+  );
+  app.get('/terminal', (c) => {
+    const query = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+    return c.redirect(`/terminal/index.html${query}`);
+  });
+}
+
 
 
 // 404 handler

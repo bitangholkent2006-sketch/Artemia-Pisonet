@@ -65,10 +65,13 @@ interface LiveSession {
   startedAt: string;
 }
 
-// Smart API base resolver: Defaults to live cloud backend on Render, or custom saved URL
+// Smart API base resolver: Defaults to live cloud backend on Render, or current browser origin, or custom saved URL
 function getApiBaseUrl(): string {
   const saved = localStorage.getItem('artemia_server_url');
   if (saved) return saved.trim().replace(/\/$/, '');
+  if (typeof window !== 'undefined' && window.location.origin && !window.location.origin.startsWith('file://')) {
+    return window.location.origin;
+  }
   return 'https://artemia-pisonet-backend.onrender.com';
 }
 
@@ -78,12 +81,15 @@ class CustomerDesktopApp {
   private apiBase: string = getApiBaseUrl();
   private socket: Socket | null = null;
   private pcs: PublicPC[] = [];
-  private currentPcId: string = localStorage.getItem('artemia_station_id') || 'pc-01';
+  private currentPcId: string =
+    (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('pc') : null) ||
+    localStorage.getItem('artemia_station_id') ||
+    'pc-01';
   private token: string | null = null;
   private user: CustomerUser | null = null;
   private activeSession: LiveSession | null = null;
 
-  private currentScreen: 'login' | 'changePassword' | 'account' | 'session' | 'outage' | 'shutdown' = 'login';
+  private currentScreen: 'login' | 'changePassword' | 'account' | 'session' | 'outage' | 'shutdown' | 'standby' = 'login';
   private isCompactOverlay = false;
   private warnedThresholds = new Set<number>();
   private audioContext: AudioContext | null = null;
@@ -97,6 +103,13 @@ class CustomerDesktopApp {
   private announcementTimeout: any = null;
   private speedMultiplier: number = 1.08;
   private heartbeatInterval: any = null;
+
+  // Idle Power-Saving Watchdog (Auto-shutdown after 10 minutes of inactivity)
+  private idleSeconds: number = 0;
+  private readonly IDLE_SHUTDOWN_SECONDS: number = 600; // 10 minutes
+  private readonly IDLE_WARNING_SECONDS: number = 540;  // 9 minutes (60 seconds countdown)
+  private idleInterval: any = null;
+  private isStandby: boolean = false;
 
   private sessionInterval: any = null;
 
@@ -112,6 +125,7 @@ class CustomerDesktopApp {
     // Default lock screen on app startup
     desktopWindow.pisonetDesktop?.lockScreen?.();
 
+    this.startIdleTimer();
     this.initSocket();
     this.initApp();
   }
@@ -544,30 +558,249 @@ class CustomerDesktopApp {
     }
   }
 
+  public speakVoice(text: string): void {
+    try {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1.0;
+        utterance.volume = 1.0;
+        utterance.pitch = 1.05;
+        window.speechSynthesis.speak(utterance);
+      }
+    } catch {}
+  }
+
+  public playFiveMinuteAlert(): void {
+    try {
+      if (!this.audioContext) {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        this.audioContext = new AudioCtx();
+      }
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
+      }
+      const now = this.audioContext.currentTime;
+
+      // Tri-tone melodic alert: E5 (659Hz) -> A5 (880Hz) -> C6 (1046Hz)
+      const osc1 = this.audioContext.createOscillator();
+      const gain1 = this.audioContext.createGain();
+      osc1.type = 'triangle';
+      osc1.frequency.setValueAtTime(659.25, now);
+      gain1.gain.setValueAtTime(0.28, now);
+      gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.22);
+      osc1.connect(gain1);
+      gain1.connect(this.audioContext.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.22);
+
+      const osc2 = this.audioContext.createOscillator();
+      const gain2 = this.audioContext.createGain();
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(880, now + 0.2);
+      gain2.gain.setValueAtTime(0.32, now + 0.2);
+      gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.45);
+      osc2.connect(gain2);
+      gain2.connect(this.audioContext.destination);
+      osc2.start(now + 0.2);
+      osc2.stop(now + 0.45);
+
+      const osc3 = this.audioContext.createOscillator();
+      const gain3 = this.audioContext.createGain();
+      osc3.type = 'sine';
+      osc3.frequency.setValueAtTime(1046.5, now + 0.42);
+      gain3.gain.setValueAtTime(0.38, now + 0.42);
+      gain3.gain.exponentialRampToValueAtTime(0.01, now + 0.85);
+      osc3.connect(gain3);
+      gain3.connect(this.audioContext.destination);
+      osc3.start(now + 0.42);
+      osc3.stop(now + 0.85);
+
+      setTimeout(() => {
+        this.speakVoice('Warning: 5 minutes remaining. Please top up your time.');
+      }, 700);
+    } catch {
+      this.speakVoice('Warning: 5 minutes remaining. Please top up your time.');
+    }
+  }
+
+  public playOneMinuteAlert(): void {
+    try {
+      if (!this.audioContext) {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        this.audioContext = new AudioCtx();
+      }
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
+      }
+      const now = this.audioContext.currentTime;
+
+      // Urgent fast-pulsing alert beeps (B5 987Hz -> E6 1318Hz -> E6 1318Hz)
+      const notes = [
+        { freq: 987.77, start: now, dur: 0.15 },
+        { freq: 1318.51, start: now + 0.18, dur: 0.18 },
+        { freq: 1318.51, start: now + 0.38, dur: 0.25 }
+      ];
+
+      for (const n of notes) {
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(n.freq, n.start);
+        gain.gain.setValueAtTime(0.28, n.start);
+        gain.gain.exponentialRampToValueAtTime(0.01, n.start + n.dur);
+        osc.connect(gain);
+        gain.connect(this.audioContext.destination);
+        osc.start(n.start);
+        osc.stop(n.start + n.dur);
+      }
+
+      setTimeout(() => {
+        this.speakVoice('Attention: 1 minute remaining. Station will shut down.');
+      }, 650);
+    } catch {
+      this.speakVoice('Attention: 1 minute remaining. Station will shut down.');
+    }
+  }
+
   private checkThresholds(remaining: number): void {
-    const thresholds = [600, 300, 60];
+    const thresholds = [300, 60, 30];
     for (const t of thresholds) {
       if (remaining <= t && remaining > t - 3 && !this.warnedThresholds.has(t)) {
         this.warnedThresholds.add(t);
-        this.playWarningBeep();
 
         if (t === 300) {
-          // 5 minutes remaining alert: Pop up and notify on top of screen
           desktopWindow.pisonetDesktop?.restoreWindow?.();
           desktopWindow.pisonetDesktop?.setOverlaySize?.(336, 126);
-          this.showToast('⚠️ HAPIT NA MAHUMAN IMONG TIME (5 Mins)! Palihug og top-up sa counter aron dili ma-shutdown ang PC.', 'warning');
+          this.playFiveMinuteAlert();
+          this.showToast('⚠️ 5 MINUTES REMAINING! Palihug og top-up o hulog og sensilyo aron dili mapalong ang PC.', 'warning');
           this.render();
         } else if (t === 60) {
-          // 1 minute critical alert
           desktopWindow.pisonetDesktop?.restoreWindow?.();
+          desktopWindow.pisonetDesktop?.setOverlaySize?.(336, 126);
+          this.playOneMinuteAlert();
           this.showToast('🚨 1 MINUTO NA LANG! Mag-automatic shutdown ang PC ug ma-logout ang account!', 'error');
           this.render();
-        } else {
-          const mins = Math.round(t / 60);
-          this.showToast(`Low Time Warning: Approximately ${mins} minute(s) remaining!`, 'warning');
+        } else if (t === 30) {
+          this.speakVoice('30 seconds left.');
+          this.showToast('⏱️ 30 Seconds Remaining!', 'error');
         }
       }
     }
+  }
+
+  // --------------------------------------------------------------------------
+  // Idle Power-Saving Watchdog (10 Minutes Auto-Shutdown)
+  // --------------------------------------------------------------------------
+  private startIdleTimer(): void {
+    if (this.idleInterval) clearInterval(this.idleInterval);
+
+    // Passive interaction listeners to continuously reset idle timer
+    const activityEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart'];
+    for (const evt of activityEvents) {
+      window.addEventListener(evt, () => this.handleUserActivity(), { passive: true });
+    }
+
+    this.idleInterval = setInterval(() => {
+      // Watchdog counts idle seconds only when station has no active session and is on login or outage screen
+      if (!this.activeSession && !this.isStandby && (this.currentScreen === 'login' || this.currentScreen === 'outage')) {
+        this.idleSeconds++;
+
+        // At 9 minutes (540s), display 60-second countdown warning modal
+        if (this.idleSeconds >= this.IDLE_WARNING_SECONDS) {
+          const secondsLeft = Math.max(0, this.IDLE_SHUTDOWN_SECONDS - this.idleSeconds);
+          this.showIdleShutdownModal(secondsLeft);
+        }
+
+        // At 10 minutes (600s), execute shutdown
+        if (this.idleSeconds >= this.IDLE_SHUTDOWN_SECONDS) {
+          this.triggerIdleShutdown();
+        }
+      } else {
+        if (this.idleSeconds > 0) {
+          this.resetIdleTimer();
+        }
+      }
+    }, 1000);
+  }
+
+  public handleUserActivity(): void {
+    if (this.idleSeconds >= this.IDLE_WARNING_SECONDS) {
+      this.resetIdleTimer();
+    } else {
+      this.idleSeconds = 0;
+    }
+  }
+
+  public resetIdleTimer(): void {
+    this.idleSeconds = 0;
+    this.hideIdleShutdownModal();
+  }
+
+  private showIdleShutdownModal(secondsLeft: number): void {
+    let modal = document.getElementById('idle-shutdown-overlay');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'idle-shutdown-overlay';
+      modal.className = 'idle-shutdown-overlay';
+      document.body.appendChild(modal);
+
+      try {
+        this.playWarningBeep();
+      } catch {}
+    }
+
+    modal.innerHTML = `
+      <div class="idle-shutdown-box">
+        <div class="idle-pulse-icon">⚡</div>
+        <h2 style="font-size:1.6rem; font-weight:800; color:#fff; margin-bottom:6px; letter-spacing:-0.02em;">PC IDLE POWER SAVER</h2>
+        <p style="color:#cbd5e1; font-size:0.95rem; margin-bottom:16px;">
+          Walay naggamit niini nga PC sulod sa 10 ka minuto.<br/>Mag-shutdown ang PC aron makadaginot sa kuryente sulod sa:
+        </p>
+        <div class="idle-countdown-number">${secondsLeft}s</div>
+        <p style="color:#38bdf8; font-size:0.88rem; font-weight:600; margin-bottom:20px;">
+          Tuploka ang mouse o keyboard aron i-cancel ang shutdown.
+        </p>
+        <button type="button" class="btn-cancel-idle" id="cancel-idle-btn">
+          ❌ I-CANCEL ANG SHUTDOWN
+        </button>
+      </div>
+    `;
+
+    const cancelBtn = modal.querySelector('#cancel-idle-btn');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.resetIdleTimer();
+      });
+    }
+  }
+
+  private hideIdleShutdownModal(): void {
+    const modal = document.getElementById('idle-shutdown-overlay');
+    if (modal) {
+      modal.remove();
+    }
+  }
+
+  public triggerIdleShutdown(): void {
+    this.resetIdleTimer();
+    console.log('[IdleWatchdog] PC idle limit reached (10 minutes). Triggering shutdown.');
+    if (desktopWindow.pisonetDesktop?.shutdownPC) {
+      desktopWindow.pisonetDesktop.shutdownPC(0);
+    } else {
+      this.isStandby = true;
+      this.currentScreen = 'standby';
+      this.render();
+    }
+  }
+
+  public powerOnFromStandby(): void {
+    this.isStandby = false;
+    this.currentScreen = 'login';
+    this.resetIdleTimer();
+    this.render();
+    this.showToast('PC powered on successfully! Maayong pag-abot sa Artemia Pisonet.', 'success');
   }
 
   private playWarningBeep(): void {
@@ -1054,6 +1287,47 @@ class CustomerDesktopApp {
     }, 1000);
   }
 
+  private renderStandbyScreen(pc?: PublicPC): string {
+    return `
+      <div class="auth-card-wrapper">
+        <div class="auth-card standby-card">
+          <div class="standby-icon-pulse">🔌</div>
+          <h2 style="font-size:1.8rem; font-weight:800; color:#fff; margin-bottom:8px; letter-spacing:-0.02em;">PC IN STANDBY (POWER OFF)</h2>
+          <div style="font-size:0.95rem; color:#94a3b8; font-weight:500; margin-bottom:20px; line-height:1.5;">
+            Napalong ang PC aron makadaginot sa kuryente kay walay naggamit sulod sa <strong>10 ka minuto</strong>.
+          </div>
+          <button id="power-on-btn" type="button" class="btn-primary-gaming" style="background:linear-gradient(135deg, #10b981, #059669);">
+            <span>⚡ POWER ON / PAANDARA ANG PC</span>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderWebTesterBar(): string {
+    if (desktopWindow.pisonetDesktop?.isElectron) return '';
+
+    return `
+      <div class="web-tester-bar" id="web-tester-bar">
+        <div class="tester-inner">
+          <div class="tester-info">
+            <span class="tester-status-dot"></span>
+            <span class="tester-label">🧪 Tester Mode (Laptop)</span>
+            <span class="tester-station-tag">${this.currentPcId.toUpperCase()}</span>
+          </div>
+          <div class="tester-btn-group">
+            <button type="button" class="tester-btn" id="btn-test-sound" title="Play 5-min chime & voice alert">🔊 Test Audio Alert</button>
+            <button type="button" class="tester-btn" id="btn-test-5min" title="Set time to 5m 5s to hear 5-minute alert">⏱️ Test 5m Alert</button>
+            <button type="button" class="tester-btn" id="btn-test-1min" title="Set time to 1m 5s to hear 1-minute alert">🚨 Test 1m Alert</button>
+            <button type="button" class="tester-btn" id="btn-test-idle" title="Fast-forward idle timer to 9m 50s">⚡ Test 10m Idle</button>
+            <button type="button" class="tester-btn success" id="btn-test-coin-5" title="Simulate ₱5 coin drop">+₱5 Coin (40m)</button>
+            <button type="button" class="tester-btn success" id="btn-test-coin-10" title="Simulate ₱10 coin drop">+₱10 Coin (80m)</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   private renderShutdownScreen(pc?: PublicPC): string {
     return `
       <div class="auth-card shutdown-card">
@@ -1210,7 +1484,7 @@ class CustomerDesktopApp {
     if (this.currentScreen === 'session' && this.activeSession) {
       document.body.classList.add('in-gameplay-mode');
       const currentPc = this.getCurrentPc();
-      container.innerHTML = this.renderActiveSessionScreen(this.activeSession, currentPc);
+      container.innerHTML = this.renderActiveSessionScreen(this.activeSession, currentPc) + this.renderWebTesterBar();
       this.attachEventListeners();
       return;
     }
@@ -1221,7 +1495,9 @@ class CustomerDesktopApp {
     const topBarHtml = this.renderTopBar(currentPc);
 
     let mainContentHtml = '';
-    if (this.currentScreen === 'shutdown') {
+    if (this.isStandby || this.currentScreen === 'standby') {
+      mainContentHtml = this.renderStandbyScreen(currentPc);
+    } else if (this.currentScreen === 'shutdown') {
       mainContentHtml = this.renderShutdownScreen(currentPc);
     } else if (this.currentScreen === 'changePassword' && this.user) {
       mainContentHtml = this.renderPasswordChangeScreen(this.user);
@@ -1232,6 +1508,7 @@ class CustomerDesktopApp {
     }
 
     const modalHtml = this.confirmPauseModalOpen ? this.renderPauseModal() : '';
+    const testerBarHtml = this.renderWebTesterBar();
 
     container.innerHTML = `
       ${topBarHtml}
@@ -1239,6 +1516,7 @@ class CustomerDesktopApp {
         ${mainContentHtml}
       </main>
       ${modalHtml}
+      ${testerBarHtml}
     `;
 
     this.attachEventListeners();
@@ -1661,6 +1939,84 @@ class CustomerDesktopApp {
     const compactBtn = document.getElementById('toggle-compact-btn');
     if (compactBtn) {
       compactBtn.addEventListener('click', () => this.toggleOverlayMode());
+    }
+
+    // Power On button from Standby
+    const powerOnBtn = document.getElementById('power-on-btn');
+    if (powerOnBtn) {
+      powerOnBtn.addEventListener('click', () => this.powerOnFromStandby());
+    }
+
+    // Web Tester Toolbar Event Handlers
+    const testSoundBtn = document.getElementById('btn-test-sound');
+    if (testSoundBtn) {
+      testSoundBtn.addEventListener('click', () => this.playFiveMinuteAlert());
+    }
+
+    const test5MinBtn = document.getElementById('btn-test-5min');
+    if (test5MinBtn) {
+      test5MinBtn.addEventListener('click', () => {
+        if (this.activeSession) {
+          this.activeSession.remainingSeconds = 305;
+          this.warnedThresholds.delete(300);
+          this.updateClockDisplay();
+          this.showToast('Time set to 5m 5s! Listen in 5 seconds...', 'info');
+        } else {
+          this.testWarning(305);
+          this.showToast('Test session started at 5m 5s! Listen in 5 seconds...', 'info');
+        }
+      });
+    }
+
+    const test1MinBtn = document.getElementById('btn-test-1min');
+    if (test1MinBtn) {
+      test1MinBtn.addEventListener('click', () => {
+        if (this.activeSession) {
+          this.activeSession.remainingSeconds = 65;
+          this.warnedThresholds.delete(60);
+          this.updateClockDisplay();
+          this.showToast('Time set to 1m 5s! Listen in 5 seconds...', 'warning');
+        } else {
+          this.testWarning(65);
+          this.showToast('Test session started at 1m 5s! Listen in 5 seconds...', 'warning');
+        }
+      });
+    }
+
+    const testIdleBtn = document.getElementById('btn-test-idle');
+    if (testIdleBtn) {
+      testIdleBtn.addEventListener('click', () => {
+        this.idleSeconds = 548;
+        this.showToast('Idle timer set to 9m 48s! Shutdown countdown appearing in 2 seconds...', 'info');
+      });
+    }
+
+    const testCoin5Btn = document.getElementById('btn-test-coin-5');
+    if (testCoin5Btn) {
+      testCoin5Btn.addEventListener('click', () => {
+        if (this.activeSession) {
+          this.activeSession.remainingSeconds += 2400;
+          this.warnedThresholds.clear();
+          this.updateClockDisplay();
+          this.showToast('Simulated ₱5 Coin Drop: +40 Minutes added to session!', 'success');
+        } else {
+          this.showToast('Simulated ₱5 Coin Drop (40 Minutes). Log in to activate!', 'success');
+        }
+      });
+    }
+
+    const testCoin10Btn = document.getElementById('btn-test-coin-10');
+    if (testCoin10Btn) {
+      testCoin10Btn.addEventListener('click', () => {
+        if (this.activeSession) {
+          this.activeSession.remainingSeconds += 4800;
+          this.warnedThresholds.clear();
+          this.updateClockDisplay();
+          this.showToast('Simulated ₱10 Coin Drop: +80 Minutes added to session!', 'success');
+        } else {
+          this.showToast('Simulated ₱10 Coin Drop (80 Minutes). Log in to activate!', 'success');
+        }
+      });
     }
   }
 
