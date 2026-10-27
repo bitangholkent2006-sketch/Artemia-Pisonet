@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "prestart": "tsc",
     "start": "node dist/server.js",
     "bootstrap:admin": "tsx src/bootstrap/seed-admin.ts"
   },

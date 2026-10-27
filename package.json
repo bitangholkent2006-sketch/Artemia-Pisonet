@@ -8,6 +8,8 @@
     "apps/*"
   ],
   "scripts": {
+    "build": "npm run build:shared && npm run build:backend",
+    "prestart": "npm run build:shared && npm run build:backend",
     "start": "npm run start:backend",
     "build:shared": "npm run build --workspace=packages/shared",
     "dev:backend": "npm run dev --workspace=apps/backend",
