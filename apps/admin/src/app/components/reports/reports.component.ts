@@ -563,7 +563,7 @@ import {
                   </div>
                   <div class="form-group">
                     <label class="form-label" style="font-size:0.75rem;">Port</label>
-                    <input type="number" class="form-input" style="width:100%;" [(ngModel)]="emailConfig.smtpPort" placeholder="587" />
+                    <input type="number" class="form-input" style="width:100%;" [(ngModel)]="emailConfig.smtpPort" placeholder="465" />
                   </div>
                 </div>
               </div>
@@ -696,7 +696,7 @@ export class ReportsComponent implements OnInit, OnDestroy {
     sendHour: 22,
     sendMinute: 0,
     smtpHost: 'smtp.gmail.com',
-    smtpPort: 587,
+    smtpPort: 465,
     smtpUser: '',
     smtpPass: '',
     fromEmail: '"Artemia\'s Pisonet" <reports@artemiapisonet.com>',

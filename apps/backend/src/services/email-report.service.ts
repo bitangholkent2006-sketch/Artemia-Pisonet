@@ -100,6 +100,8 @@ export class DailyReportEmailService {
     // If user passed masked password, keep existing password
     if (updates.smtpPass === '********') {
       delete updates.smtpPass;
+    } else if (updates.smtpPass) {
+      updates.smtpPass = updates.smtpPass.replace(/\s+/g, '');
     }
 
     const merged: EmailReportConfig = {
@@ -409,19 +411,40 @@ export class DailyReportEmailService {
         };
       }
 
-      // Configure nodemailer transporter
-      const transporter = nodemailer.createTransport({
-        host: config.smtpHost || 'smtp.gmail.com',
-        port: config.smtpPort || 587,
-        secure: config.smtpPort === 465, // true for 465, false for other ports
-        auth: {
-          user: config.smtpUser,
-          pass: config.smtpPass
-        }
-      });
+      // Clean spaces from App Password (e.g. 'abcd efgh ijkl mnop' -> 'abcdefghijklmnop')
+      const cleanPass = (config.smtpPass || '').replace(/\s+/g, '');
+      const isGmail = (config.smtpHost && config.smtpHost.includes('gmail')) || (config.smtpUser && config.smtpUser.includes('@gmail.com'));
+      const senderFrom = config.smtpUser ? `"Artemia's Pisonet Cyber Cafe" <${config.smtpUser}>` : (config.fromEmail || '"Artemia\'s Pisonet" <reports@artemiapisonet.com>');
+
+      // Configure nodemailer transporter with resilient timeout & Gmail preset
+      const transportOptions: any = isGmail
+        ? {
+            service: 'gmail',
+            auth: {
+              user: config.smtpUser,
+              pass: cleanPass
+            },
+            connectionTimeout: 15000,
+            greetingTimeout: 10000,
+            socketTimeout: 20000
+          }
+        : {
+            host: config.smtpHost || 'smtp.gmail.com',
+            port: Number(config.smtpPort) || 465,
+            secure: Number(config.smtpPort) === 465,
+            auth: {
+              user: config.smtpUser,
+              pass: cleanPass
+            },
+            connectionTimeout: 15000,
+            greetingTimeout: 10000,
+            socketTimeout: 20000
+          };
+
+      const transporter = nodemailer.createTransport(transportOptions);
 
       const info = await transporter.sendMail({
-        from: config.fromEmail || '"Artemia\'s Pisonet" <reports@artemiapisonet.com>',
+        from: senderFrom,
         to: recipient,
         subject,
         html: htmlBody
