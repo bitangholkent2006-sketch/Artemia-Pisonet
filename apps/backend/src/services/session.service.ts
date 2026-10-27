@@ -187,7 +187,9 @@ export class SessionService {
       ? Math.max(0, leaseTime - resumeTime)
       : elapsedSinceResumeMs;
     const finalElapsedMs = Math.min(elapsedSinceResumeMs, maxElapsedMs);
-    const consumedSeconds = Math.floor(finalElapsedMs / 1000);
+    const pricing = await collections.pricing.findOne({ _id: 'global_pricing' });
+    const speedMultiplier = pricing?.speedMultiplier || 1.08;
+    const consumedSeconds = Math.floor((finalElapsedMs / 1000) * speedMultiplier);
 
     let newRemaining = 0;
     if (session.type === 'fixed-time') {
@@ -527,7 +529,9 @@ export class SessionService {
     if (!session) return { success: false, error: 'Session not found' };
 
     const resumedTime = session.lastResumedAt ? new Date(session.lastResumedAt).getTime() : now.getTime();
-    const elapsedSeconds = Math.floor(Math.max(0, now.getTime() - resumedTime) / 1000);
+    const pricing = await collections.pricing.findOne({ _id: 'global_pricing' });
+    const speedMultiplier = pricing?.speedMultiplier || 1.08;
+    const elapsedSeconds = Math.floor((Math.max(0, now.getTime() - resumedTime) / 1000) * speedMultiplier);
     const currentlyRemaining = Math.max(0, session.remainingSecondsAtResume - elapsedSeconds);
     const newRemaining = currentlyRemaining + additionalSeconds;
 
@@ -614,6 +618,8 @@ export class SessionService {
   public static async checkExpiredSessions(): Promise<void> {
     const collections = getCollections();
     const now = new Date();
+    const pricing = await collections.pricing.findOne({ _id: 'global_pricing' });
+    const speedMultiplier = pricing?.speedMultiplier || 1.08;
 
     const activeFixedSessions = await collections.sessions
       .find({ status: 'active', type: 'fixed-time' })
@@ -622,7 +628,7 @@ export class SessionService {
     for (const session of activeFixedSessions) {
       const resumedTime = session.lastResumedAt ? new Date(session.lastResumedAt).getTime() : now.getTime();
       const elapsedMs = Math.max(0, now.getTime() - resumedTime);
-      const consumedSeconds = Math.floor(elapsedMs / 1000);
+      const consumedSeconds = Math.floor((elapsedMs / 1000) * speedMultiplier);
       const remainingSeconds = Math.max(0, session.remainingSecondsAtResume - consumedSeconds);
 
       // Keep customerBalances live in the database so admin and customer see the real-time countdown
@@ -712,8 +718,10 @@ export class SessionService {
       if (session.leaseExpiresAt && session.leaseExpiresAt.getTime() < now.getTime()) {
         console.log(`[Recovery] Session ${session.id} lease expired during server downtime. Reconciling safely.`);
         // Reconcile consumed time up to the lease cutoff (bounded charging policy)
+        const pricing = await collections.pricing.findOne({ _id: 'global_pricing' });
+        const speedMultiplier = pricing?.speedMultiplier || 1.08;
         const leaseElapsedSeconds = Math.floor(
-          Math.max(0, session.leaseExpiresAt.getTime() - session.lastResumedAt.getTime()) / 1000
+          (Math.max(0, session.leaseExpiresAt.getTime() - session.lastResumedAt.getTime()) / 1000) * speedMultiplier
         );
 
         if (session.type === 'fixed-time') {

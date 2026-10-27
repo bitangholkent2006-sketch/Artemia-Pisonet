@@ -137,6 +137,7 @@ export interface DbPricingConfig {
   openTimeMinimumChargeMinorUnits: number;
   lowTimeWarningThresholdsSeconds: number[];
   disconnectGracePeriodSeconds: number;
+  speedMultiplier?: number;
   packages: TimePackage[];
   updatedAt: Date;
 }

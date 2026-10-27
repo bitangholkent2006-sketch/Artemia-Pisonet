@@ -95,6 +95,7 @@ class CustomerDesktopApp {
   private shutdownCountdown: number = 15;
   private shutdownInterval: any = null;
   private announcementTimeout: any = null;
+  private speedMultiplier: number = 1.08;
 
   private sessionInterval: any = null;
 
@@ -118,6 +119,7 @@ class CustomerDesktopApp {
   // Initialization & Socket.IO
   // --------------------------------------------------------------------------
   private async initApp(): Promise<void> {
+    await this.fetchPricing();
     await this.fetchPcs();
 
     if (this.token && this.user) {
@@ -125,6 +127,21 @@ class CustomerDesktopApp {
     } else {
       this.currentScreen = 'login';
       this.render();
+    }
+  }
+
+  private async fetchPricing(): Promise<void> {
+    try {
+      const res = await fetch(`${this.apiBase}/pricing`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data?.speedMultiplier && typeof json.data.speedMultiplier === 'number') {
+          this.speedMultiplier = json.data.speedMultiplier;
+          console.log(`[Timer] Speed multiplier loaded from server: ${this.speedMultiplier}x`);
+        }
+      }
+    } catch {
+      // Retain default 1.08
     }
   }
 
@@ -449,6 +466,8 @@ class CustomerDesktopApp {
   // --------------------------------------------------------------------------
   private startSessionTimer(): void {
     this.stopSessionTimer();
+    const multiplier = this.speedMultiplier > 0 ? this.speedMultiplier : 1.08;
+    const intervalMs = Math.max(100, Math.round(1000 / multiplier));
     this.sessionInterval = setInterval(() => {
       if (!this.activeSession || this.activeSession.status !== 'active') return;
 
@@ -474,7 +493,7 @@ class CustomerDesktopApp {
       }
 
       this.updateClockDisplay();
-    }, 1000);
+    }, intervalMs);
   }
 
   private stopSessionTimer(): void {

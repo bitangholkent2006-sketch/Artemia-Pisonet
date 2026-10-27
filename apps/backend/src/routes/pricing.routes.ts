@@ -25,6 +25,7 @@ pricingRoutes.get('/', async (c) => {
       openTimeMinimumChargeMinorUnits: INITIAL_PRICING_CONFIG.openTimeMinimumChargeMinorUnits,
       lowTimeWarningThresholdsSeconds: INITIAL_PRICING_CONFIG.lowTimeWarningThresholdsSeconds,
       disconnectGracePeriodSeconds: INITIAL_PRICING_CONFIG.disconnectGracePeriodSeconds,
+      speedMultiplier: INITIAL_PRICING_CONFIG.speedMultiplier || 1.08,
       packages: INITIAL_PRICING_CONFIG.packages,
       updatedAt: new Date()
     };
@@ -59,6 +60,9 @@ pricingRoutes.put('/', requireAdmin, async (c) => {
   }
   if (body.disconnectGracePeriodSeconds !== undefined) {
     updates.disconnectGracePeriodSeconds = Number(body.disconnectGracePeriodSeconds);
+  }
+  if (body.speedMultiplier !== undefined) {
+    updates.speedMultiplier = Number(body.speedMultiplier);
   }
   if (Array.isArray(body.packages)) {
     updates.packages = body.packages;

@@ -45,8 +45,10 @@ sessionRoutes.get('/my-session', requireAuth, async (c) => {
 
   let computedRemaining = session.remainingSecondsAtResume || 0;
   if (session.status === 'active' && session.type === 'fixed-time') {
+    const pricing = await collections.pricing.findOne({ _id: 'global_pricing' });
+    const speedMultiplier = pricing?.speedMultiplier || 1.08;
     const elapsedMs = Math.max(0, Date.now() - new Date(session.lastResumedAt).getTime());
-    computedRemaining = Math.max(0, computedRemaining - Math.floor(elapsedMs / 1000));
+    computedRemaining = Math.max(0, computedRemaining - Math.floor((elapsedMs / 1000) * speedMultiplier));
   } else if (session.status === 'paused') {
     // If paused, time is frozen! Use authoritative saved balance
     const bal = await collections.customerBalances.findOne({ customerId: user.id });

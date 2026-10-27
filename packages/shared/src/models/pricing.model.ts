@@ -24,6 +24,10 @@ export interface PricingConfig {
   // System alerts:
   lowTimeWarningThresholdsSeconds: number[]; // e.g. [600, 300, 60] (10m, 5m, 1m)
   disconnectGracePeriodSeconds: number; // e.g. 60 seconds
+
+  // Timer speed accelerator (e.g. 1.08 = 8% subtle speed)
+  speedMultiplier?: number;
   
   packages: TimePackage[];
 }
+

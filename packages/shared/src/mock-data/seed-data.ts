@@ -15,68 +15,53 @@ export const INITIAL_PRICING_CONFIG: PricingConfig = {
   currencyCode: 'PHP',
   currencySymbol: '₱',
   minorUnitMultiplier: 100,
-  baseHourlyRateMinorUnits: 2000, // ₱20.00 / hour
+  baseHourlyRateMinorUnits: 750, // ₱7.50 / hour (₱5 = 40 mins)
   openTimeIncrementMinutes: 5,
   openTimeRoundingMethod: 'ceil',
   openTimeMinimumChargeMinorUnits: 500, // ₱5.00 minimum
   lowTimeWarningThresholdsSeconds: [600, 300, 60], // 10 min, 5 min, 1 min
   disconnectGracePeriodSeconds: 60,
+  speedMultiplier: 1.08, // Subtle pisonet timer speed (1.08x)
   packages: [
     {
-      id: 'pkg-15m',
-      name: '15 Minutes',
-      durationMinutes: 15,
-      durationSeconds: 900,
+      id: 'pkg-40m',
+      name: '40 Minutes',
+      durationMinutes: 40,
+      durationSeconds: 2400,
       priceMinorUnits: 500,
-      badge: 'Quick'
+      badge: '₱5 Coinslot'
     },
     {
-      id: 'pkg-30m',
-      name: '30 Minutes',
-      durationMinutes: 30,
-      durationSeconds: 1800,
+      id: 'pkg-80m',
+      name: '80 Minutes (1h 20m)',
+      durationMinutes: 80,
+      durationSeconds: 4800,
       priceMinorUnits: 1000,
-      badge: 'Popular'
+      badge: 'Popular ₱10'
     },
     {
-      id: 'pkg-1h',
-      name: '1 Hour',
-      durationMinutes: 60,
-      durationSeconds: 3600,
+      id: 'pkg-160m',
+      name: '160 Minutes (2h 40m)',
+      durationMinutes: 160,
+      durationSeconds: 9600,
       priceMinorUnits: 2000,
-      badge: 'Standard'
+      badge: 'Gamer ₱20'
     },
     {
-      id: 'pkg-2h',
-      name: '2 Hours',
-      durationMinutes: 120,
-      durationSeconds: 7200,
-      priceMinorUnits: 3800,
-      badge: 'Save ₱2'
+      id: 'pkg-400m',
+      name: '400 Minutes (6h 40m)',
+      durationMinutes: 400,
+      durationSeconds: 24000,
+      priceMinorUnits: 5000,
+      badge: 'VIP ₱50'
     },
     {
-      id: 'pkg-3h',
-      name: '3 Hours',
-      durationMinutes: 180,
-      durationSeconds: 10800,
-      priceMinorUnits: 5500,
-      badge: 'Save ₱5'
-    },
-    {
-      id: 'pkg-5h',
-      name: '5 Hours VIP',
-      durationMinutes: 300,
-      durationSeconds: 18000,
-      priceMinorUnits: 9000,
-      badge: 'Best Value'
-    },
-    {
-      id: 'pkg-10h',
-      name: '10 Hours Marathon',
-      durationMinutes: 600,
-      durationSeconds: 36000,
-      priceMinorUnits: 17000,
-      badge: 'Mega Saver'
+      id: 'pkg-800m',
+      name: '800 Minutes (13h 20m)',
+      durationMinutes: 800,
+      durationSeconds: 48000,
+      priceMinorUnits: 10000,
+      badge: 'Marathon ₱100'
     }
   ]
 };

@@ -329,13 +329,13 @@ import {
                 <span style="font-size:1.1rem; font-weight:800; color:var(--accent-cyan);">₱</span>
                 <input
                   type="number"
-                  step="1"
+                  step="0.5"
                   class="form-input"
                   style="width:160px; font-family:var(--font-mono); font-size:1.1rem;"
                   [ngModel]="state.pricing.baseHourlyRateMinorUnits / 100"
                   (ngModelChange)="onHourlyRateChange($event)"
                 />
-                <span style="font-size:0.85rem; color:var(--text-dim);">/ hour (Default ₱20.00)</span>
+                <span style="font-size:0.85rem; color:var(--text-dim);">/ hour (Standard ₱7.50 for ₱5/40m)</span>
               </div>
             </div>
 
@@ -370,6 +370,26 @@ import {
                   (ngModelChange)="onGracePeriodChange($event)"
                 />
                 <span style="font-size:0.85rem; color:var(--text-dim);">seconds (Default 60s)</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Pisonet Timer Speed Multiplier (Countdown Acceleration)</label>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="1.0"
+                  max="2.0"
+                  class="form-input"
+                  style="width:120px; font-family:var(--font-mono); font-size:1.1rem;"
+                  [ngModel]="state.pricing.speedMultiplier || 1.08"
+                  (ngModelChange)="onSpeedMultiplierChange($event)"
+                />
+                <span style="font-size:0.85rem; color:var(--accent-cyan); font-weight:700;">x (Default 1.08x = subtle 8% speed)</span>
+              </div>
+              <div style="font-size:0.75rem; color:var(--text-dim); margin-top:4px;">
+                Subtly adjusts coin countdown speed across all active PC stations. 1.08x counts down 1s every 926ms (imperceptible to players).
               </div>
             </div>
           </div>
@@ -488,6 +508,14 @@ export class ReportsComponent implements OnInit, OnDestroy {
     if (sec > 0) {
       this.adminState.updatePricingConfig({
         disconnectGracePeriodSeconds: sec
+      });
+    }
+  }
+
+  onSpeedMultiplierChange(mult: number) {
+    if (mult && mult >= 1.0 && mult <= 3.0) {
+      this.adminState.updatePricingConfig({
+        speedMultiplier: Number(mult)
       });
     }
   }
