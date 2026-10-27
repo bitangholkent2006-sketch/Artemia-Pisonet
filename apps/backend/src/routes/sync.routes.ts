@@ -29,7 +29,7 @@ syncRoutes.get('/', requireAuth, async (c) => {
   const pricing = await collections.pricing.findOne({ _id: 'global_pricing' });
 
   // 4. Role-specific context
-  let customerContext = null;
+  let customerContext: any = null;
   if (user.role === 'customer') {
     const custData = await CustomerService.getCustomerById(user.id);
     const mySession = await collections.sessions.findOne({
@@ -43,10 +43,10 @@ syncRoutes.get('/', requireAuth, async (c) => {
   }
 
   // 5. Staff & Admin complete state snapshot (from MongoDB Atlas)
-  let unsettledOpenTime = null;
-  let customers = null;
-  let recentPayments = null;
-  let recentAudits = null;
+  let unsettledOpenTime: any = null;
+  let customers: any = null;
+  let recentPayments: any = null;
+  let recentAudits: any = null;
 
   if (user.role === 'staff' || user.role === 'admin') {
     const auths = await collections.openTimeAuths.find({ isSettled: false }).toArray();

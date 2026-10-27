@@ -14,19 +14,17 @@
   "dependencies": {
     "@hono/node-server": "^1.13.8",
     "@pisonet/shared": "*",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.8",
+    "@types/node": "^22.13.0",
     "bcryptjs": "^2.4.3",
     "dotenv": "^16.4.7",
     "hono": "^4.7.0",
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.13.0",
     "socket.io": "^4.8.1",
-    "zod": "^3.24.2"
-  },
-  "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/jsonwebtoken": "^9.0.8",
-    "@types/node": "^22.13.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "zod": "^3.24.2"
   }
 }
