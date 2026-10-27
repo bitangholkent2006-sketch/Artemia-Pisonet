@@ -1,0 +1,7 @@
+{
+  "version": "1.0.1",
+  "minRequiredVersion": "1.0.0",
+  "releaseDate": "2026-10-27T18:15:00.000Z",
+  "asarFileName": "app.asar",
+  "changelog": "Added auto-update mechanism and remote cloud synchronization."
+}

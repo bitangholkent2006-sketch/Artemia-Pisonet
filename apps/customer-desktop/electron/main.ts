@@ -478,6 +478,86 @@ ipcMain.handle('window:set-overlay-size', (_event, width: number, height: number
   return true;
 });
 
+let isUpdating = false;
+
+async function checkAndApplyClientUpdate() {
+  if (isGameplayMode || isUpdating) {
+    return;
+  }
+
+  const backendUrl = 'https://artemia-pisonet-backend.onrender.com';
+  const currentVersion = app.getVersion() || '1.0.0';
+
+  try {
+    const checkUrl = `${backendUrl}/api/v1/client-app/update-check?currentVersion=${encodeURIComponent(currentVersion)}`;
+    const res = await fetch(checkUrl, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return;
+
+    const data: any = await res.json();
+    if (!data.updateAvailable || !data.downloadUrl) {
+      console.log(`[AutoUpdate] Client app is up-to-date (v${currentVersion}).`);
+      return;
+    }
+
+    isUpdating = true;
+    console.log(`[AutoUpdate] New version v${data.latestVersion} available! Downloading...`);
+
+    const tempAsarPath = path.join(app.getPath('userData'), 'pending-update.asar');
+    const downloadRes = await fetch(data.downloadUrl, { signal: AbortSignal.timeout(60000) });
+    if (!downloadRes.ok) {
+      isUpdating = false;
+      return;
+    }
+
+    const buffer = Buffer.from(await downloadRes.arrayBuffer());
+    if (buffer.length < 50000) {
+      isUpdating = false;
+      return;
+    }
+
+    fs.writeFileSync(tempAsarPath, buffer);
+
+    const targetAsarPath = path.join(process.resourcesPath, 'app.asar');
+    if (!fs.existsSync(targetAsarPath)) {
+      console.log('[AutoUpdate] Unpacked/dev mode. Update saved to temp but skipping restart.');
+      isUpdating = false;
+      return;
+    }
+
+    const updaterBatPath = path.join(app.getPath('userData'), 'apply-update.bat');
+    const exePath = process.execPath;
+
+    const batScript = `@echo off
+timeout /t 2 /nobreak >nul
+copy /y "${tempAsarPath}" "${targetAsarPath}" >nul
+if exist "${tempAsarPath}" del /f /q "${tempAsarPath}" >nul
+start "" "${exePath}"
+exit
+`;
+
+    fs.writeFileSync(updaterBatPath, batScript, 'utf8');
+
+    console.log('[AutoUpdate] Launching updater script and restarting...');
+    spawn('cmd.exe', ['/c', updaterBatPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    }).unref();
+
+    stopKioskKeyLock();
+    applyKioskRegistryPolicies(false);
+    app.exit(0);
+  } catch (err: any) {
+    isUpdating = false;
+    console.warn('[AutoUpdate] Update check error:', err?.message || err);
+  }
+}
+
+ipcMain.handle('system:check-update', () => {
+  checkAndApplyClientUpdate();
+  return true;
+});
+
 // Ensure single instance lock so user cannot spawn multiple terminals
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -495,6 +575,16 @@ if (!gotSingleInstanceLock) {
 
   app.whenReady().then(() => {
     createWindow();
+
+    // Perform non-intrusive auto-update check 5 seconds after startup
+    setTimeout(() => {
+      checkAndApplyClientUpdate();
+    }, 5000);
+
+    // Periodically check for client updates every 30 minutes when idle
+    setInterval(() => {
+      checkAndApplyClientUpdate();
+    }, 30 * 60 * 1000);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {

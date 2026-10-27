@@ -75,6 +75,57 @@ app.route('/api/v1/pricing', pricingRoutes);
 app.route('/api/v1/reports', reportRoutes);
 app.route('/api/v1/sync', syncRoutes);
 
+// Client App Auto-Update & Download routes
+app.get('/api/v1/client-app/update-check', (c) => {
+  const currentVersion = c.req.query('currentVersion') || '1.0.0';
+  let latestVersion = '1.0.1';
+  let changelog = 'Latest security updates and cloud synchronization';
+
+  const versionPaths = [
+    path.resolve(process.cwd(), 'releases/version.json'),
+    path.resolve(__dirname, '../../releases/version.json'),
+    path.resolve(__dirname, '../../../releases/version.json')
+  ];
+  const versionFile = versionPaths.find((p) => fs.existsSync(p));
+  if (versionFile) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(versionFile, 'utf8'));
+      if (parsed.version) latestVersion = parsed.version;
+      if (parsed.changelog) changelog = parsed.changelog;
+    } catch {}
+  }
+
+  const updateAvailable = currentVersion.trim() !== latestVersion.trim();
+  const host = c.req.header('host') || 'artemia-pisonet-backend.onrender.com';
+  const protocol = host.includes('localhost') ? 'http' : 'https';
+
+  return c.json({
+    updateAvailable,
+    currentVersion,
+    latestVersion,
+    changelog,
+    downloadUrl: `${protocol}://${host}/download/client/app.asar`
+  });
+});
+
+app.get('/download/client/app.asar', (c) => {
+  const possiblePaths = [
+    path.resolve(process.cwd(), 'releases/app.asar'),
+    path.resolve(__dirname, '../../releases/app.asar'),
+    path.resolve(__dirname, '../../../releases/app.asar'),
+    path.resolve(process.cwd(), 'dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar'),
+    path.resolve(__dirname, '../../dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar')
+  ];
+  const asarPath = possiblePaths.find((p) => fs.existsSync(p));
+
+  if (asarPath) {
+    c.header('Content-Disposition', 'attachment; filename="app.asar"');
+    c.header('Content-Type', 'application/octet-stream');
+    return c.body(fs.readFileSync(asarPath));
+  }
+  return c.text('Release app.asar package not found.', 404);
+});
+
 // Direct Client App Download route for shop PCs on LAN
 app.get('/download/client', (c) => {
   const possiblePaths = [
