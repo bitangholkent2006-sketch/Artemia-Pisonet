@@ -116,7 +116,8 @@ export function getCollections() {
     payments: db.collection<DbPayment>('payments'),
     pricing: db.collection<DbPricingConfig>('pricing_settings'),
     auditRecords: db.collection<DbAuditRecord>('audit_records'),
-    idempotencyKeys: db.collection<DbIdempotencyKey>('idempotency_keys')
+    idempotencyKeys: db.collection<DbIdempotencyKey>('idempotency_keys'),
+    systemSettings: db.collection<any>('system_settings')
   };
 }
 

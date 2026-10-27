@@ -319,4 +319,27 @@ export class ApiClientService {
   public async getAudits(limit = 50) {
     return this.request<{ success: boolean; data: any[] }>(`/api/v1/reports/audits?limit=${limit}`);
   }
+
+  // Daily Sales Email Alerts (Feature 3)
+  public async getEmailConfig() {
+    return this.request<{ success: boolean; data: any }>('/api/v1/reports/email-config');
+  }
+
+  public async updateEmailConfig(config: any) {
+    return this.request<{ success: boolean; data: any; message: string }>('/api/v1/reports/email-config', {
+      method: 'PUT',
+      body: JSON.stringify(config)
+    });
+  }
+
+  public async sendDailyReportEmail(recipientEmail?: string) {
+    return this.request<{ success: boolean; message: string; previewOnly?: boolean }>('/api/v1/reports/send-daily-email', {
+      method: 'POST',
+      body: JSON.stringify({ recipientEmail })
+    });
+  }
+
+  public async getDailySalesPreview() {
+    return this.request<{ success: boolean; data: any; html: string }>('/api/v1/reports/daily-preview');
+  }
 }

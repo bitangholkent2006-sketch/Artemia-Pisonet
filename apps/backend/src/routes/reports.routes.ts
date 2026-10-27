@@ -86,3 +86,43 @@ reportRoutes.get('/audits', requireStaff, async (c) => {
   });
   return c.json({ success: true, data: safeRecords });
 });
+
+// -------------------------------------------------------------
+// Daily Sales Email Alert & Automation Endpoints (Feature 3)
+// -------------------------------------------------------------
+
+// Get current email alert configuration
+reportRoutes.get('/email-config', requireStaff, async (c) => {
+  const { DailyReportEmailService } = await import('../services/email-report.service');
+  const cfg = await DailyReportEmailService.getConfig();
+  return c.json({ success: true, data: cfg });
+});
+
+// Update email alert configuration (recipient, scheduled time, SMTP)
+reportRoutes.put('/email-config', requireStaff, async (c) => {
+  const { DailyReportEmailService } = await import('../services/email-report.service');
+  const body = await c.req.json();
+  const updated = await DailyReportEmailService.saveConfig(body);
+  return c.json({ success: true, data: updated, message: 'Email report settings updated successfully!' });
+});
+
+// Trigger immediate manual sending of today's sales report
+reportRoutes.post('/send-daily-email', requireStaff, async (c) => {
+  const { DailyReportEmailService } = await import('../services/email-report.service');
+  const body = await c.req.json().catch(() => ({}));
+  const staff = (c as any).get?.('user');
+  const result = await DailyReportEmailService.sendDailySalesReport({
+    recipientEmail: body.recipientEmail,
+    manualTriggerBy: staff?.username || 'Staff'
+  });
+  return c.json(result);
+});
+
+// Preview today's compiled sales data and HTML email
+reportRoutes.get('/daily-preview', requireStaff, async (c) => {
+  const { DailyReportEmailService } = await import('../services/email-report.service');
+  const data = await DailyReportEmailService.compileDailySalesData();
+  const html = DailyReportEmailService.generateEmailHtml(data);
+  return c.json({ success: true, data, html });
+});
+

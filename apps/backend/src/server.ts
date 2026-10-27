@@ -10,6 +10,7 @@ import { config } from './config/env';
 import { connectToDatabase, disconnectDatabase, getCollections, isDatabaseConnected } from './database/connection';
 import { initSocketServer } from './socket/socket-server';
 import { SessionService } from './services/session.service';
+import { DailyReportEmailService } from './services/email-report.service';
 
 // Route imports
 import { healthRoutes } from './routes/health.routes';
@@ -229,9 +230,10 @@ async function bootstrap() {
     console.warn('[Recovery] Warning during downtime recovery audit:', err);
   }
 
-  // 3. Start authoritative session expiration worker
+  // 3. Start authoritative session expiration worker & Daily Email Scheduler
   SessionService.startExpirationWorker();
   console.log('[SessionWorker] Drift-free expiration worker active.');
+  DailyReportEmailService.startDailyScheduler();
 
   // 4. Start HTTP Server and bind to host & port
   const server = serve(
@@ -258,6 +260,7 @@ async function bootstrap() {
   const shutdown = async (signal: string) => {
     console.log(`[Shutdown] Received ${signal}. Starting graceful shutdown...`);
     SessionService.stopExpirationWorker();
+    DailyReportEmailService.stopDailyScheduler();
 
     server.close(async () => {
       console.log('[Shutdown] HTTP server closed.');
