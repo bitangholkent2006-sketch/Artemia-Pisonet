@@ -14,13 +14,19 @@ healthRoutes.get('/', (c) => {
 
 // Readiness probe (HTTP 200 only if MongoDB Atlas connection is healthy)
 healthRoutes.get('/ready', async (c) => {
-  const isDbHealthy = await pingDatabase();
+  const isUriConfigured = Boolean(process.env.MONGODB_URI);
+  const dbStatus = await pingDatabase();
 
-  if (!isDbHealthy) {
+  if (!dbStatus.healthy) {
     return c.json({
       status: 'unavailable',
       database: 'disconnected',
-      message: 'Database connection failed. Rejecting incoming state mutations.',
+      mongoUriConfigured: isUriConfigured,
+      targetType: isUriConfigured ? 'Remote Cluster (MONGODB_URI set)' : 'Fallback Localhost (No MONGODB_URI in Render Environment)',
+      error: dbStatus.error,
+      actionRequired: !isUriConfigured
+        ? 'Go to Render Dashboard -> Environment and add MONGODB_URI.'
+        : 'Ensure MongoDB Atlas IP Access List (0.0.0.0/0) is enabled under Network Access.',
       timestamp: new Date().toISOString()
     }, 503);
   }
@@ -28,6 +34,7 @@ healthRoutes.get('/ready', async (c) => {
   return c.json({
     status: 'ready',
     database: 'connected',
+    mongoUriConfigured: isUriConfigured,
     timestamp: new Date().toISOString()
   });
 });

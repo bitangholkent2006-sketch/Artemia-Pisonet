@@ -22,33 +22,45 @@ import {
 
 let client: MongoClient | null = null;
 let database: Db | null = null;
+let connectingPromise: Promise<Db> | null = null;
 
 export async function connectToDatabase(): Promise<Db> {
   if (database && client) {
     return database;
   }
-
-  try {
-    client = new MongoClient(config.mongoUri, {
-      maxPoolSize: 20,
-      minPoolSize: 2,
-      serverSelectionTimeoutMS: 5000,
-      connectTimeoutMS: 10000,
-      retryWrites: true
-    });
-
-    await client.connect();
-    database = client.db(config.mongoDbName);
-    console.log(`[MongoDB] Connected successfully to database: ${config.mongoDbName}`);
-
-    // Create required indexes
-    await ensureIndexes(database);
-
-    return database;
-  } catch (error) {
-    console.error('[MongoDB] Connection failure:', error);
-    throw error;
+  if (connectingPromise) {
+    return connectingPromise;
   }
+
+  connectingPromise = (async () => {
+    try {
+      client = new MongoClient(config.mongoUri, {
+        maxPoolSize: 20,
+        minPoolSize: 2,
+        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 10000,
+        retryWrites: true
+      });
+
+      await client.connect();
+      database = client.db(config.mongoDbName);
+      console.log(`[MongoDB] Connected successfully to database: ${config.mongoDbName}`);
+
+      // Create required indexes
+      await ensureIndexes(database);
+
+      return database;
+    } catch (error) {
+      client = null;
+      database = null;
+      console.error('[MongoDB] Connection failure:', error);
+      throw error;
+    } finally {
+      connectingPromise = null;
+    }
+  })();
+
+  return connectingPromise;
 }
 
 export async function disconnectDatabase(): Promise<void> {
@@ -60,14 +72,21 @@ export async function disconnectDatabase(): Promise<void> {
   }
 }
 
-export async function pingDatabase(): Promise<boolean> {
+export async function pingDatabase(): Promise<{ healthy: boolean; error?: string }> {
   try {
-    if (!database) return false;
+    if (!database) {
+      await connectToDatabase();
+    }
+    if (!database) return { healthy: false, error: 'Database is not initialized.' };
     await database.command({ ping: 1 });
-    return true;
-  } catch {
-    return false;
+    return { healthy: true };
+  } catch (err: any) {
+    return { healthy: false, error: err?.message || String(err) };
   }
+}
+
+export function isDatabaseConnected(): boolean {
+  return Boolean(database && client);
 }
 
 export function getDb(): Db {

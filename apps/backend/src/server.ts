@@ -6,7 +6,7 @@ import { Server as HttpServer } from 'http';
 import fs from 'fs';
 import path from 'path';
 import { config } from './config/env';
-import { connectToDatabase, disconnectDatabase, getCollections } from './database/connection';
+import { connectToDatabase, disconnectDatabase, getCollections, isDatabaseConnected } from './database/connection';
 import { initSocketServer } from './socket/socket-server';
 import { SessionService } from './services/session.service';
 
@@ -50,6 +50,16 @@ app.use(
     maxAge: 86400
   })
 );
+
+// Auto-reconnect to MongoDB on incoming API requests if currently disconnected
+app.use('/api/*', async (c, next) => {
+  if (!isDatabaseConnected()) {
+    try {
+      await connectToDatabase();
+    } catch {}
+  }
+  await next();
+});
 
 // Health Check
 app.route('/health', healthRoutes);
