@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build:renderer": "vite build",
-    "build:electron": "tsc -p tsconfig.electron.json",
+    "build:electron": "tsc -p tsconfig.electron.json && node -e \"const fs=require('fs'); fs.writeFileSync('dist/package.json', JSON.stringify({name:'artemia-customer-terminal',version:'1.0.0',main:'electron/main.js'}, null, 2)); fs.writeFileSync('dist/index.js', 'require(\\'./electron/main.js\\');\\n');\"",
     "build": "npm run build:renderer && npm run build:electron",
     "start": "npm run build && electron ."
   },
