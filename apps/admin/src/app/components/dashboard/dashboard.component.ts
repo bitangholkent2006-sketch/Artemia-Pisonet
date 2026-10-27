@@ -156,6 +156,16 @@ import {
           >
             📢 Broadcast to All PCs
           </button>
+
+          <a
+            href="https://github.com/bitangholkent2006-sketch/Artemia-Pisonet/releases/download/v1.0.0/Artemia-Customer-Terminal-PC.zip"
+            target="_blank"
+            class="btn btn-sm"
+            style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #6ee7b7; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; text-decoration: none;"
+            title="Download complete PC Terminal application (.zip)"
+          >
+            📥 Download PC App (.zip)
+          </a>
         </div>
       </div>
 
