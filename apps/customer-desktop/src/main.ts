@@ -132,7 +132,7 @@ class CustomerDesktopApp {
 
   private async fetchPricing(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiBase}/pricing`);
+      const res = await fetch(`${this.apiBase}/api/v1/pricing`);
       if (res.ok) {
         const json = await res.json();
         if (json.data?.speedMultiplier && typeof json.data.speedMultiplier === 'number') {

@@ -72,6 +72,7 @@ app.route('/api/v1/sessions', sessionRoutes);
 app.route('/api/v1/payments', paymentRoutes);
 app.route('/api/v1/open-time', openTimeRoutes);
 app.route('/api/v1/pricing', pricingRoutes);
+app.route('/pricing', pricingRoutes);
 app.route('/api/v1/reports', reportRoutes);
 app.route('/api/v1/sync', syncRoutes);
 
