@@ -8,15 +8,21 @@ let isGameplayMode = false;
 let lockFocusInterval: NodeJS.Timeout | null = null;
 let keyLockProcess: ChildProcess | null = null;
 
-// Auto-start on Windows boot setup
+// Auto-start setup (Disabled by default so development/admin PCs are never trapped)
 try {
+  const isStrictKiosk = process.env.KIOSK_STRICT === 'true';
   app.setLoginItemSettings({
-    openAtLogin: true,
+    openAtLogin: isStrictKiosk,
     name: "Artemia Pisonet Customer Terminal",
     path: process.execPath
   });
+  // Ensure any previous locked policies are cleaned up on startup
+  if (process.platform === 'win32') {
+    exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" /v "NoWinKeys" /f', () => {});
+    exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" /v "DisableTaskMgr" /f', () => {});
+  }
 } catch (e) {
-  console.warn('Could not register Windows startup item:', e);
+  console.warn('Startup setting check:', e);
 }
 
 // Locate native KioskKeyLock helper binary
@@ -39,6 +45,7 @@ function getKeyLockExePath(): string {
 // Low-level Windows keyboard hook: completely blocks Win keys, Alt+Tab, Alt+Esc, Ctrl+Esc, Alt+F4
 function startKioskKeyLock() {
   if (process.platform !== 'win32') return;
+  if (process.env.KIOSK_STRICT !== 'true') return;
   if (keyLockProcess && !keyLockProcess.killed) return;
 
   const exePath = getKeyLockExePath();
@@ -80,6 +87,7 @@ function applyKioskRegistryPolicies(enable: boolean) {
   if (process.platform !== 'win32') return;
   try {
     if (enable) {
+      if (process.env.KIOSK_STRICT !== 'true') return;
       exec('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" /v "NoWinKeys" /t REG_DWORD /d 1 /f', () => {});
       exec('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" /v "DisableTaskMgr" /t REG_DWORD /d 1 /f', () => {});
       exec('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Search" /v "SearchboxTaskbarMode" /t REG_DWORD /d 0 /f', () => {});
@@ -89,6 +97,28 @@ function applyKioskRegistryPolicies(enable: boolean) {
     }
   } catch (e) {
     console.warn('Registry policy enforcement error:', e);
+  }
+}
+
+// Emergency exit helper: releases all kiosk hooks and restores desktop window
+function emergencyExitKiosk() {
+  console.log('[Kiosk] Emergency release / Windowed Mode triggered');
+  stopFocusGuard();
+  stopKioskKeyLock();
+  unregisterKioskShortcuts();
+  applyKioskRegistryPolicies(false);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    isGameplayMode = true;
+    mainWindow.setKiosk(false);
+    mainWindow.setFullScreen(false);
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setClosable(true);
+    mainWindow.setMinimizable(true);
+    mainWindow.setResizable(true);
+    mainWindow.setMovable(true);
+    mainWindow.setBounds({ width: 1100, height: 750, x: 100, y: 100 });
+    mainWindow.center();
   }
 }
 
@@ -175,18 +205,21 @@ function lockKiosk() {
     const { x, y, width, height } = primaryDisplay.bounds;
     mainWindow.setBounds({ x, y, width, height });
 
-    mainWindow.setKiosk(true);
-    mainWindow.setFullScreen(true);
-    mainWindow.setAlwaysOnTop(true, 'screen-saver');
-    mainWindow.setResizable(false);
-    mainWindow.setMovable(false);
-    mainWindow.setMinimizable(false);
-    mainWindow.setClosable(false);
+    const isStrict = process.env.KIOSK_STRICT === 'true';
+    mainWindow.setKiosk(isStrict);
+    mainWindow.setFullScreen(isStrict);
+    mainWindow.setAlwaysOnTop(isStrict, 'screen-saver');
+    mainWindow.setResizable(true);
+    mainWindow.setMovable(true);
+    mainWindow.setMinimizable(true);
+    mainWindow.setClosable(true);
     mainWindow.show();
     mainWindow.restore();
     mainWindow.moveTop();
     mainWindow.focus();
-    registerKioskShortcuts();
+    if (isStrict) {
+      registerKioskShortcuts();
+    }
   } catch (err) {
     console.warn('Error applying kiosk lock:', err);
   }
@@ -287,8 +320,18 @@ function createWindow() {
     const key = input.key?.toLowerCase();
     const code = input.code?.toLowerCase();
 
-    // Block Alt+F4 on the terminal window ALWAYS (both locked and gameplay)
-    if (isAlt && (key === 'f4' || code === 'f4')) {
+    // Emergency release shortcut: Ctrl+Shift+Q, Ctrl+Shift+X, Alt+F12
+    if (
+      (isCtrl && input.shift && (key === 'q' || code === 'keyq')) ||
+      (isCtrl && input.shift && (key === 'x' || code === 'keyx')) ||
+      (isAlt && (key === 'f12' || code === 'f12'))
+    ) {
+      emergencyExitKiosk();
+      return;
+    }
+
+    // Block Alt+F4 only on dedicated kiosk production mode
+    if (process.env.KIOSK_STRICT === 'true' && isAlt && (key === 'f4' || code === 'f4')) {
       event.preventDefault();
       return;
     }
@@ -348,10 +391,12 @@ function createWindow() {
     }
   });
 
-  // PREVENT CLOSING AT ALL TIMES (prevents customer cheats/bypasses)
-  // The terminal window must NEVER close unless app.exit() or admin exit is triggered!
   mainWindow.on('close', (e) => {
-    e.preventDefault();
+    if (process.env.KIOSK_STRICT === 'true' && !isGameplayMode) {
+      e.preventDefault();
+    } else {
+      emergencyExitKiosk();
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -362,28 +407,36 @@ function createWindow() {
   });
 }
 
-// --------------------------------------------------------------------------
-// IPC Handlers for Pisonet Client Kiosk & Overlay
-// --------------------------------------------------------------------------
 ipcMain.handle('window:minimize', () => {
-  if (mainWindow && isGameplayMode) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    emergencyExitKiosk();
     mainWindow.minimize();
+    return true;
   }
+  return false;
 });
 
 ipcMain.handle('window:maximize', () => {
-  if (mainWindow && isGameplayMode) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMaximized()) {
       mainWindow.unmaximize();
     } else {
       mainWindow.maximize();
     }
+    return true;
   }
+  return false;
 });
 
 ipcMain.handle('window:close', () => {
-  // Prevent closing entirely
-  return false;
+  emergencyExitKiosk();
+  app.exit(0);
+  return true;
+});
+
+ipcMain.handle('window:restore', () => {
+  emergencyExitKiosk();
+  return true;
 });
 
 // Lock screen: Fullscreen blocking overlay when no active session
@@ -425,11 +478,12 @@ ipcMain.handle('system:set-autostart', (_event, enable: boolean) => {
   }
 });
 
-// PC Shutdown on Session Expiry
+// PC Shutdown on Session Expiry (Guard against developer PC shutdown)
 ipcMain.handle('system:shutdown', (_event, timeoutSeconds: number = 15) => {
+  const isStrict = process.env.KIOSK_STRICT === 'true';
   const secs = Math.max(0, Math.floor(timeoutSeconds));
-  console.log(`[Desktop] Initiating PC shutdown in ${secs} seconds...`);
-  if (process.platform === 'win32') {
+  console.log(`[Desktop] PC shutdown request received (${secs}s). Strict mode: ${isStrict}`);
+  if (isStrict && process.platform === 'win32') {
     exec(`shutdown /s /t ${secs} /c "Artemia Pisonet: Customer time expired. PC shutting down." /f`, (err) => {
       if (err) {
         console.error('Windows shutdown command error:', err);

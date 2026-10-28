@@ -2052,5 +2052,61 @@ body.in-gameplay-mode #app {
   box-shadow: 0 0 16px rgba(16, 185, 129, 0.5);
 }
 
+/* Web Mode Station Switcher Pill */
+.station-switcher-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(6, 182, 212, 0.45);
+  padding: 4px 12px;
+  border-radius: 9999px;
+  box-shadow: 0 0 16px rgba(6, 182, 212, 0.15);
+}
 
+.station-select-control {
+  background: transparent;
+  color: #38bdf8;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 800;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 2px 4px;
+}
 
+.station-select-control option {
+  background: #0f172a;
+  color: #f1f5f9;
+}
+
+/* Electron Window Controls */
+.electron-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-subtle-win {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #cbd5e1;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-subtle-win:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.btn-subtle-win.danger:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: #ef4444;
+  color: #fca5a5;
+}

@@ -158,13 +158,23 @@ import {
           </button>
 
           <a
+            href="https://artemia-pisonet-backend.onrender.com/terminal"
+            target="_blank"
+            class="btn btn-sm"
+            style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.25), rgba(16, 185, 129, 0.25)); border: 1px solid rgba(6, 182, 212, 0.5); color: #67e8f9; font-weight: 800; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; box-shadow: 0 0 12px rgba(6, 182, 212, 0.2);"
+            title="Open Live Web Customer Terminal directly in browser without installing any app"
+          >
+            🌐 Web Customer Terminal (No Install)
+          </a>
+
+          <a
             href="https://github.com/bitangholkent2006-sketch/Artemia-Pisonet/releases/download/v1.0.0/Artemia-Customer-Terminal-PC.zip"
             target="_blank"
             class="btn btn-sm"
-            style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #6ee7b7; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; text-decoration: none;"
-            title="Download complete PC Terminal application (.zip)"
+            style="background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.15); color: #94a3b8; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; text-decoration: none;"
+            title="Optional physical lockscreen app for dedicated client computers"
           >
-            📥 Download PC App (.zip)
+            📥 Optional PC App (.zip)
           </a>
         </div>
       </div>

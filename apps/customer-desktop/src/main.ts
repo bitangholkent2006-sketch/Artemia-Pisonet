@@ -67,9 +67,13 @@ interface LiveSession {
 
 // Smart API base resolver: Defaults to live cloud backend on Render, or current browser origin, or custom saved URL
 function getApiBaseUrl(): string {
-  const saved = localStorage.getItem('artemia_server_url');
+  const saved = localStorage.getItem('artemia_server_url') || localStorage.getItem('pisonet_backend_url');
   if (saved) return saved.trim().replace(/\/$/, '');
   if (typeof window !== 'undefined' && window.location.origin && !window.location.origin.startsWith('file://')) {
+    // If running on Vite dev (5173) or Angular dev (4200), use live cloud backend
+    if (window.location.port === '5173' || window.location.port === '4200') {
+      return 'https://artemia-pisonet-backend.onrender.com';
+    }
     return window.location.origin;
   }
   return 'https://artemia-pisonet-backend.onrender.com';
@@ -122,8 +126,10 @@ class CustomerDesktopApp {
       } catch {}
     }
 
-    // Default lock screen on app startup
-    desktopWindow.pisonetDesktop?.lockScreen?.();
+    // Only lock screen on startup if explicitly in strict kiosk mode or station locked
+    if (this.stationLockedMessage) {
+      desktopWindow.pisonetDesktop?.lockScreen?.();
+    }
 
     this.startIdleTimer();
     this.initSocket();
@@ -230,9 +236,9 @@ class CustomerDesktopApp {
             this.showToast(`Station Locked: ${data.status.toUpperCase()}`, 'error');
           } else if (data.status === 'available') {
             this.stationLockedMessage = null;
-            if (!this.activeSession) {
-              this.currentScreen = 'login';
-              desktopWindow.pisonetDesktop?.lockScreen?.();
+            // When station is unlocked by admin, do NOT re-lock the screen
+            if (desktopWindow.pisonetDesktop?.unlockGameplayOverlay) {
+              desktopWindow.pisonetDesktop.unlockGameplayOverlay();
             }
             this.render();
             this.showToast('Station is now unlocked and available for gameplay.', 'success');
@@ -261,6 +267,12 @@ class CustomerDesktopApp {
           sessionStorage.removeItem('artemia_customer_user');
           this.currentScreen = 'login';
           desktopWindow.pisonetDesktop?.lockScreen?.();
+          this.render();
+        } else if (matchesPc && updatedPc.status === 'available') {
+          this.stationLockedMessage = null;
+          if (desktopWindow.pisonetDesktop?.unlockGameplayOverlay) {
+            desktopWindow.pisonetDesktop.unlockGameplayOverlay();
+          }
           this.render();
         }
         this.updateStationUI();
@@ -1523,6 +1535,11 @@ class CustomerDesktopApp {
   }
 
   private renderTopBar(pc?: PublicPC): string {
+    const isElectron = !!desktopWindow.pisonetDesktop?.isElectron;
+    const pcOptions = this.pcs.map(p =>
+      `<option value="${p.id}" ${p.id.toLowerCase() === this.currentPcId.toLowerCase() ? 'selected' : ''}>${p.name} (${p.status.toUpperCase()})</option>`
+    ).join('');
+
     return `
       <header class="demo-topbar">
         <div class="brand-wrapper">
@@ -1536,17 +1553,34 @@ class CustomerDesktopApp {
         </div>
 
         <div class="station-meta-wrapper">
-          <!-- Station Badge -->
-          <div class="station-pill-highlight">
-            <span class="station-icon">🖥️</span>
-            <span class="station-name">${pc ? pc.name : 'PC 01'}</span>
-          </div>
+          <!-- Station Switcher Dropdown in Web Mode (No Install) -->
+          ${!isElectron ? `
+            <div class="station-switcher-pill" title="Switch Target PC Station">
+              <span class="station-icon">🖥️</span>
+              <select id="pc-selector" class="station-select-control">
+                ${pcOptions || `<option value="${this.currentPcId}">${pc ? pc.name : this.currentPcId.toUpperCase()}</option>`}
+              </select>
+            </div>
+          ` : `
+            <div class="station-pill-highlight">
+              <span class="station-icon">🖥️</span>
+              <span class="station-name">${pc ? pc.name : 'PC 01'}</span>
+            </div>
+          `}
 
           <!-- Live Cloud Health Indicator -->
-          <div class="station-cloud-status" title="${this.isConnected ? 'Connected to 24/7 Cloud' : 'Connecting to Cloud...'}">
+          <div class="station-cloud-status" title="${this.isConnected ? 'Connected to 24/7 Cloud (MongoDB Atlas)' : 'Connecting to Cloud...'}">
             <span class="cloud-dot ${this.isConnected ? 'online' : 'offline'}"></span>
             <span class="cloud-text">${this.isConnected ? 'CLOUD LIVE' : 'CONNECTING'}</span>
           </div>
+
+          <!-- Electron Window Exit / Minimize Control -->
+          ${isElectron ? `
+            <div class="electron-window-controls">
+              <button id="btn-desktop-minimize" class="btn-subtle-win" title="Minimize / Window Mode">🗕</button>
+              <button id="btn-desktop-exit" class="btn-subtle-win danger" title="Exit Terminal">✕</button>
+            </div>
+          ` : ''}
 
           <!-- Hidden gear settings button for setup -->
           <button id="server-setup-btn" class="btn-subtle-gear" title="Terminal Settings">
@@ -1877,11 +1911,23 @@ class CustomerDesktopApp {
       selector.addEventListener('change', (e) => {
         this.currentPcId = (e.target as HTMLSelectElement).value;
         localStorage.setItem('artemia_station_id', this.currentPcId);
-        const currentPc = this.getCurrentPc();
-        const badge = document.getElementById('current-pc-badge');
-        if (badge && currentPc) {
-          badge.textContent = `${currentPc.name} • ${currentPc.identifier}`;
-        }
+        this.initSocket();
+        this.render();
+        this.showToast(`Switched to station: ${this.currentPcId.toUpperCase()}`, 'info');
+      });
+    }
+
+    const btnMin = document.getElementById('btn-desktop-minimize');
+    if (btnMin) {
+      btnMin.addEventListener('click', () => {
+        desktopWindow.pisonetDesktop?.minimize?.();
+      });
+    }
+
+    const btnExit = document.getElementById('btn-desktop-exit');
+    if (btnExit) {
+      btnExit.addEventListener('click', () => {
+        desktopWindow.pisonetDesktop?.close?.();
       });
     }
 

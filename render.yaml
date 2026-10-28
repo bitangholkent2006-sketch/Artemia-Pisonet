@@ -5,9 +5,8 @@ services:
   - type: web
     name: artemia-pisonet-backend
     runtime: node
-    plan: free
     region: singapore # Closest low-latency region to Philippines
-    buildCommand: npm install && npm run build:shared && npm run build:backend
+    buildCommand: npm install && npm run build:shared && npm run build:renderer --workspace=apps/customer-desktop && node -e "const fs=require('fs'); fs.cpSync('apps/customer-desktop/dist/renderer', 'apps/backend/public/terminal', {recursive:true});" && npm run build:backend
     startCommand: npm run start:backend
     healthCheckPath: /health
     autoDeploy: true
