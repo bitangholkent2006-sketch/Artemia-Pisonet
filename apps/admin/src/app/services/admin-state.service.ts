@@ -424,22 +424,43 @@ export class AdminStateService {
 
   public async togglePcStatus(pcId: string, newStatus: PCStatus): Promise<{ success: boolean; error?: string }> {
     try {
+      // Optimistic local state update for instant UI responsiveness
+      const pc = this.state.pcs.find((p) => p.id === pcId);
+      if (pc) {
+        pc.status = newStatus;
+        pc.connectionState = newStatus === 'offline' ? 'disconnected' : 'connected';
+        if (newStatus === 'available') {
+          pc.lastHeartbeat = new Date().toISOString();
+        }
+      }
       const res = await this.apiClient.togglePcStatus(pcId, newStatus);
       if (res.success) {
         await this.syncFromBackend();
         return { success: true };
       }
+      await this.syncFromBackend();
       return { success: false, error: 'Failed to update PC status.' };
     } catch (err: any) {
+      await this.syncFromBackend();
       return { success: false, error: err.message || 'Failed to update PC status.' };
     }
   }
 
-  public async simulateWakeOnLan(pcId: string): Promise<void> {
+  public async simulateWakeOnLan(pcId: string): Promise<{ success: boolean; message?: string }> {
     try {
-      await this.apiClient.triggerWol(pcId);
+      const pc = this.state.pcs.find((p) => p.id === pcId);
+      if (pc) {
+        pc.status = 'available';
+        pc.connectionState = 'connected';
+        pc.lastHeartbeat = new Date().toISOString();
+      }
+      const res = await this.apiClient.triggerWol(pcId);
       await this.syncFromBackend();
-    } catch {}
+      return { success: true, message: res?.message || 'Station is now Online & Available.' };
+    } catch (err: any) {
+      await this.syncFromBackend();
+      return { success: false, message: err?.message || 'Wake-on-LAN request failed.' };
+    }
   }
 
   public async deletePc(pcId: string): Promise<{ success: boolean; error?: string }> {

@@ -321,17 +321,25 @@ import {
               >
                 ▶ Assign & Start Session
               </button>
-              <div style="display:grid; grid-template-columns: 1fr auto; gap:6px; margin-top:6px;">
+              <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:6px; margin-top:6px;">
                 <button
                   class="btn btn-action-subtle lock"
                   (click)="toggleLock(pc)"
                   title="Lock terminal"
                 >
-                  🔒 Lock Station
+                  🔒 Lock
                 </button>
                 <button
                   class="btn btn-action-subtle"
-                  style="color: var(--accent-cyan); border-color: rgba(6, 182, 212, 0.35); padding: 0 12px;"
+                  style="color: var(--accent-rose); border-color: rgba(244, 63, 94, 0.35);"
+                  (click)="toggleOnline(pc)"
+                  title="Turn station offline / power off"
+                >
+                  🔌 Offline
+                </button>
+                <button
+                  class="btn btn-action-subtle"
+                  style="color: var(--accent-cyan); border-color: rgba(6, 182, 212, 0.35); padding: 0 10px;"
                   (click)="openMessageModal(pc)"
                   title="Flash instant giant message on this PC screen"
                 >
@@ -367,14 +375,15 @@ import {
                 [disabled]="pc.isPendingWake"
                 (click)="handleWakeOnLan(pc)"
               >
-                <span *ngIf="pc.isPendingWake">Waking PC...</span>
+                <span *ngIf="pc.isPendingWake">⚡ Waking PC...</span>
                 <span *ngIf="!pc.isPendingWake">⚡ Wake-on-LAN</span>
               </button>
               <button
-                class="btn btn-sm btn-secondary"
+                class="btn btn-sm btn-success"
+                style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: var(--accent-emerald); font-weight: 700;"
                 (click)="toggleOnline(pc)"
               >
-                Toggle Online
+                🔌 Set Online
               </button>
             </ng-container>
           </div>
@@ -949,18 +958,30 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.endConfirmPc = null;
   }
 
-  toggleLock(pc: PC) {
+  async toggleLock(pc: PC) {
     const nextStatus: PCStatus = pc.status === 'locked' ? 'available' : 'locked';
-    this.adminState.togglePcStatus(pc.id, nextStatus);
+    pc.status = nextStatus;
+    await this.adminState.togglePcStatus(pc.id, nextStatus);
   }
 
-  toggleOnline(pc: PC) {
+  async toggleOnline(pc: PC) {
     const nextStatus: PCStatus = pc.status === 'offline' ? 'available' : 'offline';
-    this.adminState.togglePcStatus(pc.id, nextStatus);
+    pc.status = nextStatus;
+    pc.connectionState = nextStatus === 'available' ? 'connected' : 'disconnected';
+    await this.adminState.togglePcStatus(pc.id, nextStatus);
   }
 
-  handleWakeOnLan(pc: PC) {
-    this.adminState.simulateWakeOnLan(pc.id);
+  async handleWakeOnLan(pc: PC) {
+    (pc as any).isPendingWake = true;
+    try {
+      await this.adminState.simulateWakeOnLan(pc.id);
+    } finally {
+      setTimeout(() => {
+        (pc as any).isPendingWake = false;
+        pc.status = 'available';
+        pc.connectionState = 'connected';
+      }, 1000);
+    }
   }
 
   // Customer Balances Directory Helpers

@@ -711,24 +711,18 @@ export class SessionService {
       }
     }
 
-    // 2. Idle Stale PCs Check: If a PC terminal has sent no heartbeat for > 60 seconds, mark as offline
-    const staleHeartbeatTime = new Date(now.getTime() - 60000);
-    const stalePcs = await collections.pcs.find({
-      status: { $in: ['available', 'in-use'] },
-      lastHeartbeat: { $lt: staleHeartbeatTime }
+    // 2. Active Session Heartbeat Watchdog: If a PC running an active customer session has sent no heartbeat for > 90 seconds, auto-pause to preserve customer playing time
+    const staleSessionHeartbeatTime = new Date(now.getTime() - 90000);
+    const staleInUsePcs = await collections.pcs.find({
+      status: 'in-use',
+      activeSessionId: { $ne: null },
+      lastHeartbeat: { $lt: staleSessionHeartbeatTime }
     }).toArray();
 
-    for (const pc of stalePcs) {
+    for (const pc of staleInUsePcs) {
       if (pc.activeSessionId) {
-        console.log(`[SessionWorker] Auto-pausing abandoned session on stale PC ${pc.id}`);
+        console.log(`[SessionWorker] Auto-pausing abandoned session on stale PC ${pc.id} to preserve remaining time`);
         await SessionService.pauseSession(pc.activeSessionId, 'system', 'system', undefined, undefined, 'offline');
-      } else {
-        await collections.pcs.updateOne(
-          { id: pc.id },
-          { $set: { status: 'offline', connectionState: 'disconnected', updatedAt: now } }
-        );
-        SessionService.emitEvent('pc:status-changed', { pcId: pc.id, status: 'offline', activeCustomerName: null });
-        SessionService.emitEvent('pc:status', { pcId: pc.id, status: 'offline' });
       }
     }
   }

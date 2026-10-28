@@ -111,8 +111,9 @@ export class PcService {
     };
     if (newStatus === 'offline') {
       updates.connectionState = 'disconnected';
-    } else if (newStatus === 'available') {
+    } else {
       updates.connectionState = 'connected';
+      updates.lastHeartbeat = new Date();
     }
 
     await collections.pcs.updateOne({ id: pcId }, { $set: updates });

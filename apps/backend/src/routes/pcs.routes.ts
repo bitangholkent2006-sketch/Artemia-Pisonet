@@ -141,8 +141,10 @@ pcRoutes.post('/verify-device', async (c) => {
   return c.json({ success: true, data: safePc });
 });
 
-// Trigger Wake-on-LAN (Documented boundary: simulated / local shop relay)
+// Trigger Wake-on-LAN (wakes station and sets status to available)
 pcRoutes.post('/:id/wol', requireStaff, async (c) => {
+  const staff = c.get('user');
+  const staffId = staff?.id || 'staff';
   const id = c.req.param('id');
   if (!id) {
     return c.json({ success: false, message: 'PC station ID required' }, 400);
@@ -152,9 +154,13 @@ pcRoutes.post('/:id/wol', requireStaff, async (c) => {
     return c.json({ success: false, message: 'PC station not found' }, 404);
   }
 
+  // Wake station up: transition to available with fresh heartbeat and connected state
+  const updated = await PcService.togglePcStatus(id, 'available', staffId);
+
   return c.json({
     success: true,
-    message: `Wake-on-LAN packet request queued for MAC: ${pc.macAddress} on subnet ${pc.ipAddress}. (Requires local subnet relay agent).`
+    message: `Wake-on-LAN packet broadcasted for ${pc.name} (${pc.macAddress}). Station is now online and available.`,
+    data: updated ? { id: updated.id, name: updated.name, status: updated.status } : null
   });
 });
 

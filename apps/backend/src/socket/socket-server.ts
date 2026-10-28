@@ -136,6 +136,13 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
               const collections = getCollections();
               const pc = await collections.pcs.findOne({ id: pcId });
               if (pc) {
+                // If PC was toggled by staff in the last 10 seconds, preserve the staff action
+                const recentlyUpdated = pc.updatedAt && (Date.now() - new Date(pc.updatedAt).getTime() < 10000);
+                if (recentlyUpdated && pc.status === 'available') {
+                  console.log(`[Socket] PC ${pcId} was recently set to available by staff. Keeping station available.`);
+                  return;
+                }
+
                 if (pc.activeSessionId) {
                   console.log(`[Socket] Auto-pausing active session ${pc.activeSessionId} on disconnected PC ${pcId}`);
                   await SessionService.pauseSession(pc.activeSessionId, 'system', 'system', undefined, undefined, 'offline');

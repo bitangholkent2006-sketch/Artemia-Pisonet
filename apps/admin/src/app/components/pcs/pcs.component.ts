@@ -288,12 +288,23 @@ export class PcsComponent implements OnInit, OnDestroy {
     this.editPc = null;
   }
 
-  toggleOnlineOffline(pc: PC) {
+  async toggleOnlineOffline(pc: PC) {
     const next: PCStatus = pc.status === 'offline' ? 'available' : 'offline';
-    this.adminState.togglePcStatus(pc.id, next);
+    pc.status = next;
+    pc.connectionState = next === 'available' ? 'connected' : 'disconnected';
+    await this.adminState.togglePcStatus(pc.id, next);
   }
 
-  handleWakeOnLan(pc: PC) {
-    this.adminState.simulateWakeOnLan(pc.id);
+  async handleWakeOnLan(pc: PC) {
+    (pc as any).isPendingWake = true;
+    try {
+      await this.adminState.simulateWakeOnLan(pc.id);
+    } finally {
+      setTimeout(() => {
+        (pc as any).isPendingWake = false;
+        pc.status = 'available';
+        pc.connectionState = 'connected';
+      }, 1000);
+    }
   }
 }
