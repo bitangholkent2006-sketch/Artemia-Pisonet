@@ -11,6 +11,8 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
       - key: NODE_ENV
         value: production
       - key: HOST
@@ -44,6 +46,9 @@ services:
     buildCommand: npm install && npm run build:shared && npm run build:admin
     staticPublishPath: apps/admin/dist/admin/browser
     autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
     routes:
       - type: rewrite
         source: /*
