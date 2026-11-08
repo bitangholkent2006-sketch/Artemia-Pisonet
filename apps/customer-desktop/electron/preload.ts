@@ -6,7 +6,7 @@ export interface PisonetDesktopApi {
   minimize: () => Promise<void>;
   maximize: () => Promise<void>;
   close: () => Promise<void>;
-  getSystemInfo: () => Promise<{ platform: string; version: string; hostname: string; isElectron: boolean }>;
+  getSystemInfo: () => Promise<{ platform: string; version: string; hostname: string; specs?: string; isElectron: boolean }>;
   setAutoStart: (enable: boolean) => Promise<boolean>;
   shutdownPC: (timeoutSeconds?: number) => Promise<boolean>;
   restartPC: () => Promise<boolean>;

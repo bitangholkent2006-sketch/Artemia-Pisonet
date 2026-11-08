@@ -64,3 +64,4 @@ export interface CleanDiskResult {
   message: string;
   timestamp: string;
 }
+

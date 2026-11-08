@@ -17,6 +17,85 @@ export class PcService {
     return collections.pcs.findOne({ id });
   }
 
+  public static async autoDiscoverOrRegisterPc(
+    identifier: string,
+    name?: string,
+    ipAddress = '127.0.0.1',
+    specs = 'Client Gaming PC'
+  ): Promise<DbPC> {
+    const collections = getCollections();
+    const cleanIdentifier = identifier.trim().toUpperCase();
+    const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+
+    // Check if PC exists by id or identifier or name
+    let pc = await collections.pcs.findOne({
+      $or: [
+        { id: cleanId },
+        { id: identifier.toLowerCase() },
+        { identifier: cleanIdentifier }
+      ]
+    });
+
+    const now = new Date();
+
+    if (!pc) {
+      const count = await collections.pcs.countDocuments();
+      const generatedId = cleanId.startsWith('pc-') ? cleanId : `pc-${(count + 1).toString().padStart(2, '0')}`;
+      const stationName = name?.trim() || `PC-${(count + 1).toString().padStart(2, '0')}`;
+
+      const rawDeviceKey = crypto.randomBytes(24).toString('hex');
+      const deviceKeyHash = await bcrypt.hash(rawDeviceKey, 10);
+
+      pc = {
+        _id: new ObjectId(),
+        id: generatedId,
+        name: stationName,
+        identifier: cleanIdentifier,
+        ipAddress: ipAddress.trim(),
+        macAddress: 'AUTO-DISCOVERED',
+        specs: specs.trim(),
+        status: 'available',
+        connectionState: 'connected',
+        deviceKeyHash,
+        activeSessionId: null,
+        activeCustomerId: null,
+        activeCustomerName: null,
+        sessionType: null,
+        lastHeartbeat: now,
+        leaseExpiresAt: null,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      await collections.pcs.insertOne(pc);
+      console.log(`[AutoDiscover] Auto-registered new station: ${pc.name} (${pc.id}) from ${ipAddress}`);
+    } else {
+      await collections.pcs.updateOne(
+        { _id: pc._id },
+        {
+          $set: {
+            connectionState: 'connected',
+            status: 'available',
+            lastHeartbeat: now,
+            ipAddress: ipAddress || pc.ipAddress,
+            updatedAt: now
+          }
+        }
+      );
+      pc.connectionState = 'connected';
+      pc.status = 'available';
+      pc.lastHeartbeat = now;
+    }
+
+    try {
+      const { broadcastRealtimeEvent } = await import('../socket/socket-server');
+      broadcastRealtimeEvent('pc:updated', pc, 'staff');
+      broadcastRealtimeEvent('pc:status', { pcId: pc.id, status: 'available' });
+    } catch {}
+
+    return pc;
+  }
+
   public static async registerPc(
     name: string,
     identifier: string,
@@ -139,8 +218,12 @@ export class PcService {
   ): Promise<void> {
     const collections = getCollections();
     const now = new Date();
-    const pc = await collections.pcs.findOne({ id: pcId });
-    if (!pc) return;
+    let pc = await collections.pcs.findOne({ id: pcId });
+    if (!pc) {
+      // Auto-register newly connected station automatically
+      await PcService.autoDiscoverOrRegisterPc(pcId, pcId.toUpperCase(), ipAddress);
+      return;
+    }
 
     const updates: Record<string, unknown> = {
       lastHeartbeat: now,

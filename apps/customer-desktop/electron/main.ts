@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, desktopCapturer } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { exec, spawn } from 'child_process';
 
 let mainWindow: BrowserWindow | null = null;
@@ -81,12 +82,17 @@ ipcMain.handle('window:close', () => {
   return true;
 });
 
-// System Info
+// System Info & Plug-and-Play Specs
 ipcMain.handle('system:get-info', () => {
+  const hostname = process.env.COMPUTERNAME || os.hostname() || 'STATION-PC';
+  const cpus = os.cpus();
+  const cpuModel = cpus.length > 0 ? cpus[0].model.replace(/\(R\)|\(TM\)/g, '').trim() : 'Gaming CPU';
+  const totalMemGb = Math.round(os.totalmem() / (1024 * 1024 * 1024));
   return {
     platform: process.platform,
     version: app.getVersion(),
-    hostname: process.env.COMPUTERNAME || 'STATION-PC',
+    hostname,
+    specs: `${cpuModel} • ${totalMemGb}GB RAM`,
     isElectron: true
   };
 });

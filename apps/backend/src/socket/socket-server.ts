@@ -109,6 +109,33 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       PcService.recordHeartbeat(pcId).catch(() => {});
     }
 
+    // PC Join & Auto-Discovery (Plug and Play - No manual registration required)
+    authSocket.on('pc:join', async (data: { pcId: string; name?: string; specs?: string; ipAddress?: string }) => {
+      const stationId = (data?.pcId || pcId || 'pc-01').toLowerCase();
+      authSocket.join(`pc:${stationId}`);
+      authSocket.join('fleet');
+      authSocket.data.pcId = stationId;
+      await PcService.autoDiscoverOrRegisterPc(
+        stationId,
+        data?.name || stationId.toUpperCase(),
+        data?.ipAddress || (socket.handshake.address?.replace('::ffff:', '') || '127.0.0.1'),
+        data?.specs
+      );
+    });
+
+    authSocket.on('pc:auto-discover', async (data: { pcId: string; name?: string; specs?: string }) => {
+      const stationId = (data?.pcId || 'pc-01').toLowerCase();
+      authSocket.join(`pc:${stationId}`);
+      authSocket.join('fleet');
+      authSocket.data.pcId = stationId;
+      await PcService.autoDiscoverOrRegisterPc(
+        stationId,
+        data?.name || stationId.toUpperCase(),
+        socket.handshake.address?.replace('::ffff:', '') || '127.0.0.1',
+        data?.specs
+      );
+    });
+
     // PC Terminal Heartbeat Event & Telemetry
     authSocket.on('pc:heartbeat', async (data: { pcId: string; telemetry?: any }) => {
       const targetId = pcId || data?.pcId;

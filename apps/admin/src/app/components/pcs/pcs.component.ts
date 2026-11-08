@@ -28,15 +28,15 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
         </button>
       </div>
 
-      <!-- Hardware Operations Callout -->
-      <div class="callout-info" style="margin-bottom:20px;">
-        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="flex-shrink:0;">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      <!-- Plug and Play Auto-Discovery Banner -->
+      <div class="callout-info" style="margin-bottom:20px; border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.08);">
+        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color:#34d399; flex-shrink:0;">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
         </svg>
         <div>
-          <strong>Local Fleet Management & Remote Boot</strong>
-          <div>
-            Wake-on-LAN (WOL) dispatches standard UDP broadcast magic packets to the target PC's MAC address across the subnet to remotely boot powered-off client terminals.
+          <strong style="color:#34d399;">Plug & Play Auto-Discovery Active</strong>
+          <div style="color:#cbd5e1; font-size:0.82rem; margin-top:2px;">
+            Dili na kinahanglan mag-manomano og add o register! Inig install o abli sa Artemia Fleet Agent sa bisan asang PC sa shop, automatic kining mo-rehistro ug mo-gawas dayon dinhi sa imong dashboard.
           </div>
         </div>
       </div>

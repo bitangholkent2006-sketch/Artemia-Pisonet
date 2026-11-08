@@ -136,3 +136,4 @@ maintenanceRoutes.post('/power', requireStaff, async (c) => {
     message: `Power command '${action.toUpperCase()}' sent to ${targetPcId === 'all' ? 'fleet' : targetPcId}.`
   });
 });
+

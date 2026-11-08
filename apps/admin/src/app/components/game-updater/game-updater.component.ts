@@ -565,3 +565,4 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
     }
   }
 }
+

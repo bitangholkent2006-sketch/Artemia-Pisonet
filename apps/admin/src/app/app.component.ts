@@ -10,7 +10,6 @@ import { TaskManagerComponent } from './components/task-manager/task-manager.com
 import { RemoteTerminalComponent } from './components/remote-terminal/remote-terminal.component';
 import { ScreenViewComponent } from './components/screen-view/screen-view.component';
 import { PcsComponent } from './components/pcs/pcs.component';
-import { ReportsComponent } from './components/reports/reports.component';
 import { PisonetAppState } from '@pisonet/shared';
 
 export type NavTab = 
@@ -20,8 +19,7 @@ export type NavTab =
   | 'task-manager'
   | 'remote-terminal'
   | 'screen-view'
-  | 'pcs'
-  | 'reports';
+  | 'pcs';
 
 @Component({
   selector: 'app-root',
@@ -35,8 +33,7 @@ export type NavTab =
     TaskManagerComponent,
     RemoteTerminalComponent,
     ScreenViewComponent,
-    PcsComponent,
-    ReportsComponent
+    PcsComponent
   ],
   templateUrl: './app.component.html',
   styleUrls: ['./app.component.css']

@@ -496,3 +496,4 @@ export class TaskManagerComponent implements OnInit, OnDestroy {
     return Math.min(100, Math.round((mb / 2048) * 100));
   }
 }
+

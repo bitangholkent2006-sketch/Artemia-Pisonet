@@ -107,18 +107,6 @@
         </svg>
         <span>PC Fleet Hardware</span>
       </button>
-
-      <button
-        type="button"
-        class="nav-link"
-        [ngClass]="{'active': activeNav === 'reports'}"
-        (click)="setActiveNav('reports')"
-      >
-        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-        <span>System Logs & Config</span>
-      </button>
     </nav>
 
     <!-- Sidebar Footer with User Details -->
@@ -173,8 +161,7 @@
                activeNav === 'task-manager' ? 'Live Process & Task Killer' :
                activeNav === 'remote-terminal' ? 'PowerShell & CMD Remote Terminal' :
                activeNav === 'screen-view' ? 'Real-Time Desktop Screen Monitor' :
-               activeNav === 'pcs' ? 'PC Hardware Fleet Inventory' :
-               'System Logs & Configuration' }}
+               'PC Hardware Fleet Inventory' }}
           </span>
           <span class="mobile-title">
             {{ activeNav === 'dashboard' ? 'Fleet Overview' :
@@ -183,8 +170,7 @@
                activeNav === 'task-manager' ? 'Task Manager' :
                activeNav === 'remote-terminal' ? 'Terminal' :
                activeNav === 'screen-view' ? 'Screen' :
-               activeNav === 'pcs' ? 'Hardware' :
-               'Settings' }}
+               'Hardware Fleet' }}
           </span>
         </h1>
       </div>
@@ -233,7 +219,6 @@
       <app-remote-terminal *ngIf="activeNav === 'remote-terminal'"></app-remote-terminal>
       <app-screen-view *ngIf="activeNav === 'screen-view'"></app-screen-view>
       <app-pcs *ngIf="activeNav === 'pcs'"></app-pcs>
-      <app-reports *ngIf="activeNav === 'reports'"></app-reports>
     </main>
 
     <!-- Mobile Bottom Navigation Bar (Visible ONLY on Mobile screens) -->

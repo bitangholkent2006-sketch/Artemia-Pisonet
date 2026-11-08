@@ -44,11 +44,9 @@ function getApiBaseUrl(): string {
 class StationMaintenanceAgent {
   private apiBase: string = getApiBaseUrl();
   private socket: Socket | null = null;
-  private pcId: string =
-    (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('pc') : null) ||
-    localStorage.getItem('artemia_station_id') ||
-    'pc-01';
+  private pcId: string = 'pc-01';
   private pcName: string = 'PC-01';
+  private specs: string = 'Standard Gaming Terminal';
   private isConnected = false;
   private lastUpdateLog: string = 'Station ready. No active background jobs.';
   private telemetry = {
@@ -60,9 +58,48 @@ class StationMaintenanceAgent {
   };
 
   constructor() {
+    this.setupStationIdentity();
     this.renderUI();
     this.initSocket();
     this.startTelemetryLoop();
+  }
+
+  private async setupStationIdentity() {
+    const savedId = localStorage.getItem('artemia_station_id');
+    const paramId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('pc') : null;
+
+    if (desktopWindow.pisonetDesktop) {
+      try {
+        const info = await desktopWindow.pisonetDesktop.getSystemInfo();
+        if (info?.hostname) {
+          if (!savedId && !paramId) {
+            this.pcId = info.hostname.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+            this.pcName = info.hostname.toUpperCase();
+          }
+          if (info.specs) {
+            this.specs = info.specs;
+          }
+        }
+      } catch {}
+    }
+
+    if (paramId) {
+      this.pcId = paramId.toLowerCase();
+      this.pcName = paramId.toUpperCase();
+    } else if (savedId) {
+      this.pcId = savedId.toLowerCase();
+      this.pcName = savedId.toUpperCase();
+    }
+
+    // Refresh UI elements with detected identity
+    const titleSub = document.querySelector('.station-sub');
+    if (titleSub) {
+      titleSub.innerHTML = `Station ID: <strong style="color:#38bdf8">${this.pcName}</strong> ${this.specs ? `<span style="font-size:0.75rem; color:#64748b; margin-left:8px;">(${this.specs})</span>` : ''}`;
+    }
+
+    if (this.socket && this.isConnected) {
+      this.socket.emit('pc:auto-discover', { pcId: this.pcId, name: this.pcName, specs: this.specs });
+    }
   }
 
   private initSocket() {
@@ -77,8 +114,10 @@ class StationMaintenanceAgent {
       this.socket.on('connect', () => {
         this.isConnected = true;
         this.updateStatusBadge(true);
-        // Identify station to server
-        this.socket?.emit('pc:join', { pcId: this.pcId, name: this.pcName });
+        // Plug-and-play auto-discovery: Registers station without manual admin setup
+        this.socket?.emit('pc:join', { pcId: this.pcId, name: this.pcName, specs: this.specs });
+        this.socket?.emit('pc:auto-discover', { pcId: this.pcId, name: this.pcName, specs: this.specs });
+        this.socket?.emit('pc:heartbeat', { pcId: this.pcId, telemetry: this.telemetry });
         this.socket?.emit('maintenance:agent:ready', { pcId: this.pcId });
         this.logMessage(`Connected to Artemia Fleet Server (${this.apiBase})`);
       });

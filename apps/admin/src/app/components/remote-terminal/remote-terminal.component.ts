@@ -396,3 +396,4 @@ export class RemoteTerminalComponent implements OnInit, OnDestroy {
     await this.adminState.executeRemoteCommand(this.targetScope, cmd, this.selectedShell);
   }
 }
+
