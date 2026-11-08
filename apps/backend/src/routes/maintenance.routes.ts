@@ -104,6 +104,50 @@ maintenanceRoutes.post('/game-update', requireStaff, async (c) => {
   });
 });
 
+// Trigger Remote File / App Download
+maintenanceRoutes.post('/download', requireStaff, async (c) => {
+  const staff = c.get('user');
+  const body = await c.req.json();
+  const { targetPcId = 'all', targetPcIds, url, filename, targetPath, targetDir, autoRun, runArgs, silentArgs } = body;
+
+  if (!url || !url.trim()) {
+    return c.json({ success: false, message: 'Download URL is required' }, 400);
+  }
+
+  const payload = {
+    reqId: 'dl_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    targetPcId,
+    targetPcIds,
+    url: url.trim(),
+    filename,
+    targetPath: targetPath || targetDir,
+    autoRun: !!autoRun,
+    runArgs: runArgs || silentArgs,
+    sender: staff?.fullName || staff?.username || 'Admin',
+    timestamp: new Date().toISOString()
+  };
+
+  const targets = Array.isArray(targetPcIds) && targetPcIds.length > 0 ? targetPcIds : [targetPcId];
+  if (targets.includes('all') || targets.includes('fleet')) {
+    broadcastRealtimeEvent('agent:download:run', { ...payload, targetPcId: 'all' }, 'fleet');
+    broadcastRealtimeEvent('agent:download:run', { ...payload, targetPcId: 'all' });
+  } else {
+    targets.forEach((tid: string) => {
+      const t = tid.toLowerCase();
+      broadcastRealtimeEvent('agent:download:run', { ...payload, targetPcId: t }, `pc:${t}`);
+      if (!t.startsWith('pc-')) {
+        broadcastRealtimeEvent('agent:download:run', { ...payload, targetPcId: t }, `pc:pc-${t}`);
+      }
+    });
+  }
+
+  return c.json({
+    success: true,
+    message: `Download task dispatched to ${targets.includes('all') ? 'all online stations' : targets.join(', ')}.`,
+    payload
+  });
+});
+
 // Remote Power Actions: Restart, Shutdown, Sleep, Maintenance Lock
 maintenanceRoutes.post('/power', requireStaff, async (c) => {
   const staff = c.get('user');

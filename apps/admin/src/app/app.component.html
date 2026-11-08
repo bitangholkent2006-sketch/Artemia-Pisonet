@@ -43,7 +43,7 @@
         <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
         </svg>
-        <span>Game Auto-Updater</span>
+        <span>App & Game Downloader</span>
       </button>
 
       <button
@@ -213,7 +213,7 @@
     <!-- Active View Router -->
     <main class="page-container">
       <app-dashboard *ngIf="activeNav === 'dashboard'" (navigateTab)="onNavigateTab($event)"></app-dashboard>
-      <app-game-updater *ngIf="activeNav === 'game-updater'"></app-game-updater>
+      <app-game-updater *ngIf="activeNav === 'game-updater'" [initialPcId]="targetStationId"></app-game-updater>
       <app-file-manager *ngIf="activeNav === 'file-manager'" [initialPcId]="targetStationId"></app-file-manager>
       <app-task-manager *ngIf="activeNav === 'task-manager'" [initialPcId]="targetStationId"></app-task-manager>
       <app-remote-terminal *ngIf="activeNav === 'remote-terminal'" [initialPcId]="targetStationId"></app-remote-terminal>

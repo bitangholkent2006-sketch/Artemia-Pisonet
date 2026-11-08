@@ -377,6 +377,22 @@ export class ApiClientService {
     });
   }
 
+  public async triggerRemoteDownload(payload: {
+    targetPcIds?: string[];
+    targetPcId?: string;
+    url: string;
+    filename?: string;
+    targetPath?: string;
+    autoRun?: boolean;
+    runArgs?: string;
+    silentArgs?: string;
+  }) {
+    return this.request<{ success: boolean; message: string; payload?: any }>('/api/v1/maintenance/download', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
   public async executePowerAction(targetPcId: string = 'all', action: 'restart' | 'shutdown' | 'sleep' | 'lock' | 'unlock') {
     return this.request<{ success: boolean; message: string }>('/api/v1/maintenance/power', {
       method: 'POST',

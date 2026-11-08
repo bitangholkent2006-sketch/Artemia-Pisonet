@@ -27,6 +27,9 @@ interface WindowWithDesktop extends Window {
     killProcess: (pid?: number, name?: string) => Promise<{ success: boolean; error?: string }>;
     captureScreen: () => Promise<{ base64Image: string; error?: string }>;
     getDiskDrives: () => Promise<{ drives: any[] }>;
+    getHardwareHealth?: () => Promise<{ cpuModel: string; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string }>;
+    downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
+    onDownloadProgress?: (callback: (data: any) => void) => void;
   };
 }
 
@@ -80,6 +83,13 @@ class StationMaintenanceAgent {
   private telemetry = {
     cpuPercent: 14,
     ramPercent: 42,
+    cpuModel: '',
+    ramUsedGb: 0,
+    ramTotalGb: 16,
+    gpu: '',
+    gpuStatus: 'OK',
+    ssdModel: '',
+    ssdStatus: 'OK',
     diskUsedGb: 320,
     diskTotalGb: 500,
     diskUsage: [] as any[],
@@ -789,6 +799,41 @@ class StationMaintenanceAgent {
         });
       });
 
+      // 9. Remote App & File Downloader Relay
+      desktopWindow.pisonetDesktop?.onDownloadProgress?.((progress: any) => {
+        this.socket?.emit('agent:download:progress', {
+          ...progress,
+          pcId: this.pcId
+        });
+      });
+
+      this.socket.on('agent:download:run', async (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; targetPcId?: string }) => {
+        if (!this.matchesThisStation(payload.targetPcId)) return;
+        this.logMessage(`[Downloader] Starting download: ${payload.url}`);
+        this.showToast(`📥 Downloading: ${payload.filename || 'installer'}...`, 'info', 6);
+        let res: any;
+        if (desktopWindow.pisonetDesktop?.downloadFile) {
+          res = await desktopWindow.pisonetDesktop.downloadFile(payload);
+        } else {
+          res = { success: false, error: 'Download agent only available on native desktop terminal.' };
+        }
+
+        if (res.success) {
+          this.logMessage(`[Downloader] Download completed: ${res.destPath}`);
+          this.showToast(`✅ Download Complete: ${res.filename}!`, 'success', 6);
+        } else {
+          this.logMessage(`[Downloader] Download failed: ${res.error}`);
+          this.showToast(`❌ Download Failed: ${res.error}`, 'warn', 6);
+        }
+
+        this.socket?.emit('agent:download:res', {
+          reqId: payload.reqId,
+          pcId: payload.targetPcId || this.pcId,
+          ...res,
+          timestamp: new Date().toISOString()
+        });
+      });
+
     } catch (e) {
       console.warn('Socket connection error:', e);
     }
@@ -808,6 +853,22 @@ class StationMaintenanceAgent {
               this.telemetry.diskUsedGb = cDrive.usedGb;
               this.telemetry.diskTotalGb = cDrive.totalGb;
             }
+          }
+        } catch {}
+      }
+
+      if (desktopWindow.pisonetDesktop?.getHardwareHealth) {
+        try {
+          const hw = await desktopWindow.pisonetDesktop.getHardwareHealth();
+          if (hw) {
+            this.telemetry.cpuModel = hw.cpuModel || this.telemetry.cpuModel;
+            this.telemetry.ramTotalGb = hw.ramTotalGb || this.telemetry.ramTotalGb;
+            this.telemetry.ramUsedGb = hw.ramUsedGb || this.telemetry.ramUsedGb;
+            this.telemetry.ramPercent = hw.ramPercent || this.telemetry.ramPercent;
+            this.telemetry.gpu = hw.gpu || this.telemetry.gpu;
+            this.telemetry.gpuStatus = hw.gpuStatus || this.telemetry.gpuStatus;
+            this.telemetry.ssdModel = hw.ssdModel || this.telemetry.ssdModel;
+            this.telemetry.ssdStatus = hw.ssdStatus || this.telemetry.ssdStatus;
           }
         } catch {}
       }

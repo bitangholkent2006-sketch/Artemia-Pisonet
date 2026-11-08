@@ -175,9 +175,50 @@ import { PC, PCStatus } from '@pisonet/shared';
               </div>
             </div>
 
-            <!-- Hardware Specs Tag -->
-            <div class="specs-readout">
-              💻 {{ pc.specs || 'Ryzen Gaming Station • 16GB RAM' }}
+            <!-- Hardware Health & Specs Readout (CPU, RAM, GPU, SSD) -->
+            <div class="hardware-health-box">
+              <!-- CPU & RAM -->
+              <div class="hw-item">
+                <span class="hw-icon">💻</span>
+                <div class="hw-details">
+                  <div class="hw-title" [title]="pc.cpuModel || pc.specs || 'Core Processor'">
+                    {{ pc.cpuModel || pc.specs || 'Core Processor' }}
+                  </div>
+                  <div class="hw-meta">
+                    <span class="hw-sub" *ngIf="pc.ramTotalGb">RAM: {{ pc.ramUsedGb }}GB / {{ pc.ramTotalGb }}GB ({{ pc.ramPercent }}%)</span>
+                    <span class="hw-sub" *ngIf="!pc.ramTotalGb">{{ pc.ramPercent ? pc.ramPercent + '% RAM Used' : '16GB RAM' }}</span>
+                    <span class="hw-badge ok" *ngIf="pc.status !== 'offline'">● OK</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Dedicated/Integrated GPU (if detected) -->
+              <div class="hw-item" *ngIf="pc.gpu">
+                <span class="hw-icon">🎮</span>
+                <div class="hw-details">
+                  <div class="hw-title" [title]="pc.gpu">{{ pc.gpu }}</div>
+                  <div class="hw-meta">
+                    <span class="hw-sub">Graphics Adapter</span>
+                    <span class="hw-badge" [ngClass]="{'ok': pc.gpuStatus === 'OK', 'warn': pc.gpuStatus && pc.gpuStatus !== 'OK'}">
+                      ● {{ pc.gpuStatus || 'OK' }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Primary SSD / NVMe Drive (if detected) -->
+              <div class="hw-item" *ngIf="pc.ssdModel">
+                <span class="hw-icon">💾</span>
+                <div class="hw-details">
+                  <div class="hw-title" [title]="pc.ssdModel">{{ pc.ssdModel }}</div>
+                  <div class="hw-meta">
+                    <span class="hw-sub">SSD Storage</span>
+                    <span class="hw-badge" [ngClass]="{'ok': pc.ssdStatus === 'OK', 'warn': pc.ssdStatus && pc.ssdStatus !== 'OK'}">
+                      ● {{ pc.ssdStatus || 'OK' }}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Storage / Disks Progress Bars (Dynamically detected from real PC drives) -->
@@ -218,6 +259,9 @@ import { PC, PCStatus } from '@pisonet/shared';
             </button>
             <button class="module-btn" (click)="openMessageModal(pc)" title="Flash Announcement">
               💬 Msg
+            </button>
+            <button class="module-btn download-btn" (click)="navigateToModule('game-updater', pc.id)" title="Remote App Downloader">
+              📥 Down
             </button>
           </div>
 
@@ -579,6 +623,65 @@ import { PC, PCStatus } from '@pisonet/shared';
       font-weight: 700;
       color: #f8fafc;
     }
+    .hardware-health-box {
+      background: #090d16;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .hw-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .hw-icon {
+      font-size: 0.95rem;
+      width: 18px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .hw-details {
+      flex: 1;
+      min-width: 0;
+    }
+    .hw-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hw-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.67rem;
+      color: #94a3b8;
+    }
+    .hw-sub {
+      color: #94a3b8;
+    }
+    .hw-badge {
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+    }
+    .hw-badge.warn {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+    }
+    .hw-badge.danger {
+      background: rgba(225, 29, 72, 0.15);
+      color: #fb7185;
+    }
     .specs-readout {
       font-size: 0.75rem;
       color: #94a3b8;
@@ -638,24 +741,34 @@ import { PC, PCStatus } from '@pisonet/shared';
     }
     .pc-quick-modules {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 6px;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 5px;
       margin-bottom: 12px;
     }
     .module-btn {
       background: #1e293b;
       border: 1px solid #334155;
       color: #cbd5e1;
-      padding: 6px 4px;
+      padding: 6px 2px;
       border-radius: 6px;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 700;
       cursor: pointer;
       text-align: center;
+      transition: all 0.2s ease;
     }
     .module-btn:hover {
       background: #0284c7;
       border-color: #38bdf8;
+      color: #fff;
+    }
+    .module-btn.download-btn {
+      border-color: #06b6d4;
+      color: #38bdf8;
+    }
+    .module-btn.download-btn:hover {
+      background: #0891b2;
+      border-color: #22d3ee;
       color: #fff;
     }
     .action-grid-buttons {

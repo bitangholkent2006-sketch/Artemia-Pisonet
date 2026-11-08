@@ -25,6 +25,9 @@ export interface PisonetDesktopApi {
   killProcess: (pid?: number, name?: string) => Promise<{ success: boolean; error?: string }>;
   captureScreen: () => Promise<{ base64Image: string; error?: string }>;
   getDiskDrives: () => Promise<{ drives: any[] }>;
+  getHardwareHealth: () => Promise<{ cpuModel: string; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string }>;
+  downloadFile: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
+  onDownloadProgress: (callback: (data: any) => void) => void;
 }
 
 const api: PisonetDesktopApi = {
@@ -51,7 +54,12 @@ const api: PisonetDesktopApi = {
   listProcesses: () => ipcRenderer.invoke('maintenance:list-processes'),
   killProcess: (pid, name) => ipcRenderer.invoke('maintenance:kill-process', pid, name),
   captureScreen: () => ipcRenderer.invoke('maintenance:capture-screen'),
-  getDiskDrives: () => ipcRenderer.invoke('maintenance:get-disk-drives')
+  getDiskDrives: () => ipcRenderer.invoke('maintenance:get-disk-drives'),
+  getHardwareHealth: () => ipcRenderer.invoke('maintenance:get-hardware-health'),
+  downloadFile: (payload) => ipcRenderer.invoke('maintenance:download-file', payload),
+  onDownloadProgress: (callback) => {
+    ipcRenderer.on('maintenance:download:progress', (_event, data) => callback(data));
+  }
 };
 
 contextBridge.exposeInMainWorld('pisonetDesktop', api);

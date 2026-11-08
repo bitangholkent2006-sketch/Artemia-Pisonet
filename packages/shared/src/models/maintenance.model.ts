@@ -65,3 +65,37 @@ export interface CleanDiskResult {
   timestamp: string;
 }
 
+export interface RemoteDownloadRequest {
+  reqId: string;
+  url: string;
+  filename?: string;
+  targetPath?: string;
+  autoRun?: boolean;
+  runArgs?: string;
+  targetPcIds: string[]; // e.g. ['all'] or ['pc-01']
+}
+
+export interface RemoteDownloadProgress {
+  reqId: string;
+  pcId: string;
+  pcName?: string;
+  downloadedBytes: number;
+  totalBytes: number;
+  percent: number;
+  status: 'pending' | 'downloading' | 'completed' | 'failed';
+  error?: string;
+}
+
+export interface RemoteDownloadResult {
+  reqId: string;
+  pcId: string;
+  pcName?: string;
+  success: boolean;
+  destPath?: string;
+  filename?: string;
+  totalBytes?: number;
+  executed?: boolean;
+  error?: string;
+  timestamp: string;
+}
+

@@ -1,9 +1,32 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import { AdminStateService } from '../../services/admin-state.service';
 import { PC, GameDefinition } from '@pisonet/shared';
+
+export interface AppPreset {
+  id: string;
+  name: string;
+  icon: string;
+  url: string;
+  filename: string;
+  autoRun: boolean;
+  silentArgs: string;
+  category: string;
+}
+
+export interface StationDownloadState {
+  pcId: string;
+  pcName: string;
+  percent: number;
+  downloadedMb: string;
+  totalMb: string;
+  status: 'queued' | 'downloading' | 'installing' | 'completed' | 'failed';
+  savedPath?: string;
+  executed?: boolean;
+  error?: string;
+}
 
 @Component({
   selector: 'app-game-updater',
@@ -11,123 +34,378 @@ import { PC, GameDefinition } from '@pisonet/shared';
   imports: [CommonModule, FormsModule],
   template: `
     <div class="updater-container">
-      <!-- Page Header -->
-      <div class="page-header-row">
-        <div>
-          <h1 class="page-title">
-            <span class="icon">🚀</span>
-            <span>Simultaneous Game & App Auto-Updater</span>
-          </h1>
-          <p class="page-subtitle">
-            Dungan nga pag-update sa mga dula ug apps sa tanang PC stations gikan sa usa ka sentral nga pindot.
-          </p>
+      <!-- Page Navigation Tabs (Downloader vs Game Auto-Updater) -->
+      <div class="mode-tabs-bar">
+        <button
+          class="mode-tab-btn"
+          [ngClass]="{'active': activeMode === 'downloader'}"
+          (click)="activeMode = 'downloader'"
+        >
+          <span class="tab-icon">📥</span>
+          <span>Remote App & File Downloader</span>
+          <span class="tab-pill">Fleet Downloader</span>
+        </button>
+        <button
+          class="mode-tab-btn"
+          [ngClass]="{'active': activeMode === 'games'}"
+          (click)="activeMode = 'games'"
+        >
+          <span class="tab-icon">🚀</span>
+          <span>Game Auto-Updater & LAN Sync</span>
+          <span class="tab-pill">Steam / Epic / Robocopy</span>
+        </button>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- 1. REMOTE APP & FILE DOWNLOADER VIEW -->
+      <!-- ========================================================================= -->
+      <div *ngIf="activeMode === 'downloader'">
+        <!-- Page Header -->
+        <div class="page-header-row">
+          <div>
+            <h1 class="page-title">
+              <span class="icon">📥</span>
+              <span>Remote App & File Downloader</span>
+            </h1>
+            <p class="page-subtitle">
+              Paspas nga dungan nga pag-download ug automatic background install sa mga apps o files sa tanang PC stations o piniling PC.
+            </p>
+          </div>
+
+          <div class="header-actions">
+            <button
+              class="btn btn-primary"
+              [disabled]="isDispatchingDownload || !downloadUrl.trim()"
+              (click)="launchRemoteDownload()"
+            >
+              <span>🚀</span>
+              <span>{{ isDispatchingDownload ? 'Gisugdan...' : (targetMode === 'all' ? 'I-download sa Tanan Online PCs' : 'I-download sa Piniling PC (' + selectedPcIds.length + ')') }}</span>
+            </button>
+          </div>
         </div>
 
-        <div class="header-actions">
-          <button class="btn btn-primary" [disabled]="isDispatching" (click)="launchBatchUpdate()">
-            <span>⚡</span>
-            <span>{{ isDispatching ? 'Dispatching...' : 'Launch Batch Update Now' }}</span>
-          </button>
+        <!-- Feedback Banner -->
+        <div *ngIf="statusNotice" class="notice-banner" [ngClass]="noticeType">
+          <span>{{ statusNotice }}</span>
+          <button class="btn-close-sm" (click)="statusNotice = null">✕</button>
+        </div>
+
+        <div class="setup-grid">
+          <!-- Step 1: Target Selection (All vs Specific PC) -->
+          <div class="card">
+            <div class="card-header">
+              <span class="step-badge">Step 1</span>
+              <h3 class="card-title">Pilia ang Target nga mga PC</h3>
+            </div>
+
+            <!-- Target Scope Mode Switch -->
+            <div class="target-scope-switch">
+              <label
+                class="scope-option"
+                [ngClass]="{'selected': targetMode === 'all'}"
+                (click)="targetMode = 'all'"
+              >
+                <input type="radio" name="targetMode" [checked]="targetMode === 'all'" />
+                <div class="scope-text">
+                  <div class="scope-title">🌐 Tanan Online PCs (Fleet-Wide)</div>
+                  <div class="scope-desc">Dungan nga i-download sa tanang aktibong computer stations sa pisonet</div>
+                </div>
+              </label>
+
+              <label
+                class="scope-option"
+                [ngClass]="{'selected': targetMode === 'selected'}"
+                (click)="targetMode = 'selected'"
+              >
+                <input type="radio" name="targetMode" [checked]="targetMode === 'selected'" />
+                <div class="scope-text">
+                  <div class="scope-title">🎯 Pilia ang PC (Specific Stations)</div>
+                  <div class="scope-desc">Pili lang ug usa o piho nga mga PC nga downloadan</div>
+                </div>
+              </label>
+            </div>
+
+            <!-- Specific PC Selection List (shown when targetMode === 'selected') -->
+            <div *ngIf="targetMode === 'selected'" class="specific-pc-container">
+              <div class="select-all-row">
+                <span class="pc-count-label">{{ selectedPcIds.length }} of {{ state.pcs.length }} napili</span>
+                <button type="button" class="btn-toggle-all" (click)="toggleSelectAll()">
+                  {{ areAllSelected ? 'Unselect All' : 'Select All (' + state.pcs.length + ')' }}
+                </button>
+              </div>
+
+              <div class="stations-selection-list">
+                <label
+                  *ngFor="let pc of state.pcs"
+                  class="station-check-item"
+                  [ngClass]="{'checked': isPcSelected(pc.id), 'offline': pc.status === 'offline'}"
+                >
+                  <input
+                    type="checkbox"
+                    [checked]="isPcSelected(pc.id)"
+                    (change)="togglePc(pc.id)"
+                  />
+                  <div class="station-meta">
+                    <div class="station-name-row">
+                      <span class="name">{{ pc.name }}</span>
+                      <span class="status-pill" [ngClass]="pc.status">{{ pc.status | uppercase }}</span>
+                    </div>
+                    <div class="station-details">
+                      {{ pc.ipAddress }} • {{ pc.specs || 'Client Station' }}
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2: Download Configuration & Presets -->
+          <div class="card">
+            <div class="card-header">
+              <span class="step-badge">Step 2</span>
+              <h3 class="card-title">Pilia o Isulod ang App / File</h3>
+            </div>
+
+            <!-- Quick App Presets -->
+            <div class="presets-header">⚡ Popular 1-Click App Presets:</div>
+            <div class="presets-grid">
+              <button
+                type="button"
+                *ngFor="let p of popularPresets"
+                class="preset-btn"
+                [ngClass]="{'active': selectedPresetId === p.id}"
+                (click)="applyPreset(p)"
+              >
+                <span class="preset-icon">{{ p.icon }}</span>
+                <span class="preset-name">{{ p.name }}</span>
+              </button>
+            </div>
+
+            <!-- Download Form Inputs -->
+            <div class="download-form">
+              <div class="form-group">
+                <label class="form-label">
+                  <span>Direct Download URL (HTTP/HTTPS)</span>
+                  <span class="req">*</span>
+                </label>
+                <input
+                  type="text"
+                  class="form-input"
+                  [(ngModel)]="downloadUrl"
+                  placeholder="https://example.com/installer.exe"
+                  (ngModelChange)="onUrlChange()"
+                />
+              </div>
+
+              <div class="form-row">
+                <div class="form-group half">
+                  <label class="form-label">Save Filename</label>
+                  <input
+                    type="text"
+                    class="form-input"
+                    [(ngModel)]="downloadFilename"
+                    placeholder="e.g. ChromeStandaloneSetup64.exe"
+                  />
+                </div>
+                <div class="form-group half">
+                  <label class="form-label">Target Directory (Client PC)</label>
+                  <input
+                    type="text"
+                    class="form-input"
+                    [(ngModel)]="downloadTargetDir"
+                    placeholder="Default: Downloads folder"
+                  />
+                </div>
+              </div>
+
+              <!-- Auto-run / Silent Install Options -->
+              <div class="install-options-box">
+                <label class="checkbox-label">
+                  <input type="checkbox" [(ngModel)]="autoRunInstaller" />
+                  <span class="checkbox-text">
+                    <strong>Auto-run installer after download</strong>
+                    <span class="subtext">Awtomatikong sugdan ang installation pagkahuman sa download</span>
+                  </span>
+                </label>
+
+                <div *ngIf="autoRunInstaller" class="form-group silent-args-group">
+                  <label class="form-label">Silent Install Flags / Arguments</label>
+                  <input
+                    type="text"
+                    class="form-input"
+                    [(ngModel)]="silentArgs"
+                    placeholder="e.g. /S or /silent /install or /qn"
+                  />
+                  <div class="form-hint">
+                    💡 Gamita ang <code>/S</code>, <code>/silent</code>, o <code>/qn</code> aron dili magpakita og prompt sa kustomer ug mahuman sa background.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Download Progress Grid Across Target PCs -->
+        <div class="card progress-card" *ngIf="downloadList.length > 0">
+          <div class="card-header">
+            <h3 class="card-title">📊 Live Station Download Progress</h3>
+            <span class="header-status-pill">{{ activeDownloadsCount }} actively downloading</span>
+          </div>
+
+          <div class="download-stations-grid">
+            <div *ngFor="let item of downloadList" class="station-progress-card" [ngClass]="item.status">
+              <div class="sp-header">
+                <div class="sp-pc-name">
+                  <span class="sp-icon">🖥️</span>
+                  <strong>{{ item.pcName }}</strong>
+                </div>
+                <span class="sp-status-badge" [ngClass]="item.status">
+                  {{ item.status === 'downloading' ? 'Downloading (' + item.percent + '%)' : (item.status === 'completed' ? 'Completed ✅' : (item.status === 'failed' ? 'Failed ❌' : 'Queued')) }}
+                </span>
+              </div>
+
+              <!-- Animated Progress Bar -->
+              <div class="sp-bar-container">
+                <div
+                  class="sp-bar-fill"
+                  [style.width.%]="item.percent"
+                  [ngClass]="{'complete': item.percent === 100, 'error': item.status === 'failed'}"
+                ></div>
+              </div>
+
+              <!-- Size & Status Details -->
+              <div class="sp-footer">
+                <span class="sp-size">{{ item.downloadedMb }} MB / {{ item.totalMb }} MB</span>
+                <span class="sp-extra" *ngIf="item.savedPath" [title]="item.savedPath">Saved: {{ item.savedPath }}</span>
+                <span class="sp-error" *ngIf="item.error">{{ item.error }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Feedback Banner -->
-      <div *ngIf="statusNotice" class="notice-banner" [ngClass]="noticeType">
-        <span>{{ statusNotice }}</span>
-        <button class="btn-close-sm" (click)="statusNotice = null">✕</button>
-      </div>
-
-      <!-- Step 1 & 2 Grid -->
-      <div class="setup-grid">
-        <!-- Game Selection Card -->
-        <div class="card">
-          <div class="card-header">
-            <span class="step-badge">Step 1</span>
-            <h3 class="card-title">Pilia ang Dula o App nga I-update</h3>
+      <!-- ========================================================================= -->
+      <!-- 2. GAME AUTO-UPDATER & LAN SYNC VIEW -->
+      <!-- ========================================================================= -->
+      <div *ngIf="activeMode === 'games'">
+        <!-- Page Header -->
+        <div class="page-header-row">
+          <div>
+            <h1 class="page-title">
+              <span class="icon">🚀</span>
+              <span>Game Auto-Updater & LAN Sync</span>
+            </h1>
+            <p class="page-subtitle">
+              Dungan nga pag-update sa mga dula ug apps sa tanang PC stations gikan sa usa ka sentral nga pindot o LAN Sync gikan sa Master Server.
+            </p>
           </div>
 
-          <div class="games-grid">
-            <div
-              *ngFor="let g of gamesList"
-              class="game-card"
-              [ngClass]="{'selected': selectedGameKey === g.key}"
-              (click)="selectedGameKey = g.key"
-            >
-              <div class="game-icon">{{ g.icon }}</div>
-              <div class="game-info">
-                <div class="game-title">{{ g.title }}</div>
-                <div class="game-category">{{ g.category }}</div>
-              </div>
-              <div class="radio-indicator">
-                <span *ngIf="selectedGameKey === g.key" class="radio-dot"></span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Custom LAN Sync or Custom Command Option -->
-          <div class="custom-cmd-section" *ngIf="selectedGameKey === 'lan_sync' || selectedGameKey === 'custom'">
-            <label class="form-label">Custom PowerShell / Robocopy LAN Sync Command</label>
-            <input
-              type="text"
-              class="form-input"
-              [(ngModel)]="customSyncCommand"
-              placeholder="e.g. robocopy \\\\SERVER\\Games D:\\Games /MIR /MT:8 /R:1 /W:1"
-            />
-            <div class="form-hint">
-              💡 <strong>LAN Sync:</strong> I-kopya ang bag-ong patch direkta gikan sa Master Server padulong sa mga kliyente nga dili mag-usik og internet bandwidth.
-            </div>
+          <div class="header-actions">
+            <button class="btn btn-primary" [disabled]="isDispatching" (click)="launchBatchUpdate()">
+              <span>⚡</span>
+              <span>{{ isDispatching ? 'Dispatching...' : 'Launch Batch Update Now' }}</span>
+            </button>
           </div>
         </div>
 
-        <!-- Target Stations Card -->
-        <div class="card">
-          <div class="card-header">
-            <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
-              <div style="display:flex; align-items:center; gap:8px;">
-                <span class="step-badge">Step 2</span>
-                <h3 class="card-title">Pilia ang Target Stations</h3>
-              </div>
-              <div class="toggle-all-btn" (click)="toggleSelectAll()">
-                {{ areAllSelected ? 'Unselect All' : 'Select All (' + state.pcs.length + ')' }}
+        <!-- Feedback Banner -->
+        <div *ngIf="statusNotice" class="notice-banner" [ngClass]="noticeType">
+          <span>{{ statusNotice }}</span>
+          <button class="btn-close-sm" (click)="statusNotice = null">✕</button>
+        </div>
+
+        <!-- Step 1 & 2 Grid -->
+        <div class="setup-grid">
+          <!-- Game Selection Card -->
+          <div class="card">
+            <div class="card-header">
+              <span class="step-badge">Step 1</span>
+              <h3 class="card-title">Pilia ang Dula o App nga I-update</h3>
+            </div>
+
+            <div class="games-grid">
+              <div
+                *ngFor="let g of gamesList"
+                class="game-card"
+                [ngClass]="{'selected': selectedGameKey === g.key}"
+                (click)="selectedGameKey = g.key"
+              >
+                <div class="game-icon">{{ g.icon }}</div>
+                <div class="game-info">
+                  <div class="game-title">{{ g.title }}</div>
+                  <div class="game-category">{{ g.category }}</div>
+                </div>
+                <div class="radio-indicator">
+                  <span *ngIf="selectedGameKey === g.key" class="radio-dot"></span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div class="stations-selection-list">
-            <label
-              *ngFor="let pc of state.pcs"
-              class="station-check-item"
-              [ngClass]="{'checked': isPcSelected(pc.id), 'offline': pc.status === 'offline'}"
-            >
+            <!-- Custom LAN Sync or Custom Command Option -->
+            <div class="custom-cmd-section" *ngIf="selectedGameKey === 'lan_sync' || selectedGameKey === 'custom'">
+              <label class="form-label">Custom PowerShell / Robocopy LAN Sync Command</label>
               <input
-                type="checkbox"
-                [checked]="isPcSelected(pc.id)"
-                (change)="togglePc(pc.id)"
+                type="text"
+                class="form-input"
+                [(ngModel)]="customSyncCommand"
+                placeholder="e.g. robocopy \\\\SERVER\\Games D:\\Games /MIR /MT:8 /R:1 /W:1"
               />
-              <div class="station-meta">
-                <div class="station-name-row">
-                  <span class="name">{{ pc.name }}</span>
-                  <span class="status-pill" [ngClass]="pc.status">{{ pc.status | uppercase }}</span>
+              <div class="form-hint">
+                💡 <strong>LAN Sync:</strong> I-kopya ang bag-ong patch direkta gikan sa Master Server padulong sa mga kliyente nga dili mag-usik og internet bandwidth.
+              </div>
+            </div>
+          </div>
+
+          <!-- Target Stations Card -->
+          <div class="card">
+            <div class="card-header">
+              <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span class="step-badge">Step 2</span>
+                  <h3 class="card-title">Pilia ang Target Stations</h3>
                 </div>
-                <div class="station-details">
-                  {{ pc.ipAddress }} • {{ pc.specs || 'Client Station' }}
+                <div class="toggle-all-btn" (click)="toggleSelectAll()">
+                  {{ areAllSelected ? 'Unselect All' : 'Select All (' + state.pcs.length + ')' }}
                 </div>
               </div>
-            </label>
+            </div>
+
+            <div class="stations-selection-list">
+              <label
+                *ngFor="let pc of state.pcs"
+                class="station-check-item"
+                [ngClass]="{'checked': isPcSelected(pc.id), 'offline': pc.status === 'offline'}"
+              >
+                <input
+                  type="checkbox"
+                  [checked]="isPcSelected(pc.id)"
+                  (change)="togglePc(pc.id)"
+                />
+                <div class="station-meta">
+                  <div class="station-name-row">
+                    <span class="name">{{ pc.name }}</span>
+                    <span class="status-pill" [ngClass]="pc.status">{{ pc.status | uppercase }}</span>
+                  </div>
+                  <div class="station-details">
+                    {{ pc.ipAddress }} • {{ pc.specs || 'Client Station' }}
+                  </div>
+                </div>
+              </label>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Live Execution Log & Status -->
+      <!-- Live Execution Log & Status (Shared Console) -->
       <div class="card log-card">
         <div class="card-header">
-          <h3 class="card-title">📊 Live Fleet Update Console</h3>
+          <h3 class="card-title">📊 Live Fleet Console</h3>
           <button class="btn-clear" (click)="clearLogs()">Clear Console</button>
         </div>
 
         <div class="console-output">
           <div *ngIf="consoleLogs.length === 0" class="console-empty">
-            Wala pa'y aktibong update job nga gipadagan. Pagpili og dula sa ibabaw ug i-click ang "Launch Batch Update Now".
+            Wala pa'y aktibong download o update job nga gipadagan. Pagpili og app sa ibabaw ug i-click ang "Download" o "Update".
           </div>
           <div *ngFor="let log of consoleLogs" class="log-line">
             <span class="log-time">[{{ log.timestamp | date:'mediumTime' }}]</span>
@@ -143,6 +421,50 @@ import { PC, GameDefinition } from '@pisonet/shared';
       padding: 24px;
       max-width: 1400px;
       margin: 0 auto;
+    }
+    .mode-tabs-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid #1f2937;
+      padding-bottom: 12px;
+    }
+    .mode-tab-btn {
+      background: #111827;
+      border: 1px solid #1f2937;
+      color: #94a3b8;
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.2s ease;
+    }
+    .mode-tab-btn:hover {
+      background: #1e293b;
+      color: #fff;
+      border-color: #334155;
+    }
+    .mode-tab-btn.active {
+      background: #0284c7;
+      color: #fff;
+      border-color: #38bdf8;
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+    }
+    .tab-icon {
+      font-size: 1.15rem;
+    }
+    .tab-pill {
+      font-size: 0.68rem;
+      background: rgba(255, 255, 255, 0.2);
+      padding: 2px 7px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      font-weight: 800;
+      letter-spacing: 0.04em;
     }
     .page-header-row {
       display: flex;
@@ -234,6 +556,380 @@ import { PC, GameDefinition } from '@pisonet/shared';
       color: #fff;
       margin: 0;
     }
+
+    /* Target Scope Switch */
+    .target-scope-switch {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .scope-option {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 12px 16px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .scope-option:hover {
+      border-color: #0284c7;
+      background: #1a2538;
+    }
+    .scope-option.selected {
+      border-color: #38bdf8;
+      background: rgba(2, 132, 199, 0.15);
+    }
+    .scope-option input[type="radio"] {
+      margin-top: 3px;
+      accent-color: #0284c7;
+    }
+    .scope-title {
+      font-weight: 700;
+      font-size: 0.92rem;
+      color: #f8fafc;
+      margin-bottom: 2px;
+    }
+    .scope-desc {
+      font-size: 0.78rem;
+      color: #94a3b8;
+    }
+    .specific-pc-container {
+      margin-top: 12px;
+      border-top: 1px dashed #334155;
+      padding-top: 12px;
+    }
+    .select-all-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .pc-count-label {
+      font-size: 0.78rem;
+      color: #94a3b8;
+      font-weight: 600;
+    }
+    .btn-toggle-all {
+      background: none;
+      border: 1px solid #334155;
+      color: #38bdf8;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .stations-selection-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 320px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .station-check-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .station-check-item:hover {
+      background: #273549;
+    }
+    .station-check-item.checked {
+      border-color: #0284c7;
+      background: rgba(2, 132, 199, 0.12);
+    }
+    .station-check-item.offline {
+      opacity: 0.6;
+    }
+    .station-meta {
+      flex: 1;
+    }
+    .station-name-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2px;
+    }
+    .station-name-row .name {
+      font-weight: 700;
+      color: #fff;
+      font-size: 0.9rem;
+    }
+    .status-pill {
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .status-pill.available, .status-pill.in-use {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+    }
+    .status-pill.locked {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fbbf24;
+    }
+    .status-pill.offline {
+      background: rgba(100, 116, 139, 0.2);
+      color: #94a3b8;
+    }
+    .station-details {
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+
+    /* Popular Presets Grid */
+    .presets-header {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #cbd5e1;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .presets-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .preset-btn {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #e2e8f0;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+    .preset-btn:hover {
+      background: #2d3d54;
+      border-color: #38bdf8;
+    }
+    .preset-btn.active {
+      background: rgba(2, 132, 199, 0.25);
+      border-color: #38bdf8;
+      color: #38bdf8;
+    }
+    .preset-icon {
+      font-size: 1rem;
+    }
+
+    /* Form Fields */
+    .download-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-group.half {
+      flex: 1;
+    }
+    .form-row {
+      display: flex;
+      gap: 12px;
+    }
+    .form-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #94a3b8;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .form-label .req {
+      color: #f43f5e;
+    }
+    .form-input {
+      background: #0b1120;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 9px 12px;
+      color: #fff;
+      font-size: 0.85rem;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+    .form-input:focus {
+      border-color: #38bdf8;
+    }
+    .install-options-box {
+      background: #0b1120;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 4px;
+    }
+    .checkbox-label {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      cursor: pointer;
+    }
+    .checkbox-label input[type="checkbox"] {
+      margin-top: 3px;
+      accent-color: #0284c7;
+      width: 16px;
+      height: 16px;
+    }
+    .checkbox-text {
+      display: flex;
+      flex-direction: column;
+      font-size: 0.82rem;
+      color: #f8fafc;
+    }
+    .checkbox-text .subtext {
+      font-size: 0.72rem;
+      color: #94a3b8;
+      margin-top: 2px;
+    }
+    .silent-args-group {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed #1e293b;
+    }
+    .form-hint {
+      font-size: 0.72rem;
+      color: #64748b;
+      margin-top: 4px;
+    }
+    .form-hint code {
+      background: #1e293b;
+      color: #38bdf8;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    /* Live Station Download Progress Grid */
+    .progress-card {
+      margin-bottom: 24px;
+      background: #0e1726;
+      border: 1px solid #1e293b;
+    }
+    .header-status-pill {
+      font-size: 0.72rem;
+      font-weight: 700;
+      background: rgba(56, 189, 248, 0.15);
+      color: #38bdf8;
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+    .download-stations-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+    }
+    .station-progress-card {
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color 0.2s ease;
+    }
+    .station-progress-card.downloading {
+      border-color: #0284c7;
+    }
+    .station-progress-card.completed {
+      border-color: #10b981;
+    }
+    .station-progress-card.failed {
+      border-color: #f43f5e;
+    }
+    .sp-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .sp-pc-name {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.88rem;
+      color: #f8fafc;
+    }
+    .sp-status-badge {
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .sp-status-badge.downloading {
+      background: rgba(2, 132, 199, 0.2);
+      color: #38bdf8;
+    }
+    .sp-status-badge.completed {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+    }
+    .sp-status-badge.failed {
+      background: rgba(244, 63, 94, 0.2);
+      color: #fb7185;
+    }
+    .sp-bar-container {
+      height: 8px;
+      background: #1e293b;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .sp-bar-fill {
+      height: 100%;
+      background: #0284c7;
+      transition: width 0.3s ease;
+    }
+    .sp-bar-fill.complete {
+      background: #10b981;
+    }
+    .sp-bar-fill.error {
+      background: #f43f5e;
+    }
+    .sp-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.72rem;
+      color: #94a3b8;
+    }
+    .sp-size {
+      font-weight: 700;
+      color: #cbd5e1;
+    }
+    .sp-extra {
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.68rem;
+      color: #64748b;
+    }
+    .sp-error {
+      color: #fb7185;
+      font-weight: 600;
+    }
+
+    /* Games Grid */
     .games-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -248,19 +944,17 @@ import { PC, GameDefinition } from '@pisonet/shared';
       align-items: center;
       gap: 12px;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: all 0.2s ease;
     }
     .game-card:hover {
-      background: #334155;
-      border-color: #475569;
+      background: #273549;
     }
     .game-card.selected {
-      background: rgba(6, 182, 212, 0.12);
-      border-color: #06b6d4;
-      box-shadow: 0 0 10px rgba(6, 182, 212, 0.2);
+      border-color: #0284c7;
+      background: rgba(2, 132, 199, 0.15);
     }
     .game-icon {
-      font-size: 1.6rem;
+      font-size: 1.5rem;
     }
     .game-info {
       flex: 1;
@@ -268,133 +962,52 @@ import { PC, GameDefinition } from '@pisonet/shared';
     .game-title {
       font-weight: 700;
       font-size: 0.88rem;
-      color: #f8fafc;
+      color: #fff;
     }
     .game-category {
       font-size: 0.72rem;
       color: #94a3b8;
     }
     .radio-indicator {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       border-radius: 50%;
       border: 2px solid #64748b;
       display: flex;
       align-items: center;
       justify-content: center;
     }
-    .game-card.selected .radio-indicator {
-      border-color: #06b6d4;
-    }
     .radio-dot {
-      width: 10px;
-      height: 10px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
-      background: #06b6d4;
+      background: #0284c7;
     }
     .custom-cmd-section {
-      margin-top: 16px;
+      margin-top: 14px;
       padding-top: 14px;
-      border-top: 1px dashed #334155;
-    }
-    .form-label {
-      display: block;
-      font-size: 0.8rem;
-      font-weight: 700;
-      color: #cbd5e1;
-      margin-bottom: 6px;
-    }
-    .form-input {
-      width: 100%;
-      background: #0f172a;
-      border: 1px solid #334155;
-      color: #fff;
-      padding: 8px 12px;
-      border-radius: 6px;
-      font-family: monospace;
-      font-size: 0.84rem;
-      box-sizing: border-box;
-    }
-    .form-hint {
-      font-size: 0.75rem;
-      color: #94a3b8;
-      margin-top: 6px;
+      border-top: 1px solid #1f2937;
     }
     .toggle-all-btn {
-      font-size: 0.78rem;
-      font-weight: 700;
+      font-size: 0.75rem;
       color: #38bdf8;
       cursor: pointer;
+      font-weight: 600;
     }
-    .stations-selection-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      max-height: 380px;
-      overflow-y: auto;
-    }
-    .station-check-item {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 8px;
-      padding: 10px 14px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      cursor: pointer;
-    }
-    .station-check-item.checked {
-      background: rgba(14, 165, 233, 0.1);
-      border-color: #0284c7;
-    }
-    .station-meta {
-      flex: 1;
-    }
-    .station-name-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 2px;
-    }
-    .station-name-row .name {
-      font-weight: 700;
-      font-size: 0.88rem;
-      color: #fff;
-    }
-    .status-pill {
-      font-size: 0.68rem;
-      font-weight: 800;
-      padding: 2px 6px;
-      border-radius: 4px;
-    }
-    .status-pill.available, .status-pill.online {
-      background: rgba(16, 185, 129, 0.2);
-      color: #34d399;
-    }
-    .status-pill.offline {
-      background: rgba(244, 63, 94, 0.2);
-      color: #fb7185;
-    }
-    .station-details {
-      font-size: 0.75rem;
-      color: #94a3b8;
-      font-family: monospace;
-    }
+
+    /* Console Card */
     .log-card {
-      background: #090d16;
-      border-color: #1e293b;
+      background: #0b1120;
     }
     .console-output {
-      background: #030712;
-      border: 1px solid #1f2937;
+      background: #050811;
+      border: 1px solid #1e293b;
       border-radius: 8px;
       padding: 14px;
-      min-height: 160px;
-      max-height: 300px;
+      height: 220px;
       overflow-y: auto;
       font-family: monospace;
-      font-size: 0.82rem;
-      color: #cbd5e1;
+      font-size: 0.8rem;
     }
     .console-empty {
       color: #64748b;
@@ -444,21 +1057,111 @@ import { PC, GameDefinition } from '@pisonet/shared';
       display: inline-flex;
       align-items: center;
       gap: 8px;
+      transition: all 0.2s ease;
     }
     .btn-primary {
       background: #06b6d4;
       color: #0f172a;
     }
-    .btn-primary:hover {
+    .btn-primary:hover:not(:disabled) {
       background: #22d3ee;
+    }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
   `]
 })
 export class GameUpdaterComponent implements OnInit, OnDestroy {
+  @Input() initialPcId?: string;
+
   state: any = { pcs: [] };
   private sub!: Subscription;
   private socketSub: (() => void) | null = null;
+  private dlProgSub: (() => void) | null = null;
+  private dlResSub: (() => void) | null = null;
 
+  activeMode: 'downloader' | 'games' = 'downloader';
+
+  // --- Downloader State ---
+  targetMode: 'all' | 'selected' = 'all';
+  selectedPcIds: string[] = [];
+
+  popularPresets: AppPreset[] = [
+    {
+      id: 'chrome',
+      name: 'Google Chrome',
+      icon: '🌐',
+      url: 'https://dl.google.com/chrome/install/standalone/ChromeStandaloneSetup64.exe',
+      filename: 'ChromeStandaloneSetup64.exe',
+      autoRun: true,
+      silentArgs: '/silent /install',
+      category: 'Web Browser'
+    },
+    {
+      id: 'discord',
+      name: 'Discord',
+      icon: '💬',
+      url: 'https://discord.com/api/download?platform=win',
+      filename: 'DiscordSetup.exe',
+      autoRun: true,
+      silentArgs: '/s',
+      category: 'Gaming Voice & Chat'
+    },
+    {
+      id: 'firefox',
+      name: 'Mozilla Firefox',
+      icon: '🦊',
+      url: 'https://download.mozilla.org/?product=firefox-stub&os=win',
+      filename: 'FirefoxInstaller.exe',
+      autoRun: true,
+      silentArgs: '/S',
+      category: 'Web Browser'
+    },
+    {
+      id: '7zip',
+      name: '7-Zip (64-bit)',
+      icon: '📦',
+      url: 'https://www.7-zip.org/a/7z2408-x64.exe',
+      filename: '7z2408-x64.exe',
+      autoRun: true,
+      silentArgs: '/S',
+      category: 'File Archiver'
+    },
+    {
+      id: 'spotify',
+      name: 'Spotify Music',
+      icon: '🎵',
+      url: 'https://download.scdn.co/SpotifySetup.exe',
+      filename: 'SpotifySetup.exe',
+      autoRun: true,
+      silentArgs: '/silent',
+      category: 'Media & Music'
+    },
+    {
+      id: 'custom',
+      name: 'Custom Direct URL',
+      icon: '🔗',
+      url: '',
+      filename: '',
+      autoRun: true,
+      silentArgs: '/S',
+      category: 'Direct Download'
+    }
+  ];
+
+  selectedPresetId: string = 'chrome';
+  downloadUrl: string = 'https://dl.google.com/chrome/install/standalone/ChromeStandaloneSetup64.exe';
+  downloadFilename: string = 'ChromeStandaloneSetup64.exe';
+  downloadTargetDir: string = '';
+  autoRunInstaller: boolean = true;
+  silentArgs: string = '/silent /install';
+  isDispatchingDownload = false;
+
+  // Station download tracking: pcId -> StationDownloadState
+  stationDownloads: { [pcId: string]: StationDownloadState } = {};
+
+  // --- Game Updater State ---
   gamesList: GameDefinition[] = [
     { key: 'steam', title: 'Steam Client & Games', icon: '🎮', category: 'Launcher' },
     { key: 'riot', title: 'Riot Games / Valorant', icon: '🎯', category: 'Esports' },
@@ -471,9 +1174,8 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
 
   selectedGameKey: string = 'steam';
   customSyncCommand: string = 'robocopy \\\\SERVER\\Games D:\\Games /MIR /MT:8 /R:1 /W:1';
-  selectedPcIds: string[] = [];
-
   isDispatching = false;
+
   statusNotice: string | null = null;
   noticeType: 'success' | 'error' = 'success';
 
@@ -485,10 +1187,93 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
       if (this.selectedPcIds.length === 0 && s.pcs?.length > 0) {
-        this.selectedPcIds = s.pcs.map((p: PC) => p.id);
+        if (this.initialPcId) {
+          const match = s.pcs.find((p: PC) => p.id === this.initialPcId || p.identifier === this.initialPcId);
+          if (match) {
+            this.selectedPcIds = [match.id];
+            this.targetMode = 'selected';
+          } else {
+            this.selectedPcIds = s.pcs.map((p: PC) => p.id);
+          }
+        } else {
+          this.selectedPcIds = s.pcs.map((p: PC) => p.id);
+        }
       }
     });
 
+    if (this.initialPcId) {
+      this.targetMode = 'selected';
+      this.selectedPcIds = [this.initialPcId];
+    }
+
+    // 1. Listen for Live Download Progress
+    this.dlProgSub = this.adminState.apiClient.onSocketEvent('maintenance:download:progress', (data: any) => {
+      if (!data?.pcId) return;
+      const pc = this.state.pcs?.find((p: PC) => p.id === data.pcId || p.identifier === data.pcId);
+      const name = pc ? pc.name : data.pcId;
+      const downloadedMb = (Number(data.downloadedBytes || 0) / (1024 * 1024)).toFixed(1);
+      const totalMb = data.totalBytes > 0 ? (Number(data.totalBytes) / (1024 * 1024)).toFixed(1) : 'Unknown';
+
+      this.stationDownloads[data.pcId] = {
+        pcId: data.pcId,
+        pcName: name,
+        percent: data.percent ?? 0,
+        downloadedMb,
+        totalMb,
+        status: 'downloading'
+      };
+    });
+
+    // 2. Listen for Download Result (Completion / Error)
+    this.dlResSub = this.adminState.apiClient.onSocketEvent('maintenance:download:res', (data: any) => {
+      if (!data?.pcId) return;
+      const pc = this.state.pcs?.find((p: PC) => p.id === data.pcId || p.identifier === data.pcId);
+      const name = pc ? pc.name : data.pcId;
+
+      if (data.success) {
+        const cur = this.stationDownloads[data.pcId] || {
+          pcId: data.pcId,
+          pcName: name,
+          downloadedMb: '0',
+          totalMb: '0'
+        };
+        this.stationDownloads[data.pcId] = {
+          ...cur,
+          percent: 100,
+          status: 'completed',
+          savedPath: data.destPath || data.filename,
+          executed: data.executed
+        };
+
+        this.consoleLogs.unshift({
+          timestamp: new Date(),
+          pcName: name,
+          message: `✅ Natapos ang download: ${data.filename || 'installer'} -> ${data.destPath || ''}${data.executed ? ' (Gisugdan ang installer)' : ''}`,
+          type: 'success'
+        });
+      } else {
+        const cur = this.stationDownloads[data.pcId] || {
+          pcId: data.pcId,
+          pcName: name,
+          downloadedMb: '0',
+          totalMb: '0'
+        };
+        this.stationDownloads[data.pcId] = {
+          ...cur,
+          status: 'failed',
+          error: data.error || 'Napakyas ang pag-download'
+        };
+
+        this.consoleLogs.unshift({
+          timestamp: new Date(),
+          pcName: name,
+          message: `❌ Napakyas ang download: ${data.error || 'Unknown network error'}`,
+          type: 'error'
+        });
+      }
+    });
+
+    // 3. Listen for Game Update Logs
     this.socketSub = this.adminState.apiClient.onSocketEvent('maintenance:game:status', (data: any) => {
       const pc = this.state.pcs?.find((p: PC) => p.id === data.pcId);
       const name = pc ? pc.name : data.pcId || 'Station';
@@ -502,8 +1287,10 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
-    this.sub.unsubscribe();
+    this.sub?.unsubscribe();
     if (this.socketSub) this.socketSub();
+    if (this.dlProgSub) this.dlProgSub();
+    if (this.dlResSub) this.dlResSub();
   }
 
   get areAllSelected(): boolean {
@@ -532,6 +1319,105 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
 
   clearLogs() {
     this.consoleLogs = [];
+  }
+
+  applyPreset(preset: AppPreset) {
+    this.selectedPresetId = preset.id;
+    if (preset.id !== 'custom') {
+      this.downloadUrl = preset.url;
+      this.downloadFilename = preset.filename;
+      this.autoRunInstaller = preset.autoRun;
+      this.silentArgs = preset.silentArgs;
+    } else {
+      this.downloadUrl = '';
+      this.downloadFilename = '';
+      this.silentArgs = '/S';
+    }
+  }
+
+  onUrlChange() {
+    if (!this.downloadFilename && this.downloadUrl) {
+      try {
+        const u = new URL(this.downloadUrl);
+        const name = u.pathname.split('/').pop();
+        if (name && name.includes('.')) {
+          this.downloadFilename = decodeURIComponent(name);
+        }
+      } catch {}
+    }
+  }
+
+  get downloadList(): StationDownloadState[] {
+    return Object.values(this.stationDownloads);
+  }
+
+  get activeDownloadsCount(): number {
+    return this.downloadList.filter(d => d.status === 'downloading' || d.status === 'queued').length;
+  }
+
+  async launchRemoteDownload() {
+    if (!this.downloadUrl.trim()) {
+      this.statusNotice = 'Palihug isulod ang Download URL.';
+      this.noticeType = 'error';
+      return;
+    }
+
+    if (this.targetMode === 'selected' && this.selectedPcIds.length === 0) {
+      this.statusNotice = 'Palihug pagpili og bisan usa ka target PC station.';
+      this.noticeType = 'error';
+      return;
+    }
+
+    this.isDispatchingDownload = true;
+    const targetPcId = this.targetMode === 'all' ? 'all' : (this.selectedPcIds.length === 1 ? this.selectedPcIds[0] : 'all');
+    const targetPcIds = this.targetMode === 'all' ? ['all'] : this.selectedPcIds;
+
+    // Reset progress tracking for target stations
+    const targetPcs = this.targetMode === 'all' 
+      ? this.state.pcs 
+      : this.state.pcs.filter((p: PC) => this.selectedPcIds.includes(p.id));
+
+    targetPcs.forEach((p: PC) => {
+      this.stationDownloads[p.id] = {
+        pcId: p.id,
+        pcName: p.name,
+        percent: 0,
+        downloadedMb: '0',
+        totalMb: '0',
+        status: 'queued'
+      };
+    });
+
+    try {
+      const payload = {
+        targetPcId,
+        targetPcIds,
+        url: this.downloadUrl.trim(),
+        filename: this.downloadFilename.trim() || undefined,
+        targetPath: this.downloadTargetDir.trim() || undefined,
+        autoRun: this.autoRunInstaller,
+        silentArgs: this.silentArgs.trim() || undefined,
+        runArgs: this.silentArgs.trim() || undefined
+      };
+
+      const res = await this.adminState.triggerRemoteDownload(payload);
+
+      if (res.success) {
+        this.statusNotice = `🚀 Download command gipadala sa ${this.targetMode === 'all' ? 'tanang online PCs' : this.selectedPcIds.length + ' napiling PC'}!`;
+        this.noticeType = 'success';
+        this.consoleLogs.unshift({
+          timestamp: new Date(),
+          pcName: 'FLEET DISPATCHER',
+          message: `Dispatched download for '${this.downloadFilename || this.downloadUrl}' to ${this.targetMode === 'all' ? 'ALL online stations' : this.selectedPcIds.length + ' stations'}.`,
+          type: 'info'
+        });
+      } else {
+        this.statusNotice = res.message || 'Napakyas ang pag-dispatch sa download.';
+        this.noticeType = 'error';
+      }
+    } finally {
+      this.isDispatchingDownload = false;
+    }
   }
 
   async launchBatchUpdate() {
@@ -565,4 +1451,3 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
     }
   }
 }
-

@@ -17,6 +17,13 @@ export interface PC {
   activeApp?: string; // Currently focused game/app, e.g. "Dota 2", "Valorant", "Roblox"
   cpuPercent?: number;
   ramPercent?: number;
+  cpuModel?: string;
+  ramUsedGb?: number;
+  ramTotalGb?: number;
+  gpu?: string;
+  gpuStatus?: string;
+  ssdModel?: string;
+  ssdStatus?: string;
   diskUsage?: DriveDiskInfo[];
   uptimeSeconds?: number;
   lastCleanedAt?: string;

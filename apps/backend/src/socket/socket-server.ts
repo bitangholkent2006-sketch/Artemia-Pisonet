@@ -163,19 +163,23 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
               usedPercent: data.telemetry.diskTotalGb > 0 ? Math.round(((data.telemetry.diskUsedGb || 0) / data.telemetry.diskTotalGb) * 100) : 0
             }] : []);
 
-            await collections.pcs.updateOne(
-              { id: targetId },
-              {
-                $set: {
-                  cpuPercent: data.telemetry.cpuPercent,
-                  ramPercent: data.telemetry.ramPercent,
-                  diskUsage: diskUsage,
-                  activeApp: data.telemetry.activeApp,
-                  uptimeSeconds: data.telemetry.uptimeSeconds,
-                  updatedAt: new Date()
-                }
-              }
-            );
+            const updateFields: any = {
+              cpuPercent: data.telemetry.cpuPercent,
+              ramPercent: data.telemetry.ramPercent,
+              diskUsage: diskUsage,
+              activeApp: data.telemetry.activeApp,
+              uptimeSeconds: data.telemetry.uptimeSeconds,
+              updatedAt: new Date()
+            };
+            if (data.telemetry.cpuModel != null) updateFields.cpuModel = data.telemetry.cpuModel;
+            if (data.telemetry.ramUsedGb != null) updateFields.ramUsedGb = data.telemetry.ramUsedGb;
+            if (data.telemetry.ramTotalGb != null) updateFields.ramTotalGb = data.telemetry.ramTotalGb;
+            if (data.telemetry.gpu != null) updateFields.gpu = data.telemetry.gpu;
+            if (data.telemetry.gpuStatus != null) updateFields.gpuStatus = data.telemetry.gpuStatus;
+            if (data.telemetry.ssdModel != null) updateFields.ssdModel = data.telemetry.ssdModel;
+            if (data.telemetry.ssdStatus != null) updateFields.ssdStatus = data.telemetry.ssdStatus;
+
+            await collections.pcs.updateOne({ id: targetId }, { $set: updateFields });
             broadcastRealtimeEvent('pc:telemetry', { pcId: targetId, ...data.telemetry, diskUsage }, 'staff');
           } catch {}
         }
@@ -195,6 +199,13 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
           if (diskUsage != null) updateFields.diskUsage = diskUsage;
           if (data.activeApp != null) updateFields.activeApp = data.activeApp;
           if (data.uptimeSeconds != null) updateFields.uptimeSeconds = data.uptimeSeconds;
+          if (data.cpuModel != null) updateFields.cpuModel = data.cpuModel;
+          if (data.ramUsedGb != null) updateFields.ramUsedGb = data.ramUsedGb;
+          if (data.ramTotalGb != null) updateFields.ramTotalGb = data.ramTotalGb;
+          if (data.gpu != null) updateFields.gpu = data.gpu;
+          if (data.gpuStatus != null) updateFields.gpuStatus = data.gpuStatus;
+          if (data.ssdModel != null) updateFields.ssdModel = data.ssdModel;
+          if (data.ssdStatus != null) updateFields.ssdStatus = data.ssdStatus;
 
           await collections.pcs.updateOne({ id: targetId }, { $set: updateFields });
           broadcastRealtimeEvent('pc:telemetry', { pcId: targetId, ...data, diskUsage }, 'staff');
@@ -242,6 +253,34 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     authSocket.on('agent:game:status', (status: any) => {
       io?.to('staff').emit('maintenance:game:status', status);
       io?.emit('maintenance:game:status', status);
+    });
+
+    // Remote App & File Downloader Relays
+    authSocket.on('maintenance:download:run', (payload: any) => {
+      const targets = Array.isArray(payload.targetPcIds) ? payload.targetPcIds : [payload.targetPcId || 'all'];
+      if (targets.includes('all') || targets.includes('fleet')) {
+        io?.to('fleet').emit('agent:download:run', { ...payload, targetPcId: 'all' });
+        io?.emit('agent:download:run', { ...payload, targetPcId: 'all' });
+      } else {
+        targets.forEach((tid: string) => {
+          const t = tid.toLowerCase();
+          io?.to(`pc:${t}`).emit('agent:download:run', { ...payload, targetPcId: t });
+          // Also alias fallback
+          if (!t.startsWith('pc-')) {
+            io?.to(`pc:pc-${t}`).emit('agent:download:run', { ...payload, targetPcId: t });
+          }
+        });
+      }
+    });
+
+    authSocket.on('agent:download:progress', (progress: any) => {
+      io?.to('staff').emit('maintenance:download:progress', progress);
+      io?.emit('maintenance:download:progress', progress);
+    });
+
+    authSocket.on('agent:download:res', (result: any) => {
+      io?.to('staff').emit('maintenance:download:res', result);
+      io?.emit('maintenance:download:res', result);
     });
 
     authSocket.on('maintenance:power:run', (payload: any) => {

@@ -572,6 +572,25 @@ export class AdminStateService {
     }
   }
 
+  public async triggerRemoteDownload(payload: {
+    targetPcIds?: string[];
+    targetPcId?: string;
+    url: string;
+    filename?: string;
+    targetPath?: string;
+    autoRun?: boolean;
+    runArgs?: string;
+    silentArgs?: string;
+  }): Promise<{ success: boolean; message: string }> {
+    try {
+      this.apiClient.emitSocket('maintenance:download:run', payload);
+      const res = await this.apiClient.triggerRemoteDownload(payload);
+      return { success: res.success, message: res.message };
+    } catch (err: any) {
+      return { success: true, message: 'Download command dispatched to target PCs.' };
+    }
+  }
+
   public async executePowerAction(targetPcId: string = 'all', action: 'restart' | 'shutdown' | 'sleep' | 'lock' | 'unlock'): Promise<{ success: boolean; message: string }> {
     try {
       const res = await this.apiClient.executePowerAction(targetPcId, action);

@@ -10,6 +10,49 @@ let isQuitting = false;
 let isStationLocked = false;
 let isAnnouncementActive = false;
 
+// Hardware health cache (GPU, SSD, CPU)
+let cachedHardwareInfo: {
+  gpu?: string;
+  gpuStatus?: string;
+  ssdModel?: string;
+  ssdStatus?: string;
+} = {};
+
+function fetchHardwareInfo() {
+  if (process.platform !== 'win32') {
+    cachedHardwareInfo = { gpu: 'Integrated Graphics', gpuStatus: 'OK', ssdModel: 'Primary SSD', ssdStatus: 'OK' };
+    return;
+  }
+  const ps = `
+    $gpu = Get-CimInstance Win32_VideoController | Select-Object -Property Name, DriverVersion, Status;
+    $d = Get-CimInstance Win32_DiskDrive | Select-Object -Property Model, Size, Status;
+    [PSCustomObject]@{
+      gpus = @($gpu);
+      disks = @($d);
+    } | ConvertTo-Json -Compress
+  `;
+  exec(`powershell.exe -NoProfile -Command "${ps.replace(/\r?\n/g, ' ')}"`, (err, stdout) => {
+    if (err || !stdout) return;
+    try {
+      const data = JSON.parse(stdout);
+      const gpus = Array.isArray(data.gpus) ? data.gpus : (data.gpus ? [data.gpus] : []);
+      const disks = Array.isArray(data.disks) ? data.disks : (data.disks ? [data.disks] : []);
+
+      let primaryGpu = gpus.find((g: any) => g?.Name && /nvidia|geforce|rtx|gtx|radeon|amd|arc/i.test(g.Name));
+      if (!primaryGpu && gpus.length > 0) primaryGpu = gpus[0];
+
+      let primaryDisk = disks.length > 0 ? disks[0] : null;
+
+      cachedHardwareInfo = {
+        gpu: primaryGpu?.Name?.trim() || 'Standard Graphics',
+        gpuStatus: primaryGpu?.Status || 'OK',
+        ssdModel: primaryDisk?.Model?.trim() || 'NVMe/SSD Drive',
+        ssdStatus: primaryDisk?.Status || 'OK'
+      };
+    } catch {}
+  });
+}
+
 // Ensure any old registry lock policies are removed on launch
 if (process.platform === 'win32') {
   try {
@@ -574,6 +617,112 @@ ipcMain.handle('maintenance:get-disk-drives', async () => {
   });
 });
 
+// 10. Hardware Health & Telemetry (GPU, SSD, CPU, RAM)
+ipcMain.handle('maintenance:get-hardware-health', () => {
+  const cpus = os.cpus();
+  const cpuModel = cpus.length > 0 ? cpus[0].model.replace(/\(R\)|\(TM\)/g, '').trim() : 'Gaming CPU';
+  const totalMemGb = Math.round((os.totalmem() / (1024 * 1024 * 1024)) * 10) / 10;
+  const freeMemGb = Math.round((os.freemem() / (1024 * 1024 * 1024)) * 10) / 10;
+  const usedMemGb = Math.round((totalMemGb - freeMemGb) * 10) / 10;
+  const ramPercent = Math.round((usedMemGb / totalMemGb) * 100);
+
+  return {
+    cpuModel,
+    ramTotalGb: totalMemGb,
+    ramUsedGb: usedMemGb,
+    ramPercent,
+    gpu: cachedHardwareInfo.gpu || 'Discrete GPU',
+    gpuStatus: cachedHardwareInfo.gpuStatus || 'OK',
+    ssdModel: cachedHardwareInfo.ssdModel || 'Primary SSD',
+    ssdStatus: cachedHardwareInfo.ssdStatus || 'OK'
+  };
+});
+
+// 11. Remote App & File Downloader (Streamed with Realtime Progress & Auto-Run)
+ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => {
+  return new Promise(async (resolve) => {
+    try {
+      const { reqId, url, autoRun, runArgs } = payload;
+      const parsedUrl = new URL(url);
+      let filename = payload.filename || path.basename(parsedUrl.pathname);
+      if (!filename || filename.length < 3 || !filename.includes('.')) {
+        filename = `installer_${Date.now()}.exe`;
+      }
+
+      const defaultDir = path.join(os.homedir(), 'Downloads');
+      if (!fs.existsSync(defaultDir)) {
+        fs.mkdirSync(defaultDir, { recursive: true });
+      }
+
+      const destFile = payload.targetPath && payload.targetPath.trim() ? payload.targetPath.trim() : path.join(defaultDir, filename);
+      const destDir = path.dirname(destFile);
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+      }
+
+      const res = await fetch(url);
+      if (!res.ok || !res.body) {
+        resolve({ success: false, error: `HTTP ${res.status}: ${res.statusText}` });
+        return;
+      }
+
+      const totalBytes = parseInt(res.headers.get('content-length') || '0', 10);
+      let downloadedBytes = 0;
+      let lastReport = 0;
+
+      const fileStream = fs.createWriteStream(destFile);
+      const reader = res.body.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          downloadedBytes += value.length;
+          fileStream.write(Buffer.from(value));
+
+          const now = Date.now();
+          if (now - lastReport > 500) {
+            lastReport = now;
+            const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+            event.sender.send('maintenance:download:progress', {
+              reqId,
+              downloadedBytes,
+              totalBytes,
+              percent,
+              status: 'downloading'
+            });
+          }
+        }
+      }
+
+      fileStream.end();
+
+      let executed = false;
+      let execError = undefined;
+
+      if (autoRun) {
+        try {
+          exec(`start "" "${destFile}" ${runArgs || ''}`);
+          executed = true;
+        } catch (e: any) {
+          execError = e?.message;
+        }
+      }
+
+      resolve({
+        success: true,
+        destPath: destFile,
+        filename,
+        totalBytes: downloadedBytes,
+        executed,
+        execError
+      });
+    } catch (err: any) {
+      resolve({ success: false, error: err?.message || 'Download failed' });
+    }
+  });
+});
+
 // App Startup Lifecycle
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -589,6 +738,7 @@ if (!gotLock) {
   app.whenReady().then(() => {
     // Automatically register auto-start on Windows so pisonet agent runs on power-on
     setAutoStart(true);
+    fetchHardwareInfo();
     createWindow();
     createTray();
   });
