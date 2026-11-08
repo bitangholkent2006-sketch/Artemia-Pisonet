@@ -40,7 +40,7 @@ export interface PisonetAppState {
 
 export type StateListener = (state: PisonetAppState) => void;
 
-const STATE_STORAGE_KEY = 'artemia_pisonet_app_state_v1';
+const STATE_STORAGE_KEY = 'artemia_fleet_app_state_v2';
 
 export class PisonetStateService {
   private static instance: PisonetStateService;
@@ -115,6 +115,9 @@ export class PisonetStateService {
   // State Initialization & Reset
   // -------------------------------------------------------------
   private loadOrInitState(): PisonetAppState {
+    try {
+      this.storage.removeItem('artemia_pisonet_app_state_v1');
+    } catch {}
     const saved = this.storage.getItem<PisonetAppState | null>(STATE_STORAGE_KEY, null);
     if (saved && saved.customers && saved.pcs && saved.pricing) {
       return saved;

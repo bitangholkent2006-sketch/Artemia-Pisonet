@@ -124,6 +124,9 @@ export class ApiClientService {
       const res = await fetch(url, { ...options, headers });
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 401 && !path.includes('/auth/login')) {
+          this.setToken(null);
+        }
         throw new Error(data.message || `HTTP ${res.status}: Request failed`);
       }
       return data;

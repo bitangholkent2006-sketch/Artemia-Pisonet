@@ -32,6 +32,7 @@ export class AdminStateService {
   constructor(public apiClient: ApiClientService) {
     // Purge any stale mock state from previous demo runs
     try {
+      localStorage.removeItem('artemia_pisonet_app_state_v1');
       const storedToken = localStorage.getItem('pisonet_token');
       // If there's an existing valid token, retain auth session
       if (storedToken) {
@@ -49,6 +50,15 @@ export class AdminStateService {
             },
             role: 'admin',
             token: storedToken
+          }
+        });
+      } else {
+        this.rawStateService.updateState({
+          activeAuth: {
+            isAuthenticated: false,
+            currentUser: null,
+            role: null,
+            token: undefined
           }
         });
       }
@@ -120,6 +130,18 @@ export class AdminStateService {
       }
     } catch (err: any) {
       console.warn('[AdminState] Live sync snapshot:', err.message);
+      if (err.message && (err.message.includes('401') || err.message.includes('Unauthorized') || err.message.includes('token'))) {
+        localStorage.removeItem('pisonet_token');
+        this.apiClient.setToken(null);
+        this.rawStateService.updateState({
+          activeAuth: {
+            isAuthenticated: false,
+            currentUser: null,
+            role: null,
+            token: undefined
+          }
+        });
+      }
     } finally {
       this.isSyncing = false;
     }
