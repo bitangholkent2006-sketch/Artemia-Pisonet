@@ -26,6 +26,15 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
         <button class="btn btn-primary" (click)="openRegisterPcModal()">
           + Register New PC
         </button>
+        <button
+          class="btn btn-danger-subtle"
+          *ngIf="state.pcs && state.pcs.length > 0"
+          [disabled]="isWipingFleet"
+          (click)="confirmWipeFleet()"
+          title="Delete all PCs from database (clean slate)"
+        >
+          🗑️ {{ isWipingFleet ? 'Wiping...' : 'Wipe Fleet DB' }}
+        </button>
       </div>
 
       <!-- Plug and Play Auto-Discovery Banner -->
@@ -213,6 +222,24 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
     .pcs-view {
       /* Keep container stationary */
     }
+    .btn-danger-subtle {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.35);
+      color: #fb7185;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 0.82rem;
+      cursor: pointer;
+    }
+    .btn-danger-subtle:hover {
+      background: #f43f5e;
+      color: #fff;
+    }
+    .btn-danger-subtle:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
   `]
 })
 export class PcsComponent implements OnInit, OnDestroy {
@@ -236,6 +263,8 @@ export class PcsComponent implements OnInit, OnDestroy {
   editIp = '';
   editMac = '';
   editSpecs = '';
+
+  isWipingFleet = false;
 
   constructor(public adminState: AdminStateService) {}
 
@@ -274,6 +303,20 @@ export class PcsComponent implements OnInit, OnDestroy {
   async handleDeletePc(pc: PC) {
     if (confirm(`Are you sure you want to permanently delete station "${pc.name}" (${pc.identifier})?`)) {
       await this.adminState.deletePc(pc.id);
+    }
+  }
+
+  async confirmWipeFleet() {
+    if (!confirm('⚠️ SIGURADO KA? Mabura ang TANAN nga PC gikan sa database! Kinahanglan mo-reopen ang Fleet Agent sa matag PC para ma-reregister sila pag-usab.')) return;
+    this.isWipingFleet = true;
+    try {
+      const result = await this.adminState.wipeFleet();
+      alert(result.message);
+      await this.adminState.syncFromBackend();
+    } catch (err: any) {
+      alert('Wipe failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      this.isWipingFleet = false;
     }
   }
 

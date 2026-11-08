@@ -193,6 +193,22 @@ pcRoutes.post('/message', requireStaff, async (c) => {
   });
 });
 
+// Wipe all PCs from the fleet (Admin only - for clean slate)
+pcRoutes.delete('/wipe-all', requireStaff, async (c) => {
+  try {
+    const { getCollections } = await import('../database/connection');
+    const collections = getCollections();
+    const result = await collections.pcs.deleteMany({});
+    return c.json({
+      success: true,
+      message: `Fleet wiped! Deleted ${result.deletedCount} PC station(s) from database. Fleet is now a clean slate.`,
+      deletedCount: result.deletedCount
+    });
+  } catch (err: any) {
+    return c.json({ success: false, message: err.message || 'Wipe failed' }, 500);
+  }
+});
+
 // Send Announcement to specific PC by ID
 pcRoutes.post('/:id/message', requireStaff, async (c) => {
   const staff = c.get('user');

@@ -372,6 +372,18 @@ export class ApiClientService {
     });
   }
 
+  public async wipeAllPcs() {
+    return this.request<{ success: boolean; message: string; deletedCount: number }>('/api/v1/pcs/wipe-all', {
+      method: 'DELETE'
+    });
+  }
+
+  public async deleteSinglePc(pcId: string) {
+    return this.request<{ success: boolean; message: string }>(`/api/v1/pcs/${pcId}`, {
+      method: 'DELETE'
+    });
+  }
+
   // Direct Socket IPC Relays for File Manager, Process Manager, and Screen View
   public emitSocket(event: string, data: any) {
     if (this.socket && this.socket.connected) {

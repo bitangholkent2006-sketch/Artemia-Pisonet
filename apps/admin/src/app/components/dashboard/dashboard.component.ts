@@ -854,7 +854,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   getDrivePercent(pc: PC, drive: string): number {
     const d = pc.diskUsage?.find(item => item.drive.toUpperCase().startsWith(drive.toUpperCase()));
-    return d?.usedPercent || (drive === 'C:' ? 62 : 45);
+    return d?.usedPercent ?? 0;
   }
 
   // Bulk Fleet Actions

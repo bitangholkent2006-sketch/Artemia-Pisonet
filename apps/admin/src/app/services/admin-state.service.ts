@@ -656,6 +656,36 @@ export class AdminStateService {
   }
 
   // -------------------------------------------------------------
+  // Fleet Management
+  // -------------------------------------------------------------
+  public async wipeFleet(): Promise<{ success: boolean; message: string; deletedCount?: number }> {
+    try {
+      const res = await this.apiClient.wipeAllPcs();
+      if (res?.success) {
+        this.rawStateService.updateState({ pcs: [] });
+        return { success: true, message: res.message || 'Fleet wiped successfully.', deletedCount: res.deletedCount };
+      }
+      return { success: false, message: 'Wipe failed.' };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Wipe failed.' };
+    }
+  }
+
+  public async deletePcFromFleet(pcId: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await this.apiClient.deleteSinglePc(pcId);
+      if (res?.success) {
+        const updated = (this.state.pcs || []).filter((p: PC) => p.id !== pcId);
+        this.rawStateService.updateState({ pcs: updated });
+        return { success: true, message: res.message || 'PC deleted.' };
+      }
+      return { success: false, message: 'Delete failed.' };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Delete failed.' };
+    }
+  }
+
+  // -------------------------------------------------------------
   // Settings
   // -------------------------------------------------------------
   public async updatePricingConfig(updates: Partial<PricingConfig>): Promise<void> {
