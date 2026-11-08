@@ -111,29 +111,39 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     // PC Join & Auto-Discovery (Plug and Play - No manual registration required)
     authSocket.on('pc:join', async (data: { pcId: string; name?: string; specs?: string; ipAddress?: string }) => {
-      const stationId = (data?.pcId || pcId || 'pc-01').toLowerCase();
-      authSocket.join(`pc:${stationId}`);
-      authSocket.join('fleet');
-      authSocket.data.pcId = stationId;
-      await PcService.autoDiscoverOrRegisterPc(
-        stationId,
-        data?.name || stationId.toUpperCase(),
+      const rawId = (data?.pcId || pcId || 'pc-01').toLowerCase();
+      const rawName = data?.name || rawId.toUpperCase();
+      const pc = await PcService.autoDiscoverOrRegisterPc(
+        rawId,
+        rawName,
         data?.ipAddress || (socket.handshake.address?.replace('::ffff:', '') || '127.0.0.1'),
         data?.specs
       );
+      authSocket.join(`pc:${rawId}`);
+      authSocket.join(`pc:${rawName.toLowerCase()}`);
+      authSocket.join(`pc:${pc.id.toLowerCase()}`);
+      authSocket.join(`pc:${pc.identifier.toLowerCase()}`);
+      authSocket.join('fleet');
+      authSocket.data.pcId = pc.id;
+      authSocket.emit('pc:identity:sync', { pcId: pc.id, name: pc.name, identifier: pc.identifier });
     });
 
     authSocket.on('pc:auto-discover', async (data: { pcId: string; name?: string; specs?: string }) => {
-      const stationId = (data?.pcId || 'pc-01').toLowerCase();
-      authSocket.join(`pc:${stationId}`);
-      authSocket.join('fleet');
-      authSocket.data.pcId = stationId;
-      await PcService.autoDiscoverOrRegisterPc(
-        stationId,
-        data?.name || stationId.toUpperCase(),
+      const rawId = (data?.pcId || 'pc-01').toLowerCase();
+      const rawName = data?.name || rawId.toUpperCase();
+      const pc = await PcService.autoDiscoverOrRegisterPc(
+        rawId,
+        rawName,
         socket.handshake.address?.replace('::ffff:', '') || '127.0.0.1',
         data?.specs
       );
+      authSocket.join(`pc:${rawId}`);
+      authSocket.join(`pc:${rawName.toLowerCase()}`);
+      authSocket.join(`pc:${pc.id.toLowerCase()}`);
+      authSocket.join(`pc:${pc.identifier.toLowerCase()}`);
+      authSocket.join('fleet');
+      authSocket.data.pcId = pc.id;
+      authSocket.emit('pc:identity:sync', { pcId: pc.id, name: pc.name, identifier: pc.identifier });
     });
 
     // PC Terminal Heartbeat Event & Telemetry

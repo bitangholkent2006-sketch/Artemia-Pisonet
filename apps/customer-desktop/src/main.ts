@@ -47,12 +47,32 @@ class StationMaintenanceAgent {
   private socket: Socket | null = null;
   private pcId: string = 'pc-01';
   private pcName: string = 'PC-01';
+  private dbPcId: string = '';
+  private identifier: string = '';
   private specs: string = 'Standard Gaming Terminal';
   private isConnected = false;
   private isLocked = false;
   private isPoweredOff = false;
   private lastUpdateLog: string = 'Station ready. No active background jobs.';
   private announcementTimeout: any = null;
+
+  public matchesThisStation(targetId?: string): boolean {
+    if (!targetId || targetId === 'all' || targetId === 'fleet') return true;
+    const t = targetId.trim().toLowerCase();
+    const candidates = [
+      this.pcId.toLowerCase(),
+      this.pcName.toLowerCase(),
+      this.dbPcId.toLowerCase(),
+      this.identifier.toLowerCase(),
+      this.pcId.replace(/^pc-/, '').toLowerCase(),
+      this.dbPcId.replace(/^pc-/, '').toLowerCase(),
+      this.pcName.replace(/^pc-/, '').toLowerCase()
+    ].filter(Boolean);
+
+    if (candidates.includes(t)) return true;
+    if (candidates.some(c => t === `pc-${c}` || c === `pc-${t}`)) return true;
+    return false;
+  }
 
   private telemetry = {
     cpuPercent: 14,
@@ -281,8 +301,16 @@ class StationMaintenanceAgent {
       if (res.ok) {
         const json = await res.json();
         const list = json?.data || [];
-        const current = list.find((p: any) => p.id?.toLowerCase() === this.pcId.toLowerCase() || p.identifier?.toLowerCase() === this.pcName.toLowerCase());
+        const current = list.find((p: any) =>
+          this.matchesThisStation(p.id) ||
+          this.matchesThisStation(p.identifier) ||
+          this.matchesThisStation(p.name)
+        );
         if (current) {
+          this.dbPcId = current.id.toLowerCase();
+          this.identifier = (current.identifier || this.pcName).toUpperCase();
+          this.pcName = (current.name || this.pcName).toUpperCase();
+          this.logMessage(`Station matched in Fleet Database: ID=${current.id}, Name=${this.pcName}`);
           if (current.status === 'locked') {
             this.setLockedState(true);
           } else if (current.status === 'offline') {
@@ -424,6 +452,15 @@ class StationMaintenanceAgent {
         this.checkInitialStatus();
       });
 
+      this.socket.on('pc:identity:sync', (data: { pcId: string; name?: string; identifier?: string }) => {
+        if (data?.pcId) {
+          this.dbPcId = data.pcId.toLowerCase();
+          if (data.name) this.pcName = data.name.toUpperCase();
+          if (data.identifier) this.identifier = data.identifier;
+          this.logMessage(`Station synchronized with Fleet Database: ${this.dbPcId} (${this.pcName})`);
+        }
+      });
+
       this.socket.on('disconnect', () => {
         this.isConnected = false;
         this.updateStatusBadge(false);
@@ -432,7 +469,7 @@ class StationMaintenanceAgent {
 
       // 0. Remote Power & Lock Commands Relay
       this.socket.on('agent:power:run', (payload: { targetPcId?: string; action: string; sender?: string }) => {
-        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId.toLowerCase() !== this.pcId.toLowerCase()) {
+        if (!this.matchesThisStation(payload.targetPcId)) {
           return;
         }
         this.logMessage(`[Power Action] Received: ${payload.action.toUpperCase()} from ${payload.sender || 'Admin'}`);
@@ -450,7 +487,7 @@ class StationMaintenanceAgent {
 
       // Status Synchronization Listeners
       this.socket.on('pc:status', (data: { pcId: string; status: string }) => {
-        if (data.pcId === 'all' || data.pcId?.toLowerCase() === this.pcId.toLowerCase()) {
+        if (this.matchesThisStation(data.pcId)) {
           this.setLockedState(data.status === 'locked');
           if (data.status === 'offline') {
             this.handleShutdown();
@@ -462,14 +499,14 @@ class StationMaintenanceAgent {
       });
 
       this.socket.on('pc:status-changed', (data: { pcId: string; status: string }) => {
-        if (data.pcId === 'all' || data.pcId?.toLowerCase() === this.pcId.toLowerCase()) {
+        if (this.matchesThisStation(data.pcId)) {
           this.setLockedState(data.status === 'locked');
         }
       });
 
       // Announcement Messages Relay
       this.socket.on('pc:announcement', (payload: { targetPcId?: string; message: string; durationSeconds?: number; sender?: string }) => {
-        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId.toLowerCase() !== this.pcId.toLowerCase()) {
+        if (!this.matchesThisStation(payload.targetPcId)) {
           return;
         }
         this.showAnnouncement(payload.message, payload.sender || 'Counter Operator', payload.durationSeconds || 8);
@@ -477,7 +514,7 @@ class StationMaintenanceAgent {
 
       // 1. Remote Script / Command Execution Relay
       this.socket.on('agent:command:run', async (payload: { id?: string; reqId?: string; command: string; type?: 'powershell' | 'cmd'; shell?: 'powershell' | 'cmd'; targetPcId?: string }) => {
-        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId.toLowerCase() !== this.pcId.toLowerCase()) {
+        if (!this.matchesThisStation(payload.targetPcId)) {
           return;
         }
         this.logMessage(`[Remote Command] Executing: ${payload.command.slice(0, 60)}...`);
@@ -505,7 +542,7 @@ class StationMaintenanceAgent {
         this.socket?.emit('agent:command:result', {
           id: payload.id || payload.reqId,
           reqId: payload.reqId || payload.id,
-          pcId: this.pcId,
+          pcId: payload.targetPcId || this.pcId,
           pcName: this.pcName,
           command: payload.command,
           output: res.output,
@@ -519,7 +556,7 @@ class StationMaintenanceAgent {
 
       // 2. Storage & %TEMP% Cleaner Relay
       this.socket.on('agent:clean:run', async (payload: { reqId?: string; targetPcId?: string }) => {
-        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId.toLowerCase() !== this.pcId.toLowerCase()) {
+        if (!this.matchesThisStation(payload.targetPcId)) {
           return;
         }
         this.logMessage('Cleaning junk, temporary files, and Recycle Bin...');
@@ -540,7 +577,7 @@ class StationMaintenanceAgent {
 
         this.socket?.emit('agent:clean:result', {
           reqId: payload.reqId,
-          pcId: this.pcId,
+          pcId: payload.targetPcId || this.pcId,
           pcName: this.pcName,
           deletedBytes: res.deletedBytes,
           cleanedPaths: res.cleanedPaths,
@@ -553,7 +590,7 @@ class StationMaintenanceAgent {
       this.socket.on('agent:game:update', async (payload: { gameId?: string; gameKey?: string; command?: string; updateCommand?: string; targetPcId?: string }) => {
         const game = payload.gameId || payload.gameKey || 'game';
         const cmd = payload.command || payload.updateCommand;
-        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId.toLowerCase() !== this.pcId.toLowerCase()) {
+        if (!this.matchesThisStation(payload.targetPcId)) {
           return;
         }
         this.logMessage(`[Game Updater] Launching auto-update for ${game.toUpperCase()}...`);
@@ -572,7 +609,7 @@ class StationMaintenanceAgent {
         this.socket?.emit('agent:game:status', {
           gameId: game,
           gameKey: game,
-          pcId: this.pcId,
+          pcId: payload.targetPcId || this.pcId,
           pcName: this.pcName,
           status: res.status,
           message: res.log,
@@ -583,7 +620,7 @@ class StationMaintenanceAgent {
 
       // 4. Remote File Browser Relay
       this.socket.on('agent:fs:list:req', async (payload: { reqId?: string; pcId: string; path: string }) => {
-        if (payload.pcId && payload.pcId.toLowerCase() !== this.pcId.toLowerCase()) return;
+        if (!this.matchesThisStation(payload.pcId)) return;
         let res: { entries: any[]; error?: string };
         if (desktopWindow.pisonetDesktop) {
           res = await desktopWindow.pisonetDesktop.listFiles(payload.path);
@@ -615,7 +652,7 @@ class StationMaintenanceAgent {
         }
         this.socket?.emit('agent:fs:list:res', {
           reqId: payload.reqId,
-          pcId: this.pcId,
+          pcId: payload.pcId || this.pcId,
           path: payload.path,
           entries: res.entries,
           error: res.error
@@ -624,7 +661,7 @@ class StationMaintenanceAgent {
 
       // 5. Remote File Delete Relay
       this.socket.on('agent:fs:delete:req', async (payload: { reqId?: string; pcId: string; path: string }) => {
-        if (payload.pcId && payload.pcId.toLowerCase() !== this.pcId.toLowerCase()) return;
+        if (!this.matchesThisStation(payload.pcId)) return;
         this.logMessage(`[File Manager] Deleting: ${payload.path}`);
         let res: { success: boolean; error?: string };
         if (desktopWindow.pisonetDesktop) {
@@ -635,7 +672,7 @@ class StationMaintenanceAgent {
         this.showToast(`🗑️ File Deleted: ${payload.path}`, 'warn', 4);
         this.socket?.emit('agent:fs:delete:res', {
           reqId: payload.reqId,
-          pcId: this.pcId,
+          pcId: payload.pcId || this.pcId,
           path: payload.path,
           success: res.success,
           error: res.error
@@ -644,7 +681,7 @@ class StationMaintenanceAgent {
 
       // 6. Remote Process List Relay
       this.socket.on('agent:process:list:req', async (payload: { reqId?: string; pcId: string }) => {
-        if (payload.pcId && payload.pcId.toLowerCase() !== this.pcId.toLowerCase()) return;
+        if (!this.matchesThisStation(payload.pcId)) return;
         let res: { processes: any[]; error?: string };
         if (desktopWindow.pisonetDesktop) {
           res = await desktopWindow.pisonetDesktop.listProcesses();
@@ -655,7 +692,7 @@ class StationMaintenanceAgent {
         }
         this.socket?.emit('agent:process:list:res', {
           reqId: payload.reqId,
-          pcId: this.pcId,
+          pcId: payload.pcId || this.pcId,
           processes: res.processes,
           error: res.error
         });
@@ -663,7 +700,7 @@ class StationMaintenanceAgent {
 
       // 7. Remote Process Kill Relay
       this.socket.on('agent:process:kill:req', async (payload: { reqId?: string; pcId: string; pid?: number; name?: string; target?: string | number }) => {
-        if (payload.pcId && payload.pcId.toLowerCase() !== this.pcId.toLowerCase()) return;
+        if (!this.matchesThisStation(payload.pcId)) return;
         const target = payload.pid || payload.name || payload.target;
         this.logMessage(`[Task Manager] Killing process: ${target}`);
         let res: { success: boolean; error?: string };
@@ -676,7 +713,7 @@ class StationMaintenanceAgent {
         this.showToast(`🛑 Process Terminated: ${target}`, 'warn', 4);
         this.socket?.emit('agent:process:kill:res', {
           reqId: payload.reqId,
-          pcId: this.pcId,
+          pcId: payload.pcId || this.pcId,
           target,
           pid: payload.pid,
           success: res.success,
@@ -686,7 +723,7 @@ class StationMaintenanceAgent {
 
       // 8. Remote Screen Capture Relay
       this.socket.on('agent:screen:req', async (payload: { reqId?: string; pcId: string }) => {
-        if (payload.pcId && payload.pcId.toLowerCase() !== this.pcId.toLowerCase()) return;
+        if (!this.matchesThisStation(payload.pcId)) return;
         let base64 = '';
         let err: string | undefined;
 
@@ -700,7 +737,7 @@ class StationMaintenanceAgent {
 
         this.socket?.emit('agent:screen:res', {
           reqId: payload.reqId,
-          pcId: this.pcId,
+          pcId: payload.pcId || this.pcId,
           imageData: base64,
           base64Image: base64,
           timestamp: new Date().toISOString(),
