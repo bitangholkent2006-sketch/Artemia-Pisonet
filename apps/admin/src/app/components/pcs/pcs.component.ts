@@ -57,6 +57,15 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
             </tr>
           </thead>
           <tbody>
+            <tr *ngIf="!state.pcs || state.pcs.length === 0">
+              <td colspan="8" style="text-align:center; padding: 48px 20px; color: #64748b;">
+                <div style="font-size: 2.2rem; margin-bottom: 8px;">🖥️</div>
+                <div style="font-weight: 800; color: #f1f5f9; font-size: 1.1rem;">Walay PC Stations nga Nakalista (Clean Slate)</div>
+                <p style="font-size: 0.85rem; color: #94a3b8; margin-top: 6px; max-width: 480px; margin-left: auto; margin-right: auto; line-height: 1.5;">
+                  Na-reset na ang database. I-abli lang ang <strong>Artemia Fleet Agent</strong> sa imong mga client PC aron awtomatiko silang motungha dinhi nga walay manomano nga setup!
+                </p>
+              </td>
+            </tr>
             <tr *ngFor="let pc of state.pcs; trackBy: trackByPcId">
               <td>
                 <div style="font-weight:800; color:#fff;">{{ pc.name }}</div>
@@ -231,6 +240,7 @@ export class PcsComponent implements OnInit, OnDestroy {
   constructor(public adminState: AdminStateService) {}
 
   ngOnInit() {
+    this.adminState.syncFromBackend();
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
     });

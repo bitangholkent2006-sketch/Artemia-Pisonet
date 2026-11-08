@@ -132,10 +132,12 @@ import { PC, PCStatus } from '@pisonet/shared';
       <!-- PC Grid Cards -->
       <div class="pc-cards-grid">
         <div *ngIf="filteredPcs.length === 0" class="empty-fleet-state">
-          <div class="empty-icon">🔍</div>
-          <div class="empty-title">Walay PC Nakit-an</div>
-          <p class="empty-sub">Walay terminal nga ni-match sa search query: "{{ pcSearchQuery }}"</p>
-          <button class="btn btn-sm btn-secondary" (click)="pcSearchQuery = ''; statusFilter = 'all'">Reset Filter</button>
+          <div class="empty-icon" style="font-size: 2.5rem; margin-bottom: 10px;">🖥️</div>
+          <div class="empty-title" style="font-size: 1.15rem; font-weight: 800; color: #f1f5f9;">Walay PC Stations nga Nakalista (Fleet Clean Slate)</div>
+          <p class="empty-sub" style="color: #94a3b8; font-size: 0.88rem; max-width: 480px; margin: 8px auto 16px auto; line-height: 1.5;">
+            Na-reset ug nalimpyohan na ang database. I-abli lang ang <strong>Artemia Fleet Agent</strong> sa imong mga client PC aron awtomatiko silang motungha dinhi nga walay manomano nga setup!
+          </p>
+          <button class="btn btn-sm btn-secondary" (click)="pcSearchQuery = ''; statusFilter = 'all'; adminState.syncFromBackend()">🔄 Refresh Fleet</button>
         </div>
 
         <div
