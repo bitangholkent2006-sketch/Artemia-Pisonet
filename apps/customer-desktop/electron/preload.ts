@@ -11,6 +11,7 @@ export interface PisonetDesktopApi {
   shutdownPC: (timeoutSeconds?: number) => Promise<boolean>;
   restartPC: () => Promise<boolean>;
   cancelShutdown: () => Promise<boolean>;
+  setLockMode: (locked: boolean) => Promise<boolean>;
 
   // Maintenance Agent Native APIs
   executeCommand: (command: string, type: 'powershell' | 'cmd') => Promise<{ output: string; exitCode: number; error?: string }>;
@@ -35,6 +36,7 @@ const api: PisonetDesktopApi = {
   shutdownPC: (timeoutSeconds?: number) => ipcRenderer.invoke('system:shutdown', timeoutSeconds),
   restartPC: () => ipcRenderer.invoke('system:restart'),
   cancelShutdown: () => ipcRenderer.invoke('system:cancel-shutdown'),
+  setLockMode: (locked: boolean) => ipcRenderer.invoke('window:set-lock-mode', locked),
 
   // Maintenance APIs
   executeCommand: (command, type) => ipcRenderer.invoke('maintenance:execute-command', command, type),

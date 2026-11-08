@@ -205,6 +205,9 @@ export class PcService {
         broadcastRealtimeEvent('pc:updated', safePc);
         broadcastRealtimeEvent('pc:status', { pcId, status: newStatus, pc: safePc });
         broadcastRealtimeEvent('pc:status-changed', { pcId, status: newStatus, activeCustomerName: safePc.activeCustomerName });
+        if (newStatus === 'locked' || newStatus === 'available') {
+          broadcastRealtimeEvent('agent:power:run', { targetPcId: pcId, action: newStatus === 'locked' ? 'lock' : 'unlock', sender: 'Staff' });
+        }
       } catch (err) {
         console.warn('Socket broadcast error in togglePcStatus:', err);
       }

@@ -43,8 +43,9 @@ maintenanceRoutes.post('/command', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId}`;
+  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId.toLowerCase()}`;
   broadcastRealtimeEvent('agent:command:run', payload, room);
+  broadcastRealtimeEvent('agent:command:run', payload);
 
   return c.json({
     success: true,
@@ -65,8 +66,9 @@ maintenanceRoutes.post('/clean-temp', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId}`;
+  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId.toLowerCase()}`;
   broadcastRealtimeEvent('agent:clean:run', payload, room);
+  broadcastRealtimeEvent('agent:clean:run', payload);
 
   return c.json({
     success: true,
@@ -92,8 +94,9 @@ maintenanceRoutes.post('/game-update', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId}`;
+  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId.toLowerCase()}`;
   broadcastRealtimeEvent('agent:game:update', payload, room);
+  broadcastRealtimeEvent('agent:game:update', payload);
 
   return c.json({
     success: true,
@@ -118,9 +121,11 @@ maintenanceRoutes.post('/power', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId}`;
+  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId.toLowerCase()}`;
   broadcastRealtimeEvent('agent:power:run', payload, room);
+  broadcastRealtimeEvent('agent:power:run', payload);
 
+  const collections = getCollections();
   if (targetPcId !== 'all') {
     if (action === 'lock') {
       await PcService.togglePcStatus(targetPcId, 'locked', staff.id);
@@ -129,6 +134,18 @@ maintenanceRoutes.post('/power', requireStaff, async (c) => {
     } else if (action === 'shutdown') {
       await PcService.togglePcStatus(targetPcId, 'offline', staff.id);
     }
+  } else {
+    if (action === 'lock') {
+      await collections.pcs.updateMany({}, { $set: { status: 'locked', updatedAt: new Date() } });
+      broadcastRealtimeEvent('pc:status', { pcId: 'all', status: 'locked' });
+    } else if (action === 'unlock') {
+      await collections.pcs.updateMany({}, { $set: { status: 'available', updatedAt: new Date() } });
+      broadcastRealtimeEvent('pc:status', { pcId: 'all', status: 'available' });
+    } else if (action === 'shutdown') {
+      await collections.pcs.updateMany({}, { $set: { status: 'offline', connectionState: 'disconnected', updatedAt: new Date() } });
+      broadcastRealtimeEvent('pc:status', { pcId: 'all', status: 'offline' });
+    }
+    broadcastRealtimeEvent('pc:updated', {});
   }
 
   return c.json({

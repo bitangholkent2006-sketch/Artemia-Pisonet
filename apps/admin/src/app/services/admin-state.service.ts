@@ -586,7 +586,7 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:fs:list:res', (data: any) => {
-        if (data.reqId === reqId || (data.pcId === pcId)) {
+        if (data.reqId === reqId || (data.pcId?.toLowerCase() === pcId.toLowerCase())) {
           clearTimeout(timer);
           cleanup();
           resolve(data.entries || []);
@@ -606,7 +606,7 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:fs:delete:res', (data: any) => {
-        if (data.reqId === reqId || (data.pcId === pcId && data.path === targetPath)) {
+        if (data.reqId === reqId || (data.pcId?.toLowerCase() === pcId.toLowerCase())) {
           clearTimeout(timer);
           cleanup();
           resolve({ success: data.success, message: data.message });
@@ -626,7 +626,7 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:process:list:res', (data: any) => {
-        if (data.reqId === reqId || data.pcId === pcId) {
+        if (data.reqId === reqId || (data.pcId?.toLowerCase() === pcId.toLowerCase())) {
           clearTimeout(timer);
           cleanup();
           resolve(data.processes || []);
@@ -646,7 +646,7 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:process:kill:res', (data: any) => {
-        if (data.reqId === reqId || data.pcId === pcId) {
+        if (data.reqId === reqId || (data.pcId?.toLowerCase() === pcId.toLowerCase())) {
           clearTimeout(timer);
           cleanup();
           resolve({ success: data.success, message: data.message });
@@ -666,7 +666,7 @@ export class AdminStateService {
       }, 10000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:screen:res', (data: any) => {
-        if (data.reqId === reqId || data.pcId === pcId) {
+        if (data.reqId === reqId || (data.pcId?.toLowerCase() === pcId.toLowerCase())) {
           clearTimeout(timer);
           cleanup();
           resolve(data.imageData || data.base64Image || null);

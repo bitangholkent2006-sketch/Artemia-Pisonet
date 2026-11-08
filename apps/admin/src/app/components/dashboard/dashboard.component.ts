@@ -99,6 +99,12 @@ import { PC, PCStatus } from '@pisonet/shared';
         </div>
       </div>
 
+      <!-- Feedback Notification Banner -->
+      <div *ngIf="actionNotice" class="action-feedback-banner" [ngClass]="actionNoticeType">
+        <span>{{ actionNotice }}</span>
+        <button class="banner-close-btn" (click)="actionNotice = null">✕</button>
+      </div>
+
       <!-- Controls & Filter Row -->
       <div class="section-header-row">
         <div>
@@ -763,6 +769,40 @@ import { PC, PCStatus } from '@pisonet/shared';
       border-radius: 6px;
       color: #38bdf8;
     }
+    .action-feedback-banner {
+      padding: 12px 18px;
+      margin-bottom: 20px;
+      border-radius: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.88rem;
+      font-weight: 700;
+    }
+    .action-feedback-banner.info {
+      background: rgba(6, 182, 212, 0.15);
+      border: 1px solid rgba(6, 182, 212, 0.4);
+      color: #38bdf8;
+    }
+    .action-feedback-banner.success {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+    }
+    .action-feedback-banner.warn {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: #fbbf24;
+    }
+    .banner-close-btn {
+      background: none;
+      border: none;
+      color: inherit;
+      font-size: 1rem;
+      cursor: pointer;
+      opacity: 0.8;
+    }
+    .banner-close-btn:hover { opacity: 1; }
   `]
 })
 export class DashboardComponent implements OnInit, OnDestroy {
@@ -785,17 +825,38 @@ export class DashboardComponent implements OnInit, OnDestroy {
     'Paki-save ang inyong files, mag-reboot ang station kadiyot.'
   ];
 
+  actionNotice: string | null = null;
+  actionNoticeType: 'info' | 'success' | 'warn' = 'info';
+  private noticeTimer: any = null;
+  private cleanSub: (() => void) | null = null;
+
   constructor(public adminState: AdminStateService) {}
+
+  showNotice(msg: string, type: 'info' | 'success' | 'warn' = 'info') {
+    this.actionNotice = msg;
+    this.actionNoticeType = type;
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => {
+      this.actionNotice = null;
+    }, 6000);
+  }
 
   ngOnInit() {
     this.adminState.syncFromBackend();
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
     });
+
+    this.cleanSub = this.adminState.apiClient.onSocketEvent('maintenance:clean:result', (data: any) => {
+      const freed = data.deletedBytes ? (data.deletedBytes / (1024 * 1024)).toFixed(1) : '0';
+      this.showNotice(`✨ Tapos na ang paglimpyo sa ${data.pcName || data.pcId}! Nabawi ang ${freed} MB nga disk space.`, 'success');
+    });
   }
 
   ngOnDestroy() {
     this.sub.unsubscribe();
+    if (this.cleanSub) this.cleanSub();
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
   }
 
   get totalPcs(): number {
@@ -860,17 +921,20 @@ export class DashboardComponent implements OnInit, OnDestroy {
   // Bulk Fleet Actions
   async bulkWakeOnLan() {
     const offlineUnits = this.state.pcs?.filter((p: PC) => p.status === 'offline') || [];
+    this.showNotice(`⚡ Gipadala ang Wake-on-LAN packet sa ${offlineUnits.length} offline units...`, 'info');
     for (const p of offlineUnits) {
       await this.handleWakeOnLan(p);
     }
   }
 
   async bulkCleanJunk() {
+    this.showNotice('🧹 Gilimpyohan ang temporary junk files sa TANANG PC stations...', 'info');
     await this.adminState.cleanTempFiles('all');
   }
 
   async confirmBulkPower(action: 'restart' | 'shutdown') {
     if (confirm(`Sigurado ka nga gusto nimo i-${action.toUpperCase()} ang TANANG PC stations?`)) {
+      this.showNotice(`⚡ Command '${action.toUpperCase()}' gipadala sa tanang stations.`, 'warn');
       await this.adminState.executePowerAction('all', action);
     }
   }
@@ -883,18 +947,22 @@ export class DashboardComponent implements OnInit, OnDestroy {
   async toggleLock(pc: PC) {
     const nextStatus: PCStatus = pc.status === 'locked' ? 'available' : 'locked';
     pc.status = nextStatus;
+    this.showNotice(nextStatus === 'locked' ? `🔒 Gi-LOCK ang ${pc.name} alang sa maintenance.` : `🔓 Na-UNLOCK ang ${pc.name}. Normal desktop restored.`, 'info');
     await this.adminState.togglePcStatus(pc.id, nextStatus);
+    await this.adminState.executePowerAction(pc.id, nextStatus === 'locked' ? 'lock' : 'unlock');
   }
 
   async toggleOnline(pc: PC) {
     const nextStatus: PCStatus = pc.status === 'offline' ? 'available' : 'offline';
     pc.status = nextStatus;
     pc.connectionState = nextStatus === 'available' ? 'connected' : 'disconnected';
+    this.showNotice(`🔌 Giusab ang status sa ${pc.name} ngadto sa ${nextStatus.toUpperCase()}.`, 'info');
     await this.adminState.togglePcStatus(pc.id, nextStatus);
   }
 
   async handleWakeOnLan(pc: PC) {
     (pc as any).isPendingWake = true;
+    this.showNotice(`⚡ Gipadala ang Wake-on-LAN signal sa ${pc.name}...`, 'info');
     try {
       await this.adminState.simulateWakeOnLan(pc.id);
     } finally {
@@ -907,11 +975,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async cleanStationTemp(pc: PC) {
+    this.showNotice(`🧹 Gilimpyohan ang temporary junk files sa ${pc.name}...`, 'info');
     await this.adminState.cleanTempFiles(pc.id);
   }
 
   async confirmStationPower(pc: PC, action: 'restart' | 'shutdown') {
     if (confirm(`Gusto ba nimo i-${action.toUpperCase()} ang ${pc.name}?`)) {
+      this.showNotice(`⚡ Command '${action.toUpperCase()}' gipadala ngadto sa ${pc.name}...`, 'warn');
       await this.adminState.executePowerAction(pc.id, action);
     }
   }
@@ -944,8 +1014,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
     if (!this.announcementText.trim()) return;
     this.isSendingMessage = true;
     const targetId = this.messageModalTarget === 'all' ? 'all' : (this.messageModalTarget as PC)?.id;
+    const targetName = this.getTargetPcName();
     await this.adminState.sendPcAnnouncement(targetId, this.announcementText.trim());
     this.isSendingMessage = false;
+    this.showNotice(`📢 Announcement gipadala ngadto sa ${targetName}!`, 'success');
     this.closeMessageModal();
   }
 }

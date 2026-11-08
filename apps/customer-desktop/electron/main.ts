@@ -82,6 +82,18 @@ ipcMain.handle('window:close', () => {
   return true;
 });
 
+ipcMain.handle('window:set-lock-mode', (_event, locked: boolean) => {
+  if (mainWindow) {
+    if (locked) {
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.focus();
+    } else {
+      mainWindow.setAlwaysOnTop(false);
+    }
+  }
+  return true;
+});
+
 // System Info & Plug-and-Play Specs
 ipcMain.handle('system:get-info', () => {
   const hostname = process.env.COMPUTERNAME || os.hostname() || 'STATION-PC';

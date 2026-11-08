@@ -171,9 +171,10 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     // Remote Maintenance & Shell Execution Relays
     authSocket.on('maintenance:command:run', (payload: any) => {
-      const target = payload.targetPcId || 'fleet';
+      const target = (payload.targetPcId || 'fleet').toLowerCase();
       const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
       io?.to(room).emit('agent:command:run', payload);
+      io?.emit('agent:command:run', payload);
     });
 
     authSocket.on('agent:command:result', (result: any) => {
@@ -182,9 +183,10 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     authSocket.on('maintenance:clean:run', (payload: any) => {
-      const target = payload.targetPcId || 'fleet';
+      const target = (payload.targetPcId || 'fleet').toLowerCase();
       const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
       io?.to(room).emit('agent:clean:run', payload);
+      io?.emit('agent:clean:run', payload);
     });
 
     authSocket.on('agent:clean:result', (result: any) => {
@@ -193,9 +195,10 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     authSocket.on('maintenance:game:update', (payload: any) => {
-      const target = payload.targetPcId || 'fleet';
+      const target = (payload.targetPcId || 'fleet').toLowerCase();
       const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
       io?.to(room).emit('agent:game:update', payload);
+      io?.emit('agent:game:update', payload);
     });
 
     authSocket.on('agent:game:status', (status: any) => {
@@ -203,10 +206,19 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.emit('maintenance:game:status', status);
     });
 
+    authSocket.on('maintenance:power:run', (payload: any) => {
+      const target = (payload.targetPcId || 'fleet').toLowerCase();
+      const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
+      io?.to(room).emit('agent:power:run', payload);
+      io?.emit('agent:power:run', payload);
+    });
+
     // Remote File Manager Relays
     authSocket.on('maintenance:fs:list:req', (payload: any) => {
       if (payload.pcId) {
-        io?.to(`pc:${payload.pcId}`).emit('agent:fs:list:req', payload);
+        const targetId = payload.pcId.toLowerCase();
+        io?.to(`pc:${targetId}`).emit('agent:fs:list:req', payload);
+        io?.emit('agent:fs:list:req', payload);
       }
     });
 
@@ -217,7 +229,9 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('maintenance:fs:delete:req', (payload: any) => {
       if (payload.pcId) {
-        io?.to(`pc:${payload.pcId}`).emit('agent:fs:delete:req', payload);
+        const targetId = payload.pcId.toLowerCase();
+        io?.to(`pc:${targetId}`).emit('agent:fs:delete:req', payload);
+        io?.emit('agent:fs:delete:req', payload);
       }
     });
 
@@ -229,7 +243,9 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     // Remote Process Manager Relays
     authSocket.on('maintenance:process:list:req', (payload: any) => {
       if (payload.pcId) {
-        io?.to(`pc:${payload.pcId}`).emit('agent:process:list:req', payload);
+        const targetId = payload.pcId.toLowerCase();
+        io?.to(`pc:${targetId}`).emit('agent:process:list:req', payload);
+        io?.emit('agent:process:list:req', payload);
       }
     });
 
@@ -240,7 +256,9 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('maintenance:process:kill:req', (payload: any) => {
       if (payload.pcId) {
-        io?.to(`pc:${payload.pcId}`).emit('agent:process:kill:req', payload);
+        const targetId = payload.pcId.toLowerCase();
+        io?.to(`pc:${targetId}`).emit('agent:process:kill:req', payload);
+        io?.emit('agent:process:kill:req', payload);
       }
     });
 
@@ -252,7 +270,9 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     // Remote Screen Capture Relays
     authSocket.on('maintenance:screen:req', (payload: any) => {
       if (payload.pcId) {
-        io?.to(`pc:${payload.pcId}`).emit('agent:screen:req', payload);
+        const targetId = payload.pcId.toLowerCase();
+        io?.to(`pc:${targetId}`).emit('agent:screen:req', payload);
+        io?.emit('agent:screen:req', payload);
       }
     });
 

@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, Input, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
@@ -336,7 +336,9 @@ import { PC } from '@pisonet/shared';
     }
   `]
 })
-export class RemoteTerminalComponent implements OnInit, OnDestroy {
+export class RemoteTerminalComponent implements OnInit, OnDestroy, OnChanges {
+  @Input() initialPcId?: string;
+
   state: any = { pcs: [] };
   private sub!: Subscription;
   private socketSub: (() => void) | null = null;
@@ -350,7 +352,16 @@ export class RemoteTerminalComponent implements OnInit, OnDestroy {
 
   constructor(public adminState: AdminStateService) {}
 
+  ngOnChanges(changes: SimpleChanges) {
+    if (changes['initialPcId'] && this.initialPcId) {
+      this.targetScope = this.initialPcId;
+    }
+  }
+
   ngOnInit() {
+    if (this.initialPcId) {
+      this.targetScope = this.initialPcId;
+    }
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
     });

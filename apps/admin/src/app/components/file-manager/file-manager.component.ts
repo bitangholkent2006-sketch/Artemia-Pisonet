@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, Input, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
@@ -530,7 +530,9 @@ import { PC, FileEntry } from '@pisonet/shared';
     }
   `]
 })
-export class FileManagerComponent implements OnInit, OnDestroy {
+export class FileManagerComponent implements OnInit, OnDestroy, OnChanges {
+  @Input() initialPcId?: string;
+
   state: any = { pcs: [] };
   private sub!: Subscription;
 
@@ -551,12 +553,23 @@ export class FileManagerComponent implements OnInit, OnDestroy {
 
   constructor(public adminState: AdminStateService) {}
 
+  ngOnChanges(changes: SimpleChanges) {
+    if (changes['initialPcId'] && this.initialPcId) {
+      this.selectedPcId = this.initialPcId;
+      this.loadDirectory();
+    }
+  }
+
   ngOnInit() {
+    if (this.initialPcId) {
+      this.selectedPcId = this.initialPcId;
+    }
+
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
       if (this.state.pcs?.length > 0) {
         if (!this.selectedPcId || !this.state.pcs.some((p: any) => p.id === this.selectedPcId)) {
-          this.selectedPcId = this.state.pcs[0].id;
+          this.selectedPcId = this.initialPcId || this.state.pcs[0].id;
           this.loadDirectory();
         }
       }

@@ -8,11 +8,12 @@ interface WindowWithDesktop extends Window {
     minimize: () => Promise<void>;
     maximize: () => Promise<void>;
     close: () => Promise<void>;
-    getSystemInfo: () => Promise<{ platform: string; version: string; hostname: string; isElectron: boolean }>;
+    getSystemInfo: () => Promise<{ platform: string; version: string; hostname: string; specs?: string; isElectron: boolean }>;
     setAutoStart: (enable: boolean) => Promise<boolean>;
     shutdownPC: (timeoutSeconds?: number) => Promise<boolean>;
     restartPC: () => Promise<boolean>;
     cancelShutdown: () => Promise<boolean>;
+    setLockMode?: (locked: boolean) => Promise<boolean>;
 
     // Maintenance Native Bridge
     executeCommand: (cmd: string, type: 'powershell' | 'cmd') => Promise<{ output: string; exitCode: number; error?: string }>;
@@ -48,10 +49,14 @@ class StationMaintenanceAgent {
   private pcName: string = 'PC-01';
   private specs: string = 'Standard Gaming Terminal';
   private isConnected = false;
+  private isLocked = false;
+  private isPoweredOff = false;
   private lastUpdateLog: string = 'Station ready. No active background jobs.';
+  private announcementTimeout: any = null;
+
   private telemetry = {
-    cpuPercent: 12,
-    ramPercent: 44,
+    cpuPercent: 14,
+    ramPercent: 42,
     diskUsedGb: 320,
     diskTotalGb: 500,
     activeApp: 'Desktop Idle'
@@ -69,6 +74,23 @@ class StationMaintenanceAgent {
     { pid: 9410, name: 'RobloxPlayerBeta.exe', memoryMb: 520, cpuPercent: 12, path: 'C:\\Users\\User\\AppData\\Local\\Roblox\\Versions\\RobloxPlayerBeta.exe' },
     { pid: 240, name: 'explorer.exe', memoryMb: 160, cpuPercent: 1, path: 'C:\\Windows\\explorer.exe' }
   ];
+
+  private playChime() {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.12); // A5
+      gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.5);
+    } catch {}
+  }
 
   private generateLiveScreenCapture(): string {
     const canvas = document.createElement('canvas');
@@ -95,52 +117,74 @@ class StationMaintenanceAgent {
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1280, y); ctx.stroke();
     }
 
-    // 2. Active Window Frame (Game or App)
-    ctx.fillStyle = '#0f172a';
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(140, 75, 1000, 550, 10);
-    ctx.fill();
-    ctx.stroke();
+    if (this.isLocked) {
+      // Draw Locked Screen representation
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+      ctx.fillRect(100, 80, 1080, 560);
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(100, 80, 1080, 560);
 
-    // Window Title Bar
-    ctx.fillStyle = '#1e293b';
-    ctx.beginPath();
-    ctx.roundRect(140, 75, 1000, 42, [10, 10, 0, 0]);
-    ctx.fill();
+      ctx.font = 'bold 64px sans-serif';
+      ctx.fillStyle = '#f59e0b';
+      ctx.textAlign = 'center';
+      ctx.fillText('🔒', 640, 260);
 
-    // Title text
-    ctx.font = 'bold 15px sans-serif';
-    ctx.fillStyle = '#f8fafc';
-    ctx.textAlign = 'left';
-    ctx.fillText('🎮 Dota 2 - Vulkan 64-bit (Active Station Game)', 160, 101);
+      ctx.font = 'bold 32px sans-serif';
+      ctx.fillStyle = '#fff';
+      ctx.fillText('STATION MAINTENANCE LOCKED', 640, 340);
 
-    // Window controls
-    ctx.fillStyle = '#ef4444';
-    ctx.beginPath(); ctx.arc(1115, 96, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#f59e0b';
-    ctx.beginPath(); ctx.arc(1095, 96, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#10b981';
-    ctx.beginPath(); ctx.arc(1075, 96, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.font = '18px sans-serif';
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText(`Station: ${this.pcName} • Under Remote Admin Maintenance`, 640, 390);
+    } else {
+      // 2. Active Window Frame (Game or App)
+      ctx.fillStyle = '#0f172a';
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(140, 75, 1000, 550, 10);
+      ctx.fill();
+      ctx.stroke();
 
-    // Window Body (Game HUD / Viewport)
-    ctx.fillStyle = '#020617';
-    ctx.fillRect(142, 117, 996, 506);
+      // Window Title Bar
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.roundRect(140, 75, 1000, 42, [10, 10, 0, 0]);
+      ctx.fill();
 
-    // Game graphic simulation
-    ctx.font = 'bold 36px sans-serif';
-    ctx.fillStyle = '#38bdf8';
-    ctx.textAlign = 'center';
-    ctx.fillText('DOTA 2', 640, 320);
+      // Title text
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillStyle = '#f8fafc';
+      ctx.textAlign = 'left';
+      ctx.fillText('🎮 Dota 2 - Vulkan 64-bit (Active Station Game)', 160, 101);
 
-    ctx.font = '16px monospace';
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText(`60 FPS • Ping: 18ms • Match ID: 7892104 • Station: ${this.pcName}`, 640, 360);
+      // Window controls
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath(); ctx.arc(1115, 96, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath(); ctx.arc(1095, 96, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#10b981';
+      ctx.beginPath(); ctx.arc(1075, 96, 7, 0, Math.PI * 2); ctx.fill();
 
-    ctx.font = '14px sans-serif';
-    ctx.fillStyle = '#10b981';
-    ctx.fillText('● Player Active • No Cheats Detected • Memory Safe', 640, 400);
+      // Window Body (Game HUD / Viewport)
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(142, 117, 996, 506);
+
+      // Game graphic simulation
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillStyle = '#38bdf8';
+      ctx.textAlign = 'center';
+      ctx.fillText('DOTA 2', 640, 320);
+
+      ctx.font = '16px monospace';
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText(`60 FPS • Ping: 18ms • Match ID: 7892104 • Station: ${this.pcName}`, 640, 360);
+
+      ctx.font = '14px sans-serif';
+      ctx.fillStyle = '#10b981';
+      ctx.fillText('● Player Active • No Cheats Detected • Memory Safe', 640, 400);
+    }
 
     // 3. Desktop Taskbar (Bottom)
     ctx.textAlign = 'left';
@@ -218,8 +262,144 @@ class StationMaintenanceAgent {
       titleSub.innerHTML = `Station ID: <strong style="color:#38bdf8">${this.pcName}</strong> ${this.specs ? `<span style="font-size:0.75rem; color:#64748b; margin-left:8px;">(${this.specs})</span>` : ''}`;
     }
 
+    const lockStationTag = document.getElementById('lock-station-tag');
+    if (lockStationTag) {
+      lockStationTag.innerText = this.pcName;
+    }
+
     if (this.socket && this.isConnected) {
       this.socket.emit('pc:auto-discover', { pcId: this.pcId, name: this.pcName, specs: this.specs });
+    }
+
+    // Initial check from backend public endpoint
+    this.checkInitialStatus();
+  }
+
+  private async checkInitialStatus() {
+    try {
+      const res = await fetch(`${this.apiBase}/api/v1/pcs/public`);
+      if (res.ok) {
+        const json = await res.json();
+        const list = json?.data || [];
+        const current = list.find((p: any) => p.id?.toLowerCase() === this.pcId.toLowerCase() || p.identifier?.toLowerCase() === this.pcName.toLowerCase());
+        if (current) {
+          if (current.status === 'locked') {
+            this.setLockedState(true);
+          } else if (current.status === 'offline') {
+            this.handleShutdown();
+          }
+        }
+      }
+    } catch {}
+  }
+
+  public setLockedState(locked: boolean) {
+    this.isLocked = locked;
+    const lockEl = document.getElementById('lock-overlay');
+    const valKiosk = document.getElementById('val-kiosk');
+
+    if (lockEl) {
+      if (locked) {
+        lockEl.classList.add('visible');
+        this.playChime();
+        this.logMessage(`Station is now LOCKED by Operator.`);
+      } else {
+        lockEl.classList.remove('visible');
+        this.logMessage(`Station UNLOCKED. Desktop restored.`);
+      }
+    }
+
+    if (valKiosk) {
+      valKiosk.innerText = locked ? 'LOCKED' : 'UNLOCKED';
+      valKiosk.style.color = locked ? '#f59e0b' : '#34d399';
+    }
+
+    this.updateStatusBadge(this.isConnected);
+
+    if (desktopWindow.pisonetDesktop?.setLockMode) {
+      desktopWindow.pisonetDesktop.setLockMode(locked).catch(() => {});
+    }
+  }
+
+  public handleRestart() {
+    this.logMessage('Reboot command received. Restarting station...');
+    const powerOverlay = document.getElementById('power-overlay');
+    const powerTitle = document.getElementById('power-title');
+    const powerSub = document.getElementById('power-sub');
+    const powerBtn = document.getElementById('power-btn-wake');
+
+    if (powerOverlay && powerTitle && powerSub) {
+      powerOverlay.classList.add('visible');
+      powerTitle.innerText = '🔄 SYSTEM RESTART INITIATED';
+      powerSub.innerText = 'Ang computer mag-reboot sa pipila ka segundo alang sa system maintenance...';
+      if (powerBtn) powerBtn.style.display = 'none';
+    }
+
+    this.playChime();
+
+    if (desktopWindow.pisonetDesktop?.restartPC) {
+      desktopWindow.pisonetDesktop.restartPC();
+    } else {
+      let count = 4;
+      const interval = setInterval(() => {
+        if (powerSub) powerSub.innerText = `Rebooting in ${count}s...`;
+        count--;
+        if (count < 0) {
+          clearInterval(interval);
+          window.location.reload();
+        }
+      }, 1000);
+    }
+  }
+
+  public handleShutdown() {
+    this.isPoweredOff = true;
+    this.logMessage('Shutdown command received. Station powered off.');
+    const powerOverlay = document.getElementById('power-overlay');
+    const powerTitle = document.getElementById('power-title');
+    const powerSub = document.getElementById('power-sub');
+    const powerBtn = document.getElementById('power-btn-wake');
+
+    if (powerOverlay && powerTitle && powerSub) {
+      powerOverlay.classList.add('visible');
+      powerTitle.innerText = '🛑 STATION POWERED OFF';
+      powerSub.innerText = 'Ang kini nga computer gi-shutdown na sa operator o offline.';
+      if (powerBtn) powerBtn.style.display = 'inline-flex';
+    }
+
+    if (desktopWindow.pisonetDesktop?.shutdownPC) {
+      desktopWindow.pisonetDesktop.shutdownPC(10);
+    }
+  }
+
+  public showAnnouncement(msg: string, sender: string = 'Counter Operator', durationSec: number = 8) {
+    this.playChime();
+    this.logMessage(`[Announcement] ${sender}: "${msg}"`);
+
+    const card = document.getElementById('announcement-card');
+    const senderEl = document.getElementById('announcement-sender');
+    const textEl = document.getElementById('announcement-text');
+
+    if (card && senderEl && textEl) {
+      senderEl.innerText = `📢 PAHIBALO GIKAN SA: ${sender.toUpperCase()}`;
+      textEl.innerText = msg;
+      card.classList.add('visible');
+
+      if (this.announcementTimeout) clearTimeout(this.announcementTimeout);
+      this.announcementTimeout = setTimeout(() => {
+        card.classList.remove('visible');
+      }, durationSec * 1000);
+    }
+  }
+
+  public showToast(msg: string, type: 'info' | 'success' | 'warn' = 'info', durationSec: number = 5) {
+    const toast = document.getElementById('toast-notification');
+    if (toast) {
+      toast.innerText = msg;
+      toast.className = `toast-notification visible ${type}`;
+      setTimeout(() => {
+        toast.className = 'toast-notification';
+      }, durationSec * 1000);
     }
   }
 
@@ -241,6 +421,7 @@ class StationMaintenanceAgent {
         this.socket?.emit('pc:heartbeat', { pcId: this.pcId, telemetry: this.telemetry });
         this.socket?.emit('maintenance:agent:ready', { pcId: this.pcId });
         this.logMessage(`Connected to Artemia Fleet Server (${this.apiBase})`);
+        this.checkInitialStatus();
       });
 
       this.socket.on('disconnect', () => {
@@ -249,9 +430,54 @@ class StationMaintenanceAgent {
         this.logMessage('Disconnected from Fleet Controller. Reconnecting...');
       });
 
+      // 0. Remote Power & Lock Commands Relay
+      this.socket.on('agent:power:run', (payload: { targetPcId?: string; action: string; sender?: string }) => {
+        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId.toLowerCase() !== this.pcId.toLowerCase()) {
+          return;
+        }
+        this.logMessage(`[Power Action] Received: ${payload.action.toUpperCase()} from ${payload.sender || 'Admin'}`);
+
+        if (payload.action === 'lock') {
+          this.setLockedState(true);
+        } else if (payload.action === 'unlock') {
+          this.setLockedState(false);
+        } else if (payload.action === 'restart') {
+          this.handleRestart();
+        } else if (payload.action === 'shutdown') {
+          this.handleShutdown();
+        }
+      });
+
+      // Status Synchronization Listeners
+      this.socket.on('pc:status', (data: { pcId: string; status: string }) => {
+        if (data.pcId === 'all' || data.pcId?.toLowerCase() === this.pcId.toLowerCase()) {
+          this.setLockedState(data.status === 'locked');
+          if (data.status === 'offline') {
+            this.handleShutdown();
+          } else if (this.isPoweredOff && data.status === 'available') {
+            this.isPoweredOff = false;
+            document.getElementById('power-overlay')?.classList.remove('visible');
+          }
+        }
+      });
+
+      this.socket.on('pc:status-changed', (data: { pcId: string; status: string }) => {
+        if (data.pcId === 'all' || data.pcId?.toLowerCase() === this.pcId.toLowerCase()) {
+          this.setLockedState(data.status === 'locked');
+        }
+      });
+
+      // Announcement Messages Relay
+      this.socket.on('pc:announcement', (payload: { targetPcId?: string; message: string; durationSeconds?: number; sender?: string }) => {
+        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId.toLowerCase() !== this.pcId.toLowerCase()) {
+          return;
+        }
+        this.showAnnouncement(payload.message, payload.sender || 'Counter Operator', payload.durationSeconds || 8);
+      });
+
       // 1. Remote Script / Command Execution Relay
       this.socket.on('agent:command:run', async (payload: { id?: string; reqId?: string; command: string; type?: 'powershell' | 'cmd'; shell?: 'powershell' | 'cmd'; targetPcId?: string }) => {
-        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId !== this.pcId) {
+        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId.toLowerCase() !== this.pcId.toLowerCase()) {
           return;
         }
         this.logMessage(`[Remote Command] Executing: ${payload.command.slice(0, 60)}...`);
@@ -274,6 +500,8 @@ class StationMaintenanceAgent {
           res = { output: out, exitCode: 0 };
         }
 
+        this.showToast(`💻 Command Executed: ${payload.command.slice(0, 30)}...`, 'info', 4);
+
         this.socket?.emit('agent:command:result', {
           id: payload.id || payload.reqId,
           reqId: payload.reqId || payload.id,
@@ -291,7 +519,7 @@ class StationMaintenanceAgent {
 
       // 2. Storage & %TEMP% Cleaner Relay
       this.socket.on('agent:clean:run', async (payload: { reqId?: string; targetPcId?: string }) => {
-        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId !== this.pcId) {
+        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId.toLowerCase() !== this.pcId.toLowerCase()) {
           return;
         }
         this.logMessage('Cleaning junk, temporary files, and Recycle Bin...');
@@ -306,7 +534,10 @@ class StationMaintenanceAgent {
           };
         }
 
-        this.logMessage(`Cleanup complete. Freed ${(res.deletedBytes / (1024 * 1024)).toFixed(1)} MB.`);
+        const freedMb = (res.deletedBytes / (1024 * 1024)).toFixed(1);
+        this.logMessage(`Cleanup complete. Freed ${freedMb} MB.`);
+        this.showToast(`🧹 Cleaned Junk: Freed ${freedMb} MB of temp files!`, 'success', 5);
+
         this.socket?.emit('agent:clean:result', {
           reqId: payload.reqId,
           pcId: this.pcId,
@@ -322,10 +553,11 @@ class StationMaintenanceAgent {
       this.socket.on('agent:game:update', async (payload: { gameId?: string; gameKey?: string; command?: string; updateCommand?: string; targetPcId?: string }) => {
         const game = payload.gameId || payload.gameKey || 'game';
         const cmd = payload.command || payload.updateCommand;
-        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId !== this.pcId) {
+        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId.toLowerCase() !== this.pcId.toLowerCase()) {
           return;
         }
         this.logMessage(`[Game Updater] Launching auto-update for ${game.toUpperCase()}...`);
+        this.showToast(`🚀 Auto-Updating ${game.toUpperCase()}...`, 'info', 6);
         let res: { status: string; log: string };
 
         if (desktopWindow.pisonetDesktop) {
@@ -351,7 +583,7 @@ class StationMaintenanceAgent {
 
       // 4. Remote File Browser Relay
       this.socket.on('agent:fs:list:req', async (payload: { reqId?: string; pcId: string; path: string }) => {
-        if (payload.pcId && payload.pcId !== this.pcId) return;
+        if (payload.pcId && payload.pcId.toLowerCase() !== this.pcId.toLowerCase()) return;
         let res: { entries: any[]; error?: string };
         if (desktopWindow.pisonetDesktop) {
           res = await desktopWindow.pisonetDesktop.listFiles(payload.path);
@@ -392,7 +624,7 @@ class StationMaintenanceAgent {
 
       // 5. Remote File Delete Relay
       this.socket.on('agent:fs:delete:req', async (payload: { reqId?: string; pcId: string; path: string }) => {
-        if (payload.pcId && payload.pcId !== this.pcId) return;
+        if (payload.pcId && payload.pcId.toLowerCase() !== this.pcId.toLowerCase()) return;
         this.logMessage(`[File Manager] Deleting: ${payload.path}`);
         let res: { success: boolean; error?: string };
         if (desktopWindow.pisonetDesktop) {
@@ -400,6 +632,7 @@ class StationMaintenanceAgent {
         } else {
           res = { success: true };
         }
+        this.showToast(`🗑️ File Deleted: ${payload.path}`, 'warn', 4);
         this.socket?.emit('agent:fs:delete:res', {
           reqId: payload.reqId,
           pcId: this.pcId,
@@ -411,7 +644,7 @@ class StationMaintenanceAgent {
 
       // 6. Remote Process List Relay
       this.socket.on('agent:process:list:req', async (payload: { reqId?: string; pcId: string }) => {
-        if (payload.pcId && payload.pcId !== this.pcId) return;
+        if (payload.pcId && payload.pcId.toLowerCase() !== this.pcId.toLowerCase()) return;
         let res: { processes: any[]; error?: string };
         if (desktopWindow.pisonetDesktop) {
           res = await desktopWindow.pisonetDesktop.listProcesses();
@@ -430,7 +663,7 @@ class StationMaintenanceAgent {
 
       // 7. Remote Process Kill Relay
       this.socket.on('agent:process:kill:req', async (payload: { reqId?: string; pcId: string; pid?: number; name?: string; target?: string | number }) => {
-        if (payload.pcId && payload.pcId !== this.pcId) return;
+        if (payload.pcId && payload.pcId.toLowerCase() !== this.pcId.toLowerCase()) return;
         const target = payload.pid || payload.name || payload.target;
         this.logMessage(`[Task Manager] Killing process: ${target}`);
         let res: { success: boolean; error?: string };
@@ -440,6 +673,7 @@ class StationMaintenanceAgent {
           this.webProcesses = this.webProcesses.filter(p => p.pid !== target && p.name !== target);
           res = { success: true };
         }
+        this.showToast(`🛑 Process Terminated: ${target}`, 'warn', 4);
         this.socket?.emit('agent:process:kill:res', {
           reqId: payload.reqId,
           pcId: this.pcId,
@@ -452,7 +686,7 @@ class StationMaintenanceAgent {
 
       // 8. Remote Screen Capture Relay
       this.socket.on('agent:screen:req', async (payload: { reqId?: string; pcId: string }) => {
-        if (payload.pcId && payload.pcId !== this.pcId) return;
+        if (payload.pcId && payload.pcId.toLowerCase() !== this.pcId.toLowerCase()) return;
         let base64 = '';
         let err: string | undefined;
 
@@ -515,8 +749,13 @@ class StationMaintenanceAgent {
   private updateStatusBadge(online: boolean) {
     const badge = document.getElementById('status-pill');
     if (badge) {
-      badge.className = online ? 'status-pill online' : 'status-pill offline';
-      badge.innerText = online ? '● FLEET CONNECTED' : '○ CONNECTING...';
+      if (this.isLocked) {
+        badge.className = 'status-pill locked';
+        badge.innerText = '🔒 MAINTENANCE LOCKED';
+      } else {
+        badge.className = online ? 'status-pill online' : 'status-pill offline';
+        badge.innerText = online ? '● FLEET CONNECTED' : '○ CONNECTING...';
+      }
     }
   }
 
@@ -538,6 +777,7 @@ class StationMaintenanceAgent {
         .station-header {
           display: flex; align-items: center; justify-content: space-between;
           padding: 18px 28px; background: rgba(15, 23, 42, 0.85); border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          position: relative; z-index: 10;
         }
         .station-branding { display: flex; align-items: center; gap: 14px; }
         .logo-box {
@@ -553,6 +793,7 @@ class StationMaintenanceAgent {
         }
         .status-pill.online { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
         .status-pill.offline { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+        .status-pill.locked { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.5); }
         .btn-minimize {
           background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15);
           color: #e2e8f0; padding: 6px 14px; border-radius: 8px; font-size: 0.8rem; font-weight: 700; cursor: pointer;
@@ -560,7 +801,7 @@ class StationMaintenanceAgent {
         .btn-minimize:hover { background: rgba(255, 255, 255, 0.15); }
         
         .station-body {
-          flex: 1; padding: 28px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto;
+          flex: 1; padding: 28px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; position: relative; z-index: 1;
         }
         .banner-notice {
           background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.25); border-radius: 12px;
@@ -594,8 +835,106 @@ class StationMaintenanceAgent {
           padding: 10px 18px; border-radius: 10px; font-size: 0.85rem; font-weight: 700; cursor: pointer;
         }
         .btn-action:hover { background: rgba(51, 65, 85, 0.8); color: #fff; }
+
+        /* FULL SCREEN LOCK OVERLAY */
+        .lock-overlay {
+          position: fixed; inset: 0; z-index: 99999;
+          background: radial-gradient(circle at center, rgba(30, 27, 75, 0.98) 0%, rgba(9, 13, 22, 0.99) 70%, #030712 100%);
+          display: none; flex-direction: column; align-items: center; justify-content: center;
+          text-align: center; padding: 32px; backdrop-filter: blur(20px);
+          animation: fadeIn 0.3s ease;
+        }
+        .lock-overlay.visible { display: flex; }
+        .lock-icon-box {
+          width: 96px; height: 96px; border-radius: 24px;
+          background: rgba(245, 158, 11, 0.15); border: 2px solid rgba(245, 158, 11, 0.5);
+          display: flex; align-items: center; justify-content: center; font-size: 3rem;
+          margin-bottom: 24px; box-shadow: 0 0 40px rgba(245, 158, 11, 0.35);
+          animation: pulseGlow 2s infinite ease-in-out;
+        }
+        .lock-title { font-size: 2.2rem; font-weight: 900; letter-spacing: 1px; color: #fff; margin-bottom: 12px; }
+        .lock-subtitle { font-size: 1.05rem; color: #cbd5e1; max-width: 580px; line-height: 1.6; margin-bottom: 24px; }
+        .lock-station-pill {
+          background: #111827; border: 1px solid #374151; padding: 8px 20px; border-radius: 9999px;
+          font-size: 0.85rem; font-weight: 700; color: #38bdf8; display: inline-flex; align-items: center; gap: 8px;
+        }
+
+        /* POWER OVERLAY (RESTART / SHUTDOWN) */
+        .power-overlay {
+          position: fixed; inset: 0; z-index: 100000;
+          background: #020617; display: none; flex-direction: column; align-items: center; justify-content: center;
+          text-align: center; padding: 32px;
+        }
+        .power-overlay.visible { display: flex; }
+        .power-title { font-size: 2rem; font-weight: 900; color: #f43f5e; margin-bottom: 12px; }
+        .power-sub { font-size: 1.1rem; color: #94a3b8; max-width: 540px; margin-bottom: 24px; line-height: 1.6; }
+
+        /* FLOATING ANNOUNCEMENT CARD */
+        .announcement-card {
+          position: fixed; top: -120px; left: 50%; transform: translateX(-50%); z-index: 100001;
+          background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.98));
+          border: 2px solid #06b6d4; box-shadow: 0 10px 40px rgba(6, 182, 212, 0.45);
+          border-radius: 14px; padding: 18px 28px; max-width: 640px; width: 90%;
+          transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: none; opacity: 0;
+        }
+        .announcement-card.visible { top: 24px; opacity: 1; pointer-events: auto; }
+        .announcement-sender { font-size: 0.78rem; text-transform: uppercase; font-weight: 800; color: #38bdf8; margin-bottom: 6px; }
+        .announcement-text { font-size: 1.15rem; font-weight: 700; color: #fff; line-height: 1.5; }
+
+        /* FLOATING TOAST NOTIFICATION */
+        .toast-notification {
+          position: fixed; bottom: -80px; right: 28px; z-index: 100002;
+          background: #0f172a; border: 1px solid #334155; color: #fff;
+          padding: 12px 20px; border-radius: 10px; font-size: 0.88rem; font-weight: 700;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6); transition: all 0.3s ease; opacity: 0;
+        }
+        .toast-notification.visible { bottom: 28px; opacity: 1; }
+        .toast-notification.success { border-color: #10b981; color: #34d399; }
+        .toast-notification.warn { border-color: #f59e0b; color: #fbbf24; }
+        .toast-notification.info { border-color: #06b6d4; color: #38bdf8; }
+
+        @keyframes pulseGlow {
+          0%, 100% { transform: scale(1); box-shadow: 0 0 30px rgba(245, 158, 11, 0.35); }
+          50% { transform: scale(1.05); box-shadow: 0 0 50px rgba(245, 158, 11, 0.6); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; } to { opacity: 1; }
+        }
       </style>
 
+      <!-- FLOATING ANNOUNCEMENT BANNER -->
+      <div id="announcement-card" class="announcement-card">
+        <div id="announcement-sender" class="announcement-sender">📢 PAHIBALO GIKAN SA COUNTER</div>
+        <div id="announcement-text" class="announcement-text">Palihog hinay-hinay sa keyboard ug mouse.</div>
+      </div>
+
+      <!-- FLOATING TOAST NOTIFICATION -->
+      <div id="toast-notification" class="toast-notification"></div>
+
+      <!-- FULL SCREEN LOCK OVERLAY -->
+      <div id="lock-overlay" class="lock-overlay">
+        <div class="lock-icon-box">🔒</div>
+        <div class="lock-title">STATION MAINTENANCE LOCKED</div>
+        <div class="lock-subtitle">
+          Ang kini nga computer temporaryong gi-lock sa administrator alang sa system maintenance, storage cleaning, o game updates. Palihog paabuta nga i-unlock sa counter.
+        </div>
+        <div class="lock-station-pill">
+          <span>🖥️ Terminal Station:</span>
+          <span id="lock-station-tag" style="color:#fff; font-weight:900;">${this.pcName}</span>
+          <span style="color:#f59e0b; margin-left:8px;">● LOCKED</span>
+        </div>
+      </div>
+
+      <!-- POWER OVERLAY (REBOOT / SHUTDOWN) -->
+      <div id="power-overlay" class="power-overlay">
+        <div id="power-title" class="power-title">🛑 STATION POWERED OFF</div>
+        <div id="power-sub" class="power-sub">Ang kini nga computer gi-shutdown na sa operator.</div>
+        <button id="power-btn-wake" class="btn-action" style="display:none; background:#0284c7; color:#fff;" onclick="window.location.reload()">
+          🔌 Power On Station (Wake Up)
+        </button>
+      </div>
+
+      <!-- NORMAL CLIENT TERMINAL VIEW -->
       <div class="station-header">
         <div class="station-branding">
           <div class="logo-box">AF</div>
@@ -613,7 +952,7 @@ class StationMaintenanceAgent {
       <div class="station-body">
         <div class="banner-notice">
           <div class="banner-text">
-            🛡️ <strong>Maintenance & Remote Control Active:</strong> Timer lockscreen is completely removed. Full desktop and game access is unlocked. Admin can push game updates, delete files, and run maintenance remotely without interrupting user play.
+            🛡️ <strong>Maintenance & Remote Control Active:</strong> Full remote access enabled. Admin can lock station for maintenance, clean temp files, dispatch game updates, and run scripts in real-time.
           </div>
         </div>
 
@@ -632,7 +971,7 @@ class StationMaintenanceAgent {
           </div>
           <div class="stat-card">
             <div class="stat-label">Kiosk State</div>
-            <div class="stat-val" style="color:#34d399; font-size:1.3rem;">UNLOCKED</div>
+            <div id="val-kiosk" class="stat-val" style="color:#34d399; font-size:1.3rem;">UNLOCKED</div>
           </div>
         </div>
 
@@ -656,14 +995,17 @@ class StationMaintenanceAgent {
       if (desktopWindow.pisonetDesktop) {
         this.logMessage('Running local temp clean...');
         const res = await desktopWindow.pisonetDesktop.cleanTemp();
-        this.logMessage(`Freed ${(res.deletedBytes / (1024 * 1024)).toFixed(1)} MB.`);
+        const freed = (res.deletedBytes / (1024 * 1024)).toFixed(1);
+        this.logMessage(`Freed ${freed} MB.`);
+        this.showToast(`🧹 Freed ${freed} MB junk files!`, 'success');
       } else {
         this.logMessage('Cleaned simulated browser cache.');
+        this.showToast('🧹 Cleaned simulated browser cache.', 'success');
       }
     });
 
     document.getElementById('btn-change-id')?.addEventListener('click', () => {
-      const next = prompt('Enter new PC Station ID (e.g. pc-01, pc-02):', this.pcId);
+      const next = prompt('Enter new PC Station ID (e.g. pc-01, pc-laptop):', this.pcId);
       if (next && next.trim()) {
         localStorage.setItem('artemia_station_id', next.trim().toLowerCase());
         window.location.reload();
