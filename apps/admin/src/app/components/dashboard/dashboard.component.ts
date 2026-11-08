@@ -786,6 +786,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   constructor(public adminState: AdminStateService) {}
 
   ngOnInit() {
+    this.adminState.syncFromBackend();
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
     });
