@@ -299,39 +299,40 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     authSocket.on('disconnect', () => {
-      if (pcId && io) {
+      const targetPcId = authSocket.data.pcId || pcId;
+      if (targetPcId && io) {
         setTimeout(async () => {
           if (!io) return;
-          const roomSockets = io.sockets.adapter.rooms.get(`pc:${pcId}`)?.size || 0;
+          const roomSockets = io.sockets.adapter.rooms.get(`pc:${targetPcId}`)?.size || 0;
           if (roomSockets === 0) {
-            console.log(`[Socket] PC ${pcId} disconnected with 0 active connections. Transitioning to offline.`);
+            console.log(`[Socket] PC ${targetPcId} disconnected with 0 active connections. Transitioning to offline.`);
             try {
               const { getCollections } = await import('../database/connection');
               const collections = getCollections();
-              const pc = await collections.pcs.findOne({ id: pcId });
+              const pc = await collections.pcs.findOne({ id: targetPcId });
               if (pc) {
                 // If PC was toggled by staff in the last 10 seconds, preserve the staff action
                 const recentlyUpdated = pc.updatedAt && (Date.now() - new Date(pc.updatedAt).getTime() < 10000);
                 if (recentlyUpdated && pc.status === 'available') {
-                  console.log(`[Socket] PC ${pcId} was recently set to available by staff. Keeping station available.`);
+                  console.log(`[Socket] PC ${targetPcId} was recently set to available by staff. Keeping station available.`);
                   return;
                 }
 
                 if (pc.activeSessionId) {
-                  console.log(`[Socket] Auto-pausing active session ${pc.activeSessionId} on disconnected PC ${pcId}`);
+                  console.log(`[Socket] Auto-pausing active session ${pc.activeSessionId} on disconnected PC ${targetPcId}`);
                   await SessionService.pauseSession(pc.activeSessionId, 'system', 'system', undefined, undefined, 'offline');
                 } else {
                   await collections.pcs.updateOne(
-                    { id: pcId },
+                    { id: targetPcId },
                     { $set: { connectionState: 'disconnected', status: 'offline', updatedAt: new Date() } }
                   );
-                  broadcastRealtimeEvent('pc:status-changed', { pcId, status: 'offline', activeCustomerName: null });
-                  broadcastRealtimeEvent('pc:status', { pcId, status: 'offline' });
+                  broadcastRealtimeEvent('pc:status-changed', { pcId: targetPcId, status: 'offline', activeCustomerName: null });
+                  broadcastRealtimeEvent('pc:status', { pcId: targetPcId, status: 'offline' });
                   broadcastRealtimeEvent('pc:updated', { ...pc, status: 'offline', connectionState: 'disconnected' });
                 }
               }
             } catch (err) {
-              console.warn('[Socket] Disconnect handling error for PC:', pcId, err);
+              console.warn('[Socket] Disconnect handling error for PC:', targetPcId, err);
             }
           }
         }, 2000);
