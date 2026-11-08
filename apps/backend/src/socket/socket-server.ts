@@ -109,12 +109,116 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       PcService.recordHeartbeat(pcId).catch(() => {});
     }
 
-    // PC Terminal Heartbeat Event
-    authSocket.on('pc:heartbeat', async (data: { pcId: string }) => {
+    // PC Terminal Heartbeat Event & Telemetry
+    authSocket.on('pc:heartbeat', async (data: { pcId: string; telemetry?: any }) => {
       const targetId = pcId || data?.pcId;
       if (targetId) {
         await PcService.recordHeartbeat(targetId);
+        if (data?.telemetry) {
+          try {
+            const { getCollections } = await import('../database/connection');
+            const collections = getCollections();
+            await collections.pcs.updateOne(
+              { id: targetId },
+              {
+                $set: {
+                  cpuPercent: data.telemetry.cpuPercent,
+                  ramPercent: data.telemetry.ramPercent,
+                  diskUsage: data.telemetry.diskUsage,
+                  activeApp: data.telemetry.activeApp,
+                  uptimeSeconds: data.telemetry.uptimeSeconds,
+                  updatedAt: new Date()
+                }
+              }
+            );
+            broadcastRealtimeEvent('pc:telemetry', { pcId: targetId, ...data.telemetry }, 'staff');
+          } catch {}
+        }
       }
+    });
+
+    // Remote Maintenance & Shell Execution Relays
+    authSocket.on('maintenance:command:run', (payload: any) => {
+      const target = payload.targetPcId || 'fleet';
+      const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
+      io?.to(room).emit('agent:command:run', payload);
+    });
+
+    authSocket.on('agent:command:result', (result: any) => {
+      io?.to('staff').emit('maintenance:command:result', result);
+    });
+
+    authSocket.on('maintenance:clean:run', (payload: any) => {
+      const target = payload.targetPcId || 'fleet';
+      const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
+      io?.to(room).emit('agent:clean:run', payload);
+    });
+
+    authSocket.on('agent:clean:result', (result: any) => {
+      io?.to('staff').emit('maintenance:clean:result', result);
+    });
+
+    authSocket.on('maintenance:game:update', (payload: any) => {
+      const target = payload.targetPcId || 'fleet';
+      const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
+      io?.to(room).emit('agent:game:update', payload);
+    });
+
+    authSocket.on('agent:game:status', (status: any) => {
+      io?.to('staff').emit('maintenance:game:status', status);
+    });
+
+    // Remote File Manager Relays
+    authSocket.on('maintenance:fs:list:req', (payload: any) => {
+      if (payload.pcId) {
+        io?.to(`pc:${payload.pcId}`).emit('agent:fs:list:req', payload);
+      }
+    });
+
+    authSocket.on('agent:fs:list:res', (payload: any) => {
+      io?.to('staff').emit('maintenance:fs:list:res', payload);
+    });
+
+    authSocket.on('maintenance:fs:delete:req', (payload: any) => {
+      if (payload.pcId) {
+        io?.to(`pc:${payload.pcId}`).emit('agent:fs:delete:req', payload);
+      }
+    });
+
+    authSocket.on('agent:fs:delete:res', (payload: any) => {
+      io?.to('staff').emit('maintenance:fs:delete:res', payload);
+    });
+
+    // Remote Process Manager Relays
+    authSocket.on('maintenance:process:list:req', (payload: any) => {
+      if (payload.pcId) {
+        io?.to(`pc:${payload.pcId}`).emit('agent:process:list:req', payload);
+      }
+    });
+
+    authSocket.on('agent:process:list:res', (payload: any) => {
+      io?.to('staff').emit('maintenance:process:list:res', payload);
+    });
+
+    authSocket.on('maintenance:process:kill:req', (payload: any) => {
+      if (payload.pcId) {
+        io?.to(`pc:${payload.pcId}`).emit('agent:process:kill:req', payload);
+      }
+    });
+
+    authSocket.on('agent:process:kill:res', (payload: any) => {
+      io?.to('staff').emit('maintenance:process:kill:res', payload);
+    });
+
+    // Remote Screen Capture Relays
+    authSocket.on('maintenance:screen:req', (payload: any) => {
+      if (payload.pcId) {
+        io?.to(`pc:${payload.pcId}`).emit('agent:screen:req', payload);
+      }
+    });
+
+    authSocket.on('agent:screen:res', (payload: any) => {
+      io?.to('staff').emit('maintenance:screen:res', payload);
     });
 
     // Active Session Lease Renewal Heartbeat

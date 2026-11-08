@@ -6,17 +6,22 @@ export interface PisonetDesktopApi {
   minimize: () => Promise<void>;
   maximize: () => Promise<void>;
   close: () => Promise<void>;
-  lockScreen: () => Promise<void>;
-  unlockGameplayOverlay: () => Promise<void>;
-  toggleCompactMode: (enable: boolean) => Promise<boolean>;
   getSystemInfo: () => Promise<{ platform: string; version: string; hostname: string; isElectron: boolean }>;
   setAutoStart: (enable: boolean) => Promise<boolean>;
   shutdownPC: (timeoutSeconds?: number) => Promise<boolean>;
+  restartPC: () => Promise<boolean>;
   cancelShutdown: () => Promise<boolean>;
-  restoreWindow: () => Promise<void>;
-  setOverlaySize: (width: number, height: number) => Promise<boolean>;
-  showAnnouncement: (durationSeconds?: number) => Promise<boolean>;
-  hideAnnouncement: () => Promise<boolean>;
+
+  // Maintenance Agent Native APIs
+  executeCommand: (command: string, type: 'powershell' | 'cmd') => Promise<{ output: string; exitCode: number; error?: string }>;
+  cleanTemp: () => Promise<{ deletedBytes: number; cleanedPaths: string[]; error?: string }>;
+  updateGame: (gameId: string, command?: string) => Promise<{ status: string; log: string }>;
+  listFiles: (targetPath: string) => Promise<{ entries: any[]; error?: string }>;
+  deletePath: (targetPath: string) => Promise<{ success: boolean; error?: string }>;
+  listProcesses: () => Promise<{ processes: any[]; error?: string }>;
+  killProcess: (pid?: number, name?: string) => Promise<{ success: boolean; error?: string }>;
+  captureScreen: () => Promise<{ base64Image: string; error?: string }>;
+  getDiskDrives: () => Promise<{ drives: any[] }>;
 }
 
 const api: PisonetDesktopApi = {
@@ -25,18 +30,22 @@ const api: PisonetDesktopApi = {
   minimize: () => ipcRenderer.invoke('window:minimize'),
   maximize: () => ipcRenderer.invoke('window:maximize'),
   close: () => ipcRenderer.invoke('window:close'),
-  lockScreen: () => ipcRenderer.invoke('window:lock'),
-  unlockGameplayOverlay: () => ipcRenderer.invoke('window:unlock-gameplay'),
-  toggleCompactMode: (enable: boolean) => ipcRenderer.invoke('window:toggle-compact-mode', enable),
   getSystemInfo: () => ipcRenderer.invoke('system:get-info'),
   setAutoStart: (enable: boolean) => ipcRenderer.invoke('system:set-autostart', enable),
   shutdownPC: (timeoutSeconds?: number) => ipcRenderer.invoke('system:shutdown', timeoutSeconds),
+  restartPC: () => ipcRenderer.invoke('system:restart'),
   cancelShutdown: () => ipcRenderer.invoke('system:cancel-shutdown'),
-  restoreWindow: () => ipcRenderer.invoke('window:restore'),
-  setOverlaySize: (width: number, height: number) => ipcRenderer.invoke('window:set-overlay-size', width, height),
-  showAnnouncement: (durationSeconds?: number) => ipcRenderer.invoke('window:show-announcement', durationSeconds),
-  hideAnnouncement: () => ipcRenderer.invoke('window:hide-announcement')
+
+  // Maintenance APIs
+  executeCommand: (command, type) => ipcRenderer.invoke('maintenance:execute-command', command, type),
+  cleanTemp: () => ipcRenderer.invoke('maintenance:clean-temp'),
+  updateGame: (gameId, command) => ipcRenderer.invoke('maintenance:update-game', gameId, command),
+  listFiles: (targetPath) => ipcRenderer.invoke('maintenance:list-files', targetPath),
+  deletePath: (targetPath) => ipcRenderer.invoke('maintenance:delete-path', targetPath),
+  listProcesses: () => ipcRenderer.invoke('maintenance:list-processes'),
+  killProcess: (pid, name) => ipcRenderer.invoke('maintenance:kill-process', pid, name),
+  captureScreen: () => ipcRenderer.invoke('maintenance:capture-screen'),
+  getDiskDrives: () => ipcRenderer.invoke('maintenance:get-disk-drives')
 };
 
 contextBridge.exposeInMainWorld('pisonetDesktop', api);
-

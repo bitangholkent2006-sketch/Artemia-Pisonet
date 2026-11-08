@@ -2,6 +2,7 @@
 export * from './models/user.model';
 export * from './models/customer.model';
 export * from './models/pc.model';
+export * from './models/maintenance.model';
 export * from './models/session.model';
 export * from './models/pricing.model';
 export * from './models/payment.model';

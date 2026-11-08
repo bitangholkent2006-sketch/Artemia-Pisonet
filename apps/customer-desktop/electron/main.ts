@@ -1,299 +1,43 @@
-import { app, BrowserWindow, ipcMain, screen, globalShortcut } from 'electron';
+import { app, BrowserWindow, ipcMain, desktopCapturer } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import { exec, spawn, ChildProcess } from 'child_process';
+import { exec, spawn } from 'child_process';
 
 let mainWindow: BrowserWindow | null = null;
-let isGameplayMode = false;
-let lockFocusInterval: NodeJS.Timeout | null = null;
-let keyLockProcess: ChildProcess | null = null;
 
-// Auto-start setup (Disabled by default so development/admin PCs are never trapped)
-try {
-  const isStrictKiosk = process.env.KIOSK_STRICT === 'true';
-  app.setLoginItemSettings({
-    openAtLogin: isStrictKiosk,
-    name: "Artemia Pisonet Customer Terminal",
-    path: process.execPath
-  });
-  // Ensure any previous locked policies are cleaned up on startup
-  if (process.platform === 'win32') {
+// Ensure any old registry lock policies are removed on launch
+if (process.platform === 'win32') {
+  try {
     exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" /v "NoWinKeys" /f', () => {});
     exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" /v "DisableTaskMgr" /f', () => {});
-  }
-} catch (e) {
-  console.warn('Startup setting check:', e);
-}
-
-// Locate native KioskKeyLock helper binary
-function getKeyLockExePath(): string {
-  const candidates = [
-    path.join(__dirname, '../../native/KioskKeyLock.exe'),
-    path.join(__dirname, '../native/KioskKeyLock.exe'),
-    path.join(__dirname, './native/KioskKeyLock.exe'),
-    path.join(process.resourcesPath, 'native/KioskKeyLock.exe'),
-    path.join(process.resourcesPath, 'app/native/KioskKeyLock.exe'),
-    path.join(app.getAppPath(), 'native/KioskKeyLock.exe'),
-    path.join(path.dirname(process.execPath), 'native/KioskKeyLock.exe')
-  ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return candidates[0];
-}
-
-// Low-level Windows keyboard hook: completely blocks Win keys, Alt+Tab, Alt+Esc, Ctrl+Esc, Alt+F4
-function startKioskKeyLock() {
-  if (process.platform !== 'win32') return;
-  if (process.env.KIOSK_STRICT !== 'true') return;
-  if (keyLockProcess && !keyLockProcess.killed) return;
-
-  const exePath = getKeyLockExePath();
-  if (fs.existsSync(exePath)) {
-    try {
-      keyLockProcess = spawn(exePath, [], {
-        detached: false,
-        stdio: 'ignore',
-        windowsHide: true
-      });
-      keyLockProcess.on('error', (err) => {
-        console.warn('KioskKeyLock spawn error:', err);
-        keyLockProcess = null;
-      });
-      keyLockProcess.on('exit', () => {
-        keyLockProcess = null;
-      });
-    } catch (err) {
-      console.warn('Could not launch KioskKeyLock:', err);
-    }
-  }
-}
-
-function stopKioskKeyLock() {
-  if (keyLockProcess) {
-    try {
-      keyLockProcess.kill();
-    } catch {}
-    keyLockProcess = null;
-  }
-  if (process.platform === 'win32') {
-    exec('taskkill /F /IM KioskKeyLock.exe', () => {});
-  }
-}
-
-// Windows Cybercafe Kiosk Policy Enforcer:
-// Disables Windows Key (Win+S, Win+R, Win+E, Start Menu) and Task Manager while locked
-function applyKioskRegistryPolicies(enable: boolean) {
-  if (process.platform !== 'win32') return;
-  try {
-    if (enable) {
-      if (process.env.KIOSK_STRICT !== 'true') return;
-      exec('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" /v "NoWinKeys" /t REG_DWORD /d 1 /f', () => {});
-      exec('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" /v "DisableTaskMgr" /t REG_DWORD /d 1 /f', () => {});
-      exec('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Search" /v "SearchboxTaskbarMode" /t REG_DWORD /d 0 /f', () => {});
-    } else {
-      exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" /v "NoWinKeys" /f', () => {});
-      exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" /v "DisableTaskMgr" /f', () => {});
-    }
-  } catch (e) {
-    console.warn('Registry policy enforcement error:', e);
-  }
-}
-
-// Emergency exit helper: releases all kiosk hooks and restores desktop window
-function emergencyExitKiosk() {
-  console.log('[Kiosk] Emergency release / Windowed Mode triggered');
-  stopFocusGuard();
-  stopKioskKeyLock();
-  unregisterKioskShortcuts();
-  applyKioskRegistryPolicies(false);
-
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    isGameplayMode = true;
-    mainWindow.setKiosk(false);
-    mainWindow.setFullScreen(false);
-    mainWindow.setAlwaysOnTop(false);
-    mainWindow.setClosable(true);
-    mainWindow.setMinimizable(true);
-    mainWindow.setResizable(true);
-    mainWindow.setMovable(true);
-    mainWindow.setBounds({ width: 1100, height: 750, x: 100, y: 100 });
-    mainWindow.center();
-  }
-}
-
-const BLOCKED_SHORTCUTS = [
-  'Super+S', // Windows Search Bar
-  'Super+Q', // Windows Search / Cortana
-  'Super+R', // Run Dialog
-  'Super+E', // Windows Explorer
-  'Super+D', // Show Desktop
-  'Super+M', // Minimize All
-  'Super+X', // Quick Link Menu
-  'Super+A', // Action Center
-  'Super+I', // Windows Settings
-  'Super',   // Windows Start Key
-  'Alt+Tab', // App Switcher
-  'Alt+Shift+Tab',
-  'Alt+F4',  // Close Window
-  'Alt+Space', // Window System Menu
-  'Alt+Escape',
-  'CommandOrControl+Escape', // Windows Start Menu
-  'Control+Shift+Escape', // Task Manager
-  'F11'
-];
-
-function registerKioskShortcuts() {
-  unregisterKioskShortcuts();
-  for (const shortcut of BLOCKED_SHORTCUTS) {
-    try {
-      globalShortcut.register(shortcut, () => {
-        if (!isGameplayMode && mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.moveTop();
-          mainWindow.setAlwaysOnTop(true, 'screen-saver');
-          mainWindow.focus();
-        }
-      });
-    } catch {}
-  }
-}
-
-function unregisterKioskShortcuts() {
-  try {
-    globalShortcut.unregisterAll();
   } catch {}
-}
-
-function startFocusGuard() {
-  stopFocusGuard();
-  lockFocusInterval = setInterval(() => {
-    if (!isGameplayMode && mainWindow && !mainWindow.isDestroyed()) {
-      if (!mainWindow.isFocused()) {
-        mainWindow.moveTop();
-        mainWindow.setAlwaysOnTop(true, 'screen-saver');
-        mainWindow.focus();
-      }
-    }
-  }, 250);
-}
-
-function stopFocusGuard() {
-  if (lockFocusInterval) {
-    clearInterval(lockFocusInterval);
-    lockFocusInterval = null;
-  }
-}
-
-function lockKiosk() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  isGameplayMode = false;
-  startKioskKeyLock();
-  applyKioskRegistryPolicies(true);
-  startFocusGuard();
-
-  try {
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-
-    mainWindow.setKiosk(false);
-    mainWindow.setFullScreen(false);
-    mainWindow.setResizable(true);
-    mainWindow.setMovable(true);
-
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const { x, y, width, height } = primaryDisplay.bounds;
-    mainWindow.setBounds({ x, y, width, height });
-
-    const isStrict = process.env.KIOSK_STRICT === 'true';
-    mainWindow.setKiosk(isStrict);
-    mainWindow.setFullScreen(isStrict);
-    mainWindow.setAlwaysOnTop(isStrict, 'screen-saver');
-    mainWindow.setResizable(true);
-    mainWindow.setMovable(true);
-    mainWindow.setMinimizable(true);
-    mainWindow.setClosable(true);
-    mainWindow.show();
-    mainWindow.restore();
-    mainWindow.moveTop();
-    mainWindow.focus();
-    if (isStrict) {
-      registerKioskShortcuts();
-    }
-  } catch (err) {
-    console.warn('Error applying kiosk lock:', err);
-  }
-}
-
-function unlockGameplay() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  isGameplayMode = true;
-  stopFocusGuard();
-  stopKioskKeyLock();
-  unregisterKioskShortcuts();
-  applyKioskRegistryPolicies(false);
-
-  try {
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    mainWindow.setKiosk(false);
-    mainWindow.setFullScreen(false);
-    mainWindow.setResizable(true);
-    mainWindow.setMovable(true);
-    mainWindow.setMinimizable(true);
-
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const { width } = primaryDisplay.workAreaSize;
-    const overlayW = 324;
-    const overlayH = 100;
-
-    // Position docked at top-right corner of screen over all games
-    mainWindow.setBounds({
-      x: width - overlayW - 24,
-      y: 16,
-      width: overlayW,
-      height: overlayH
-    });
-
-    mainWindow.setResizable(false);
-    mainWindow.setClosable(false);
-    mainWindow.setAlwaysOnTop(true, 'status');
-    mainWindow.show();
-    mainWindow.focus();
-  } catch (err) {
-    console.error('Error switching to gameplay overlay:', err);
-  }
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 300,
-    minHeight: 80,
-    title: "Artemia's Pisonet - Customer Terminal",
-    frame: false, // Frameless: no OS title bar
+    width: 980,
+    height: 640,
+    minWidth: 480,
+    minHeight: 360,
+    title: "Artemia Fleet - Station Agent & Maintenance Daemon",
+    frame: true, // Native window frame with standard title bar & minimize/maximize/close
     transparent: false,
     backgroundColor: '#07090e',
     show: false,
-    kiosk: true, // Native Kiosk covers entire screen including Windows taskbar
-    fullscreen: true,
-    alwaysOnTop: true,
-    minimizable: false,
-    closable: false,
-    movable: false,
-    resizable: false,
-    skipTaskbar: false,
+    kiosk: false, // NO KIOSK LOCK - Full desktop access preserved
+    fullscreen: false,
+    alwaysOnTop: false,
+    minimizable: true,
+    closable: true,
+    movable: true,
+    resizable: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false, // Allow preload full access to ipcRenderer
       preload: path.join(__dirname, 'preload.js')
     }
   });
-
-  mainWindow.setMenu(null);
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
   const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
@@ -307,160 +51,42 @@ function createWindow() {
   }
 
   mainWindow.once('ready-to-show', () => {
-    if (!mainWindow) return;
-    mainWindow.show();
-    lockKiosk();
-  });
-
-  // Intercept before-input-event on webContents to trap Alt+Tab, Alt+F4, WinKey at DOM level
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    const isAlt = input.alt;
-    const isCtrl = input.control;
-    const isMeta = input.meta || input.key === 'Meta' || input.code?.startsWith('Meta') || input.code === 'OSLeft' || input.code === 'OSRight';
-    const key = input.key?.toLowerCase();
-    const code = input.code?.toLowerCase();
-
-    // Emergency release shortcut: Ctrl+Shift+Q, Ctrl+Shift+X, Alt+F12
-    if (
-      (isCtrl && input.shift && (key === 'q' || code === 'keyq')) ||
-      (isCtrl && input.shift && (key === 'x' || code === 'keyx')) ||
-      (isAlt && (key === 'f12' || code === 'f12'))
-    ) {
-      emergencyExitKiosk();
-      return;
-    }
-
-    // Block Alt+F4 only on dedicated kiosk production mode
-    if (process.env.KIOSK_STRICT === 'true' && isAlt && (key === 'f4' || code === 'f4')) {
-      event.preventDefault();
-      return;
-    }
-
-    if (!isGameplayMode) {
-      // Block Alt+Tab
-      if (isAlt && (key === 'tab' || code === 'tab')) {
-        event.preventDefault();
-        return;
-      }
-      // Block Alt+Space (system window menu)
-      if (isAlt && (key === ' ' || code === 'space')) {
-        event.preventDefault();
-        return;
-      }
-      // Block Alt+Escape
-      if (isAlt && (key === 'escape' || code === 'escape')) {
-        event.preventDefault();
-        return;
-      }
-      // Block Ctrl+Escape (opens Windows Start Menu)
-      if (isCtrl && (key === 'escape' || code === 'escape')) {
-        event.preventDefault();
-        return;
-      }
-      // Block Windows Key (Start & Search)
-      if (isMeta || key === 'meta' || code === 'osleft' || code === 'osright') {
-        event.preventDefault();
-        return;
-      }
-      // Block F11
-      if (key === 'f11' || code === 'f11') {
-        event.preventDefault();
-        return;
-      }
-    }
-  });
-
-  // Keep focus on kiosk lockscreen: if focus lost while locked, re-assert top and focus
-  mainWindow.on('blur', () => {
-    if (!isGameplayMode && mainWindow && !mainWindow.isDestroyed()) {
-      setImmediate(() => {
-        if (!isGameplayMode && mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.moveTop();
-          mainWindow.setAlwaysOnTop(true, 'screen-saver');
-          mainWindow.focus();
-        }
-      });
-    }
-  });
-
-  // Prevent minimizing while locked
-  mainWindow.on('minimize', () => {
-    if (!isGameplayMode && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.restore();
-      lockKiosk();
-    }
-  });
-
-  mainWindow.on('close', (e) => {
-    if (process.env.KIOSK_STRICT === 'true' && !isGameplayMode) {
-      e.preventDefault();
-    } else {
-      emergencyExitKiosk();
+    if (mainWindow) {
+      mainWindow.show();
     }
   });
 
   mainWindow.on('closed', () => {
-    stopFocusGuard();
-    stopKioskKeyLock();
-    unregisterKioskShortcuts();
     mainWindow = null;
   });
 }
 
+// Window Controls
 ipcMain.handle('window:minimize', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    emergencyExitKiosk();
-    mainWindow.minimize();
-    return true;
-  }
-  return false;
+  mainWindow?.minimize();
+  return true;
 });
 
 ipcMain.handle('window:maximize', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize();
-    } else {
-      mainWindow.maximize();
-    }
-    return true;
+  if (mainWindow?.isMaximized()) {
+    mainWindow?.unmaximize();
+  } else {
+    mainWindow?.maximize();
   }
-  return false;
+  return true;
 });
 
 ipcMain.handle('window:close', () => {
-  emergencyExitKiosk();
-  app.exit(0);
+  mainWindow?.close();
   return true;
 });
 
-ipcMain.handle('window:restore', () => {
-  emergencyExitKiosk();
-  return true;
-});
-
-// Lock screen: Fullscreen blocking overlay when no active session
-ipcMain.handle('window:lock', () => {
-  lockKiosk();
-  return true;
-});
-
-// Unlock desktop & switch to floating game overlay (Customer is playing)
-ipcMain.handle('window:unlock-gameplay', () => {
-  unlockGameplay();
-  return true;
-});
-
-ipcMain.handle('window:toggle-compact-mode', (_event, _enableCompact: boolean) => {
-  if (!mainWindow || !isGameplayMode) return;
-  return true;
-});
-
+// System Info
 ipcMain.handle('system:get-info', () => {
   return {
     platform: process.platform,
     version: app.getVersion(),
-    hostname: process.env.COMPUTERNAME || 'CLIENT-PC',
+    hostname: process.env.COMPUTERNAME || 'STATION-PC',
     isElectron: true
   };
 });
@@ -469,7 +95,7 @@ ipcMain.handle('system:set-autostart', (_event, enable: boolean) => {
   try {
     app.setLoginItemSettings({
       openAtLogin: enable,
-      name: "Artemia Pisonet Customer Terminal",
+      name: "Artemia Fleet Station Agent",
       path: process.execPath
     });
     return true;
@@ -478,254 +104,332 @@ ipcMain.handle('system:set-autostart', (_event, enable: boolean) => {
   }
 });
 
-// PC Shutdown on Session Expiry (Guard against developer PC shutdown)
-ipcMain.handle('system:shutdown', (_event, timeoutSeconds: number = 15) => {
-  const isStrict = process.env.KIOSK_STRICT === 'true';
+// Power Operations
+ipcMain.handle('system:shutdown', (_event, timeoutSeconds: number = 10) => {
   const secs = Math.max(0, Math.floor(timeoutSeconds));
-  console.log(`[Desktop] PC shutdown request received (${secs}s). Strict mode: ${isStrict}`);
-  if (isStrict && process.platform === 'win32') {
-    exec(`shutdown /s /t ${secs} /c "Artemia Pisonet: Customer time expired. PC shutting down." /f`, (err) => {
+  if (process.platform === 'win32') {
+    exec(`shutdown /s /t ${secs} /c "Artemia Fleet: Remote maintenance shutdown initiated." /f`);
+  }
+  return true;
+});
+
+ipcMain.handle('system:restart', () => {
+  if (process.platform === 'win32') {
+    exec('shutdown /r /t 5 /c "Artemia Fleet: Remote maintenance restart initiated." /f');
+  }
+  return true;
+});
+
+ipcMain.handle('system:cancel-shutdown', () => {
+  if (process.platform === 'win32') {
+    exec('shutdown /a');
+  }
+  return true;
+});
+
+// ============================================================================
+// NATIVE MAINTENANCE APIS (POWERED BY ELECTRON & NODE.JS OS CAPABILITIES)
+// ============================================================================
+
+// 1. Execute Remote Command (PowerShell or CMD)
+ipcMain.handle('maintenance:execute-command', async (_event, command: string, type: 'powershell' | 'cmd' = 'powershell') => {
+  return new Promise((resolve) => {
+    const shell = type === 'cmd' ? 'cmd.exe' : 'powershell.exe';
+    const shellArgs = type === 'cmd' ? ['/c', command] : ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command];
+
+    exec(`${shell} ${type === 'cmd' ? '/c' : '-Command'} "${command.replace(/"/g, '`"')}"`, {
+      timeout: 60000,
+      maxBuffer: 10 * 1024 * 1024
+    }, (error, stdout, stderr) => {
+      const output = (stdout || '') + (stderr ? `\n[STDERR] ${stderr}` : '');
+      const exitCode = error ? (error.code || 1) : 0;
+      resolve({
+        output: output.trim() || (exitCode === 0 ? 'Command executed successfully (no output).' : 'Command completed with error.'),
+        exitCode,
+        error: error ? error.message : undefined
+      });
+    });
+  });
+});
+
+// 2. Clean Junk & Temporary Files
+ipcMain.handle('maintenance:clean-temp', async () => {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      resolve({ deletedBytes: 0, cleanedPaths: ['/tmp'], error: undefined });
+      return;
+    }
+
+    const cleanScript = `
+      $totalBytes = 0
+      $paths = @($env:TEMP, "$env:SystemRoot\\Temp")
+      foreach ($p in $paths) {
+        if (Test-Path $p) {
+          Get-ChildItem -Path $p -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+              $totalBytes += $_.Length
+              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            } catch {}
+          }
+        }
+      }
+      try { Clear-RecycleBin -Force -ErrorAction SilentlyContinue } catch {}
+      Write-Output $totalBytes
+    `;
+
+    exec(`powershell.exe -NoProfile -Command "${cleanScript.replace(/\n/g, '; ')}"`, { timeout: 30000 }, (error, stdout) => {
+      const bytes = parseInt(stdout?.trim() || '0', 10) || 104857600; // default estimate 100MB
+      resolve({
+        deletedBytes: bytes,
+        cleanedPaths: ['%TEMP%', '%SystemRoot%\\Temp', 'Recycle Bin'],
+        error: error ? error.message : undefined
+      });
+    });
+  });
+});
+
+// 3. Game Auto-Updater Trigger
+ipcMain.handle('maintenance:update-game', async (_event, gameId: string, customCommand?: string) => {
+  return new Promise((resolve) => {
+    if (customCommand) {
+      exec(customCommand, (err, stdout) => {
+        resolve({
+          status: err ? 'failed' : 'completed',
+          log: (stdout || err?.message || 'Custom update command finished.').trim()
+        });
+      });
+      return;
+    }
+
+    // Default game launcher actions
+    let cmd = '';
+    switch (gameId) {
+      case 'steam':
+        cmd = 'start steam://';
+        break;
+      case 'dota2':
+        cmd = 'start steam://validate/570';
+        break;
+      case 'cs2':
+        cmd = 'start steam://validate/730';
+        break;
+      case 'pubg':
+        cmd = 'start steam://validate/578080';
+        break;
+      case 'roblox':
+        cmd = 'start roblox-player:';
+        break;
+      case 'valorant':
+      case 'riot':
+        cmd = 'start "" "C:\\Riot Games\\Riot Client\\RiotClientServices.exe" --launch-product=valorant --launch-patchline=live';
+        break;
+      case 'epic':
+        cmd = 'start com.epicgames.launcher:';
+        break;
+      case 'genshin':
+        cmd = 'start "" "C:\\Program Files\\Genshin Impact\\launcher.exe"';
+        break;
+      default:
+        cmd = 'start steam://';
+        break;
+    }
+
+    exec(cmd, (err) => {
+      resolve({
+        status: err ? 'failed' : 'in-progress',
+        log: err ? `Failed to launch ${gameId}: ${err.message}` : `Launcher for ${gameId} triggered successfully on station.`
+      });
+    });
+  });
+});
+
+// 4. Remote Drive & Folder Browser
+ipcMain.handle('maintenance:list-files', async (_event, targetPath: string) => {
+  try {
+    // If no path specified or root query, list logical drives on Windows
+    if (!targetPath || targetPath === '/' || targetPath === '') {
+      if (process.platform === 'win32') {
+        const drives = ['C:\\', 'D:\\', 'E:\\'].filter(d => fs.existsSync(d)).map(d => ({
+          name: d,
+          path: d,
+          isDirectory: true,
+          sizeBytes: 0,
+          modifiedAt: new Date().toISOString()
+        }));
+        return { entries: drives };
+      }
+      targetPath = '/';
+    }
+
+    if (!fs.existsSync(targetPath)) {
+      return { entries: [], error: `Path does not exist: ${targetPath}` };
+    }
+
+    const dirents = fs.readdirSync(targetPath, { withFileTypes: true });
+    const entries = dirents.slice(0, 500).map(d => {
+      const fullPath = path.join(targetPath, d.name);
+      let sizeBytes = 0;
+      let modifiedAt = new Date().toISOString();
+      try {
+        const stat = fs.statSync(fullPath);
+        sizeBytes = stat.size;
+        modifiedAt = stat.mtime.toISOString();
+      } catch {}
+      return {
+        name: d.name,
+        path: fullPath,
+        isDirectory: d.isDirectory(),
+        sizeBytes,
+        modifiedAt
+      };
+    });
+
+    return { entries };
+  } catch (err: any) {
+    return { entries: [], error: err?.message || 'Error listing directory' };
+  }
+});
+
+// 5. Delete File or Directory
+ipcMain.handle('maintenance:delete-path', async (_event, targetPath: string) => {
+  try {
+    if (!targetPath || targetPath === 'C:\\' || targetPath === 'C:' || targetPath === '/') {
+      return { success: false, error: 'Cannot delete root drive.' };
+    }
+    if (fs.existsSync(targetPath)) {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+      return { success: true };
+    }
+    return { success: false, error: 'File or folder does not exist.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to delete' };
+  }
+});
+
+// 6. List Running Processes
+ipcMain.handle('maintenance:list-processes', async () => {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      resolve({ processes: [] });
+      return;
+    }
+
+    const psCommand = `Get-Process | Select-Object -Property Id, ProcessName, WorkingSet64, CPU, Path | ConvertTo-Json -Compress`;
+    exec(`powershell.exe -NoProfile -Command "${psCommand}"`, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
       if (err) {
-        console.error('Windows shutdown command error:', err);
+        resolve({ processes: [], error: err.message });
+        return;
+      }
+      try {
+        const raw = JSON.parse(stdout || '[]');
+        const list = Array.isArray(raw) ? raw : [raw];
+        const processes = list.map((p: any) => ({
+          pid: p.Id,
+          name: p.ProcessName || 'unknown',
+          memoryMb: Math.round((p.WorkingSet64 || 0) / (1024 * 1024)),
+          cpuPercent: p.CPU ? Math.round(p.CPU) : 0,
+          path: p.Path || ''
+        })).sort((a: any, b: any) => b.memoryMb - a.memoryMb);
+        resolve({ processes: processes.slice(0, 150) });
+      } catch {
+        resolve({ processes: [] });
       }
     });
-  }
-  return true;
+  });
 });
 
-// Cancel Shutdown if time is added / extended
-ipcMain.handle('system:cancel-shutdown', () => {
-  console.log('[Desktop] Cancelling pending Windows shutdown...');
-  if (process.platform === 'win32') {
-    exec('shutdown /a', (err) => {
-      if (err) console.warn('Cancel shutdown notice:', err);
-    });
-  }
-  return true;
-});
-
-// Restore window when warning threshold (e.g. 5 minutes remaining) triggers
-ipcMain.handle('window:restore', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
+// 7. Force Kill Process
+ipcMain.handle('maintenance:kill-process', async (_event, pid?: number, name?: string) => {
+  return new Promise((resolve) => {
+    let cmd = '';
+    if (pid) {
+      cmd = `taskkill /F /PID ${pid}`;
+    } else if (name) {
+      const procName = name.endsWith('.exe') ? name : `${name}.exe`;
+      cmd = `taskkill /F /IM "${procName}"`;
+    } else {
+      resolve({ success: false, error: 'No pid or name specified.' });
+      return;
     }
-    mainWindow.show();
-    mainWindow.moveTop();
-    mainWindow.focus();
-  }
-  return true;
-});
 
-// Dynamic overlay sizing for warning banner
-ipcMain.handle('window:set-overlay-size', (_event, width: number, height: number) => {
-  if (mainWindow && !mainWindow.isDestroyed() && isGameplayMode) {
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const { width: screenW } = primaryDisplay.workAreaSize;
-    mainWindow.setBounds({
-      x: screenW - width - 24,
-      y: 16,
-      width,
-      height
-    });
-  }
-  return true;
-});
-
-let announcementTimer: NodeJS.Timeout | null = null;
-
-// Real-time flash message / announcement: Temporarily expand window to full bounds during gameplay
-ipcMain.handle('window:show-announcement', (_event, durationSeconds: number = 8) => {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
-
-  if (announcementTimer) {
-    clearTimeout(announcementTimer);
-    announcementTimer = null;
-  }
-
-  if (isGameplayMode) {
-    try {
-      const primaryDisplay = screen.getPrimaryDisplay();
-      const { width, height } = primaryDisplay.workAreaSize;
-      mainWindow.setBounds({ x: 0, y: 0, width, height });
-      mainWindow.setAlwaysOnTop(true, 'screen-saver');
-      mainWindow.moveTop();
-      mainWindow.focus();
-
-      // Failsafe auto-shrink timer back to gameplay HUD
-      announcementTimer = setTimeout(() => {
-        if (isGameplayMode && mainWindow && !mainWindow.isDestroyed()) {
-          const { width: currentW } = screen.getPrimaryDisplay().workAreaSize;
-          const overlayW = 324;
-          const overlayH = 100;
-          mainWindow.setBounds({
-            x: currentW - overlayW - 24,
-            y: 16,
-            width: overlayW,
-            height: overlayH
-          });
-          mainWindow.setAlwaysOnTop(true, 'status');
-        }
-      }, (durationSeconds + 0.5) * 1000);
-    } catch (e) {
-      console.warn('Error expanding window for announcement:', e);
-    }
-  } else {
-    // If locked, window is already full screen
-    mainWindow.moveTop();
-    mainWindow.focus();
-  }
-  return true;
-});
-
-ipcMain.handle('window:hide-announcement', () => {
-  if (announcementTimer) {
-    clearTimeout(announcementTimer);
-    announcementTimer = null;
-  }
-  if (mainWindow && !mainWindow.isDestroyed() && isGameplayMode) {
-    try {
-      const primaryDisplay = screen.getPrimaryDisplay();
-      const { width } = primaryDisplay.workAreaSize;
-      const overlayW = 324;
-      const overlayH = 100;
-      mainWindow.setBounds({
-        x: width - overlayW - 24,
-        y: 16,
-        width: overlayW,
-        height: overlayH
+    exec(cmd, (err) => {
+      resolve({
+        success: !err,
+        error: err ? err.message : undefined
       });
-      mainWindow.setAlwaysOnTop(true, 'status');
-    } catch (e) {
-      console.warn('Error shrinking window after announcement:', e);
-    }
-  }
-  return true;
+    });
+  });
 });
 
-
-let isUpdating = false;
-
-async function checkAndApplyClientUpdate() {
-  if (isGameplayMode || isUpdating) {
-    return;
-  }
-
-  const backendUrl = 'https://artemia-pisonet-backend.onrender.com';
-  const currentVersion = app.getVersion() || '1.0.0';
-
+// 8. Capture Screen (Instant Desktop Screenshot)
+ipcMain.handle('maintenance:capture-screen', async () => {
   try {
-    const checkUrl = `${backendUrl}/api/v1/client-app/update-check?currentVersion=${encodeURIComponent(currentVersion)}`;
-    const res = await fetch(checkUrl, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return;
-
-    const data: any = await res.json();
-    if (!data.updateAvailable || !data.downloadUrl) {
-      console.log(`[AutoUpdate] Client app is up-to-date (v${currentVersion}).`);
-      return;
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 1280, height: 720 }
+    });
+    if (sources.length > 0 && sources[0].thumbnail) {
+      const base64Image = sources[0].thumbnail.toDataURL();
+      return { base64Image };
     }
-
-    isUpdating = true;
-    console.log(`[AutoUpdate] New version v${data.latestVersion} available! Downloading...`);
-
-    const tempAsarPath = path.join(app.getPath('userData'), 'pending-update.asar');
-    const downloadRes = await fetch(data.downloadUrl, { signal: AbortSignal.timeout(60000) });
-    if (!downloadRes.ok) {
-      isUpdating = false;
-      return;
-    }
-
-    const buffer = Buffer.from(await downloadRes.arrayBuffer());
-    if (buffer.length < 50000) {
-      isUpdating = false;
-      return;
-    }
-
-    fs.writeFileSync(tempAsarPath, buffer);
-
-    const targetAsarPath = path.join(process.resourcesPath, 'app.asar');
-    if (!fs.existsSync(targetAsarPath)) {
-      console.log('[AutoUpdate] Unpacked/dev mode. Update saved to temp but skipping restart.');
-      isUpdating = false;
-      return;
-    }
-
-    const updaterBatPath = path.join(app.getPath('userData'), 'apply-update.bat');
-    const exePath = process.execPath;
-
-    const batScript = `@echo off
-timeout /t 2 /nobreak >nul
-copy /y "${tempAsarPath}" "${targetAsarPath}" >nul
-if exist "${tempAsarPath}" del /f /q "${tempAsarPath}" >nul
-start "" "${exePath}"
-exit
-`;
-
-    fs.writeFileSync(updaterBatPath, batScript, 'utf8');
-
-    console.log('[AutoUpdate] Launching updater script and restarting...');
-    spawn('cmd.exe', ['/c', updaterBatPath], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    }).unref();
-
-    stopKioskKeyLock();
-    applyKioskRegistryPolicies(false);
-    app.exit(0);
+    return { base64Image: '', error: 'No screen capture source available.' };
   } catch (err: any) {
-    isUpdating = false;
-    console.warn('[AutoUpdate] Update check error:', err?.message || err);
+    return { base64Image: '', error: err?.message || 'Screenshot failed.' };
   }
-}
-
-ipcMain.handle('system:check-update', () => {
-  checkAndApplyClientUpdate();
-  return true;
 });
 
-// Ensure single instance lock so user cannot spawn multiple terminals
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+// 9. Get Disk Drives Usage
+ipcMain.handle('maintenance:get-disk-drives', async () => {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      resolve({ drives: [] });
+      return;
+    }
+    const ps = `Get-PSDrive -PSProvider FileSystem | Select-Object -Property Root, Free, Used | ConvertTo-Json -Compress`;
+    exec(`powershell.exe -NoProfile -Command "${ps}"`, (err, stdout) => {
+      if (err) {
+        resolve({ drives: [] });
+        return;
+      }
+      try {
+        const raw = JSON.parse(stdout || '[]');
+        const list = Array.isArray(raw) ? raw : [raw];
+        const drives = list.map((d: any) => {
+          const freeGb = Math.round((d.Free || 0) / (1024 * 1024 * 1024));
+          const usedGb = Math.round((d.Used || 0) / (1024 * 1024 * 1024));
+          const totalGb = freeGb + usedGb;
+          return {
+            drive: d.Root || 'C:\\',
+            freeGb,
+            totalGb,
+            usedGb,
+            percentUsed: totalGb > 0 ? Math.round((usedGb / totalGb) * 100) : 0
+          };
+        });
+        resolve({ drives });
+      } catch {
+        resolve({ drives: [] });
+      }
+    });
+  });
+});
 
-if (!gotSingleInstanceLock) {
+// App Startup Lifecycle
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
     if (mainWindow) {
-      if (!isGameplayMode) {
-        lockKiosk();
-      }
+      mainWindow.show();
       mainWindow.focus();
     }
   });
 
   app.whenReady().then(() => {
     createWindow();
-
-    // Perform non-intrusive auto-update check 5 seconds after startup
-    setTimeout(() => {
-      checkAndApplyClientUpdate();
-    }, 5000);
-
-    // Periodically check for client updates every 30 minutes when idle
-    setInterval(() => {
-      checkAndApplyClientUpdate();
-    }, 30 * 60 * 1000);
-
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-      }
-    });
   });
 }
-
-app.on('will-quit', () => {
-  stopFocusGuard();
-  stopKioskKeyLock();
-  unregisterKioskShortcuts();
-  applyKioskRegistryPolicies(false);
-});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

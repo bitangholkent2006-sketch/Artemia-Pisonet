@@ -4,13 +4,24 @@ import { Subscription } from 'rxjs';
 import { AdminStateService } from './services/admin-state.service';
 import { LoginComponent } from './components/login/login.component';
 import { DashboardComponent } from './components/dashboard/dashboard.component';
-import { CustomersComponent } from './components/customers/customers.component';
-import { TimeCreditsComponent } from './components/time-credits/time-credits.component';
-import { SessionsComponent } from './components/sessions/sessions.component';
+import { FileManagerComponent } from './components/file-manager/file-manager.component';
+import { GameUpdaterComponent } from './components/game-updater/game-updater.component';
+import { TaskManagerComponent } from './components/task-manager/task-manager.component';
+import { RemoteTerminalComponent } from './components/remote-terminal/remote-terminal.component';
+import { ScreenViewComponent } from './components/screen-view/screen-view.component';
 import { PcsComponent } from './components/pcs/pcs.component';
 import { ReportsComponent } from './components/reports/reports.component';
-import { CustomerPreviewComponent } from './components/customer-preview/customer-preview.component';
 import { PisonetAppState } from '@pisonet/shared';
+
+export type NavTab = 
+  | 'dashboard'
+  | 'game-updater'
+  | 'file-manager'
+  | 'task-manager'
+  | 'remote-terminal'
+  | 'screen-view'
+  | 'pcs'
+  | 'reports';
 
 @Component({
   selector: 'app-root',
@@ -19,12 +30,13 @@ import { PisonetAppState } from '@pisonet/shared';
     CommonModule,
     LoginComponent,
     DashboardComponent,
-    CustomersComponent,
-    TimeCreditsComponent,
-    SessionsComponent,
+    FileManagerComponent,
+    GameUpdaterComponent,
+    TaskManagerComponent,
+    RemoteTerminalComponent,
+    ScreenViewComponent,
     PcsComponent,
-    ReportsComponent,
-    CustomerPreviewComponent
+    ReportsComponent
   ],
   templateUrl: './app.component.html',
   styleUrls: ['./app.component.css']
@@ -33,10 +45,11 @@ export class AppComponent implements OnInit, OnDestroy {
   state!: PisonetAppState;
   private sub!: Subscription;
 
-  activeNav: 'dashboard' | 'customers' | 'time-credits' | 'sessions' | 'pcs' | 'reports' | 'customer-preview' = 'dashboard';
+  activeNav: NavTab = 'dashboard';
   mobileSidebarOpen = false;
   showConnectionModal = false;
   showResetConfirmModal = false;
+  targetStationId?: string;
 
   constructor(public adminState: AdminStateService) {}
 
@@ -62,9 +75,16 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.state?.activeAuth?.role || 'staff';
   }
 
-  setActiveNav(nav: 'dashboard' | 'customers' | 'time-credits' | 'sessions' | 'pcs' | 'reports' | 'customer-preview') {
+  setActiveNav(nav: NavTab, pcId?: string) {
     this.activeNav = nav;
+    if (pcId) {
+      this.targetStationId = pcId;
+    }
     this.mobileSidebarOpen = false;
+  }
+
+  onNavigateTab(event: { tab: string; pcId?: string }) {
+    this.setActiveNav(event.tab as NavTab, event.pcId);
   }
 
   toggleMobileSidebar() {
@@ -75,9 +95,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.adminState.logoutStaff();
   }
 
-
-
-  get activeSessionsCount(): number {
-    return this.state?.sessions?.filter((s) => s.status === 'active').length || 0;
+  get onlineCount(): number {
+    return this.state?.pcs?.filter((p) => p.status !== 'offline').length || 0;
   }
 }

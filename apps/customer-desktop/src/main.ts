@@ -1,76 +1,38 @@
 import { io, Socket } from 'socket.io-client';
-import {
-  formatSecondsToDigital,
-  formatSecondsToHumanReadable,
-  formatMinorUnitsToCurrency
-} from '@pisonet/shared';
 
-// Safe Electron bridge detection
+// Safe Electron Desktop Bridge Definition
 interface WindowWithDesktop extends Window {
   pisonetDesktop?: {
     isElectron: boolean;
+    platform: string;
     minimize: () => Promise<void>;
     maximize: () => Promise<void>;
     close: () => Promise<void>;
-    lockScreen: () => Promise<void>;
-    unlockGameplayOverlay: () => Promise<void>;
-    toggleCompactMode: (enable: boolean) => Promise<boolean>;
-    getSystemInfo: () => Promise<{ platform: string; version: string; hostname: string }>;
+    getSystemInfo: () => Promise<{ platform: string; version: string; hostname: string; isElectron: boolean }>;
     setAutoStart: (enable: boolean) => Promise<boolean>;
     shutdownPC: (timeoutSeconds?: number) => Promise<boolean>;
+    restartPC: () => Promise<boolean>;
     cancelShutdown: () => Promise<boolean>;
-    restoreWindow: () => Promise<void>;
-    setOverlaySize: (width: number, height: number) => Promise<boolean>;
-    showAnnouncement?: (durationSeconds?: number) => Promise<boolean>;
-    hideAnnouncement?: () => Promise<boolean>;
+
+    // Maintenance Native Bridge
+    executeCommand: (cmd: string, type: 'powershell' | 'cmd') => Promise<{ output: string; exitCode: number; error?: string }>;
+    cleanTemp: () => Promise<{ deletedBytes: number; cleanedPaths: string[]; error?: string }>;
+    updateGame: (gameId: string, cmd?: string) => Promise<{ status: string; log: string }>;
+    listFiles: (targetPath: string) => Promise<{ entries: any[]; error?: string }>;
+    deletePath: (targetPath: string) => Promise<{ success: boolean; error?: string }>;
+    listProcesses: () => Promise<{ processes: any[]; error?: string }>;
+    killProcess: (pid?: number, name?: string) => Promise<{ success: boolean; error?: string }>;
+    captureScreen: () => Promise<{ base64Image: string; error?: string }>;
+    getDiskDrives: () => Promise<{ drives: any[] }>;
   };
 }
 
-interface PublicPC {
-  id: string;
-  name: string;
-  identifier: string;
-  specs?: string;
-  status: 'available' | 'in-use' | 'maintenance' | 'offline' | 'locked';
-  activeCustomerId?: string | null;
-  activeCustomerName?: string | null;
-}
+const desktopWindow = window as unknown as WindowWithDesktop;
 
-interface CustomerUser {
-  id: string;
-  username: string;
-  fullName: string;
-  role: string;
-  status: string;
-  mustChangePassword?: boolean;
-  balance?: {
-    remainingSeconds: number;
-    totalPurchasedSeconds: number;
-    totalPlayedSeconds: number;
-  };
-  openTimeAuthorizationId?: string | null;
-}
-
-interface LiveSession {
-  id: string;
-  pcId: string;
-  customerId: string;
-  customerName: string;
-  type: 'fixed-time' | 'open-time';
-  status: 'active' | 'paused' | 'expired';
-  remainingSeconds: number;
-  totalActiveSeconds: number;
-  rateMinorUnitsPerHour: number;
-  accruedChargesMinorUnits: number;
-  startedAt: string;
-}
-
-// Smart API base resolver: Defaults to live cloud backend on Render, or current browser origin, or custom saved URL
 function getApiBaseUrl(): string {
   const saved = localStorage.getItem('artemia_server_url') || localStorage.getItem('pisonet_backend_url');
   if (saved) return saved.trim().replace(/\/$/, '');
   if (typeof window !== 'undefined' && window.location.origin && !window.location.origin.startsWith('file://')) {
-    // If running on Vite dev (5173) or Angular dev (4200), use live cloud backend
     if (window.location.port === '5173' || window.location.port === '4200') {
       return 'https://artemia-pisonet-backend.onrender.com';
     }
@@ -79,2032 +41,434 @@ function getApiBaseUrl(): string {
   return 'https://artemia-pisonet-backend.onrender.com';
 }
 
-const desktopWindow = window as unknown as WindowWithDesktop;
-
-class CustomerDesktopApp {
+class StationMaintenanceAgent {
   private apiBase: string = getApiBaseUrl();
   private socket: Socket | null = null;
-  private pcs: PublicPC[] = [];
-  private currentPcId: string =
+  private pcId: string =
     (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('pc') : null) ||
     localStorage.getItem('artemia_station_id') ||
     'pc-01';
-  private token: string | null = null;
-  private user: CustomerUser | null = null;
-  private activeSession: LiveSession | null = null;
-
-  private currentScreen: 'login' | 'changePassword' | 'account' | 'session' | 'outage' | 'shutdown' | 'standby' = 'login';
-  private isCompactOverlay = false;
-  private warnedThresholds = new Set<number>();
-  private audioContext: AudioContext | null = null;
-  private showPassword = false;
-  private confirmPauseModalOpen = false;
+  private pcName: string = 'PC-01';
   private isConnected = false;
-  private stationLockedMessage: string | null = null;
-  private expiredNotice: boolean = false;
-  private shutdownCountdown: number = 15;
-  private shutdownInterval: any = null;
-  private announcementTimeout: any = null;
-  private speedMultiplier: number = 1.08;
-  private heartbeatInterval: any = null;
-
-  // Idle Power-Saving Watchdog (Auto-shutdown after 10 minutes of inactivity)
-  private idleSeconds: number = 0;
-  private readonly IDLE_SHUTDOWN_SECONDS: number = 600; // 10 minutes
-  private readonly IDLE_WARNING_SECONDS: number = 540;  // 9 minutes (60 seconds countdown)
-  private idleInterval: any = null;
-  private isStandby: boolean = false;
-
-  private sessionInterval: any = null;
+  private lastUpdateLog: string = 'Station ready. No active background jobs.';
+  private telemetry = {
+    cpuPercent: 12,
+    ramPercent: 44,
+    diskUsedGb: 320,
+    diskTotalGb: 500,
+    activeApp: 'Desktop Idle'
+  };
 
   constructor() {
-    this.token = sessionStorage.getItem('artemia_customer_token');
-    const storedUser = sessionStorage.getItem('artemia_customer_user');
-    if (storedUser) {
-      try {
-        this.user = JSON.parse(storedUser);
-      } catch {}
-    }
-
-    // Only lock screen on startup if explicitly in strict kiosk mode or station locked
-    if (this.stationLockedMessage) {
-      desktopWindow.pisonetDesktop?.lockScreen?.();
-    }
-
-    this.startIdleTimer();
+    this.renderUI();
     this.initSocket();
-    this.initApp();
+    this.startTelemetryLoop();
   }
 
-  // --------------------------------------------------------------------------
-  // Initialization & Socket.IO
-  // --------------------------------------------------------------------------
-  private async initApp(): Promise<void> {
-    await this.fetchPricing();
-    await this.fetchPcs();
-
-    if (this.token && this.user) {
-      await this.syncCustomerState();
-    } else {
-      this.currentScreen = 'login';
-      this.render();
-    }
-  }
-
-  private async fetchPricing(): Promise<void> {
+  private initSocket() {
     try {
-      const res = await fetch(`${this.apiBase}/api/v1/pricing`);
-      if (res.ok) {
-        const json = await res.json();
-        if (json.data?.speedMultiplier && typeof json.data.speedMultiplier === 'number') {
-          this.speedMultiplier = json.data.speedMultiplier;
-          console.log(`[Timer] Speed multiplier loaded from server: ${this.speedMultiplier}x`);
-        }
-      }
-    } catch {
-      // Retain default 1.08
-    }
-  }
-
-  private initSocket(): void {
-    try {
-      if (this.socket) {
-        this.socket.disconnect();
-      }
-
       this.socket = io(this.apiBase, {
         reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionAttempts: Infinity,
-        auth: { token: this.token || undefined, pcId: this.currentPcId }
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 10000,
+        transports: ['websocket', 'polling']
       });
 
       this.socket.on('connect', () => {
         this.isConnected = true;
-        this.updateConnectionIndicator();
-        this.socket?.emit('pc:heartbeat', { pcId: this.currentPcId });
-        this.fetchPcs();
-        if (this.token) {
-          this.syncCustomerState();
-        }
+        this.updateStatusBadge(true);
+        // Identify station to server
+        this.socket?.emit('pc:join', { pcId: this.pcId, name: this.pcName });
+        this.socket?.emit('maintenance:agent:ready', { pcId: this.pcId });
+        this.logMessage(`Connected to Artemia Fleet Server (${this.apiBase})`);
       });
 
       this.socket.on('disconnect', () => {
         this.isConnected = false;
-        this.updateConnectionIndicator();
+        this.updateStatusBadge(false);
+        this.logMessage('Disconnected from Fleet Controller. Reconnecting...');
       });
 
-      // Periodic heartbeat every 10 seconds to keep connectionState alive and renew session lease
-      if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = setInterval(() => {
-        if (this.socket && this.socket.connected) {
-          this.socket.emit('pc:heartbeat', { pcId: this.currentPcId });
-          if (this.activeSession && this.activeSession.status === 'active') {
-            this.socket.emit('session:heartbeat', { sessionId: this.activeSession.id });
-          }
-        }
-      }, 10000);
-
-      window.addEventListener('beforeunload', () => {
-        if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
-        if (this.socket) {
-          this.socket.emit('pc:heartbeat', { pcId: this.currentPcId });
-          this.socket.disconnect();
-        }
-      });
-
-      // Real-time station status updates from Admin Portal (e.g. Lock PC)
-      const handlePcStatusChange = (data: { pcId: string; status: string }) => {
-        if (!data || !data.pcId) return;
-        const matchesPc = data.pcId === this.currentPcId || data.pcId.toLowerCase() === this.currentPcId.toLowerCase();
-        if (matchesPc) {
-          const idx = this.pcs.findIndex((p) => p.id === data.pcId || p.id.toLowerCase() === data.pcId.toLowerCase());
-          if (idx !== -1) {
-            this.pcs[idx].status = data.status as any;
-          }
-          if (data.status === 'locked' || data.status === 'maintenance' || data.status === 'offline') {
-            this.stationLockedMessage = `This PC has been locked by the counter operator (Status: ${data.status.toUpperCase()}).`;
-            this.stopSessionTimer();
-            this.activeSession = null;
-            this.token = null;
-            this.user = null;
-            sessionStorage.removeItem('artemia_customer_token');
-            sessionStorage.removeItem('artemia_customer_user');
-            this.currentScreen = 'login';
-            desktopWindow.pisonetDesktop?.lockScreen?.();
-            this.render();
-            this.showToast(`Station Locked: ${data.status.toUpperCase()}`, 'error');
-          } else if (data.status === 'available') {
-            this.stationLockedMessage = null;
-            // When station is unlocked by admin, do NOT re-lock the screen
-            if (desktopWindow.pisonetDesktop?.unlockGameplayOverlay) {
-              desktopWindow.pisonetDesktop.unlockGameplayOverlay();
-            }
-            this.render();
-            this.showToast('Station is now unlocked and available for gameplay.', 'success');
-          }
-        }
-      };
-
-      this.socket.on('pc:status', handlePcStatusChange);
-      this.socket.on('pc:status-changed', handlePcStatusChange);
-
-      this.socket.on('pc:updated', (updatedPc: PublicPC) => {
-        const idx = this.pcs.findIndex((p) => p.id === updatedPc.id || p.id.toLowerCase() === updatedPc.id.toLowerCase());
-        if (idx !== -1) {
-          this.pcs[idx] = updatedPc;
-        } else {
-          this.pcs.push(updatedPc);
-        }
-        const matchesPc = updatedPc.id === this.currentPcId || updatedPc.id.toLowerCase() === this.currentPcId.toLowerCase();
-        if (matchesPc && (updatedPc.status === 'locked' || updatedPc.status === 'offline')) {
-          this.stationLockedMessage = `This PC has been locked by the counter operator.`;
-          this.stopSessionTimer();
-          this.activeSession = null;
-          this.token = null;
-          this.user = null;
-          sessionStorage.removeItem('artemia_customer_token');
-          sessionStorage.removeItem('artemia_customer_user');
-          this.currentScreen = 'login';
-          desktopWindow.pisonetDesktop?.lockScreen?.();
-          this.render();
-        } else if (matchesPc && updatedPc.status === 'available') {
-          this.stationLockedMessage = null;
-          if (desktopWindow.pisonetDesktop?.unlockGameplayOverlay) {
-            desktopWindow.pisonetDesktop.unlockGameplayOverlay();
-          }
-          this.render();
-        }
-        this.updateStationUI();
-      });
-
-      this.socket.on('session:started', (sess: any) => {
-        if (this.user && sess.customerId === this.user.id) {
-          const rem = sess.remainingSeconds ?? sess.remainingSecondsAtResume ?? (this.user.balance?.remainingSeconds || 0);
-          this.activeSession = {
-            ...sess,
-            remainingSeconds: Number(rem) || 0
-          };
-          this.currentScreen = 'session';
-          this.expiredNotice = false;
-          desktopWindow.pisonetDesktop?.unlockGameplayOverlay?.();
-          this.startSessionTimer();
-          this.render();
-        }
-      });
-
-      this.socket.on('session:resumed', (data: any) => {
-        if (this.user && data.customerId === this.user.id) {
-          const rem = Number(data.remainingSeconds ?? (this.user.balance?.remainingSeconds || 0)) || 0;
-          if (this.activeSession) {
-            this.activeSession.remainingSeconds = rem;
-            this.activeSession.status = 'active';
-            if (data.pcId) this.activeSession.pcId = data.pcId;
-          } else {
-            this.activeSession = {
-              id: data.sessionId || `sess-${Date.now()}`,
-              pcId: data.pcId || this.currentPcId,
-              customerId: this.user.id,
-              customerName: this.user.fullName,
-              type: 'fixed-time',
-              status: 'active',
-              remainingSeconds: rem,
-              totalActiveSeconds: 0,
-              rateMinorUnitsPerHour: 2000,
-              accruedChargesMinorUnits: 0,
-              startedAt: new Date().toISOString()
-            };
-          }
-          if (this.user.balance) {
-            this.user.balance.remainingSeconds = rem;
-          }
-          this.currentScreen = 'session';
-          this.expiredNotice = false;
-          desktopWindow.pisonetDesktop?.unlockGameplayOverlay?.();
-          this.startSessionTimer();
-          this.render();
-        }
-      });
-
-      this.socket.on('session:paused', (data: { sessionId: string; remainingSeconds: number; customerId?: string; pcId?: string }) => {
-        const isTargeted =
-          (this.activeSession && data.sessionId === this.activeSession.id) ||
-          (data.pcId && (data.pcId === this.currentPcId || data.pcId.toLowerCase() === this.currentPcId.toLowerCase())) ||
-          (this.user && data.customerId && data.customerId === this.user.id);
-
-        if (isTargeted) {
-          this.stopSessionTimer();
-          this.activeSession = null;
-          // Protect account and safely return kiosk to login screen with lock active
-          this.token = null;
-          this.user = null;
-          sessionStorage.removeItem('artemia_customer_token');
-          sessionStorage.removeItem('artemia_customer_user');
-          this.currentScreen = 'login';
-          desktopWindow.pisonetDesktop?.lockScreen?.();
-          this.render();
-          this.showToast(`Session paused by operator. Remaining balance (${data.remainingSeconds}s) saved safely!`, 'info');
-        }
-      });
-
-      this.socket.on('session:ended', (data: { sessionId: string; reason?: string }) => {
-        if (this.activeSession && data.sessionId === this.activeSession.id) {
-          this.stopSessionTimer();
-          this.activeSession = null;
-          this.token = null;
-          this.user = null;
-          sessionStorage.removeItem('artemia_customer_token');
-          sessionStorage.removeItem('artemia_customer_user');
-          this.currentScreen = 'login';
-          desktopWindow.pisonetDesktop?.lockScreen?.();
-          this.render();
-          this.showToast('Session ended by counter staff.', 'warning');
-        }
-      });
-
-      this.socket.on('session:expired', (data: { sessionId: string; customerId: string }) => {
-        if (this.user && data.customerId === this.user.id) {
-          this.handleTimeExpired();
-        }
-      });
-
-      this.socket.on('session:extended', (data: { sessionId: string; customerId: string; addedSeconds: number; newRemainingSeconds: number }) => {
-        // If shutdown countdown is currently ticking down, immediately cancel it!
-        if (this.shutdownInterval) {
-          clearInterval(this.shutdownInterval);
-          this.shutdownInterval = null;
-          desktopWindow.pisonetDesktop?.cancelShutdown?.();
-        }
-
-        if (data.newRemainingSeconds > 300) {
-          this.warnedThresholds.delete(300);
-          this.warnedThresholds.delete(600);
-          desktopWindow.pisonetDesktop?.setOverlaySize?.(324, 100);
-        }
-        if (data.newRemainingSeconds > 60) {
-          this.warnedThresholds.delete(60);
-        }
-
-        if (this.user && data.customerId === this.user.id) {
-          this.expiredNotice = false;
-          if (this.activeSession && this.activeSession.id === data.sessionId) {
-            this.activeSession.remainingSeconds = data.newRemainingSeconds;
-          }
-          if (this.user.balance) {
-            this.user.balance.remainingSeconds = data.newRemainingSeconds;
-          }
-          this.showToast(`Time added! +${Math.round(data.addedSeconds / 60)} minutes added. PC Shutdown Cancelled!`, 'success');
-          this.updateClockDisplay();
-          if (this.currentScreen === 'account' || this.currentScreen === 'shutdown') {
-            this.currentScreen = 'account';
-            this.render();
-          }
-        }
-      });
-
-      // Real-time balance updates when customer is topped up by cashier at the counter
-      this.socket.on('customer:balance:updated', (data: { customerId: string; username: string; remainingSeconds: number; addedSeconds: number }) => {
-        if (this.user && (this.user.id === data.customerId || this.user.username.toLowerCase() === data.username.toLowerCase())) {
-          if (!this.user.balance) {
-            this.user.balance = {
-              remainingSeconds: data.remainingSeconds,
-              totalPurchasedSeconds: data.remainingSeconds,
-              totalPlayedSeconds: 0
-            };
-          } else {
-            this.user.balance.remainingSeconds = data.remainingSeconds;
-          }
-          sessionStorage.setItem('artemia_customer_user', JSON.stringify(this.user));
-
-          if (this.activeSession && this.activeSession.type === 'fixed-time') {
-            this.activeSession.remainingSeconds = data.remainingSeconds;
-          }
-
-          this.expiredNotice = false;
-          const addedMinutes = Math.round(data.addedSeconds / 60);
-          this.showToast(`Top-up received! +${addedMinutes} mins added to your account (Balance: ${formatSecondsToHumanReadable(data.remainingSeconds)}).`, 'success');
-          this.playWarningBeep();
-
-          if (this.currentScreen === 'account') {
-            this.render();
-          } else if (this.currentScreen === 'session') {
-            this.updateClockDisplay();
-          }
-        }
-      });
-
-      // Fleet-wide or customer-specific sync update
-      this.socket.on('sync:update', (data?: { customerId?: string }) => {
-        if (this.user && (!data?.customerId || data.customerId === this.user.id)) {
-          this.syncCustomerState();
-        }
-      });
-
-      // Real-time flash screen announcement from operator (Giant text, auto-dismiss in 8s)
-      this.socket.on('pc:announcement', (data: { targetPcId?: string; message: string; durationSeconds?: number; sender?: string }) => {
-        if (!data || !data.message) return;
-        const isTargeted =
-          !data.targetPcId ||
-          data.targetPcId === 'all' ||
-          data.targetPcId === this.currentPcId ||
-          data.targetPcId.toLowerCase() === this.currentPcId.toLowerCase();
-
-        if (isTargeted) {
-          this.displayAnnouncement(data.message, data.durationSeconds || 8, data.sender);
-        }
-      });
-    } catch (e) {
-      console.warn('Socket initialization error:', e);
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Data Fetching & Sync
-  // --------------------------------------------------------------------------
-  private async fetchPcs(): Promise<void> {
-    try {
-      const res = await fetch(`${this.apiBase}/api/v1/pcs/public`);
-      if (res.ok) {
-        const json = await res.json();
-        this.pcs = json.data || [];
-        if (!this.currentPcId && this.pcs.length > 0) {
-          this.currentPcId = this.pcs[0].id;
-        }
-        this.updateStationUI();
-      }
-    } catch (e) {
-      console.error('Failed to fetch PCs from server:', e);
-    }
-  }
-
-  private async syncCustomerState(): Promise<void> {
-    if (!this.token) return;
-
-    try {
-      const sessRes = await fetch(`${this.apiBase}/api/v1/sessions/my-session`, {
-        headers: { Authorization: `Bearer ${this.token}` }
-      });
-
-      if (sessRes.ok) {
-        const json = await sessRes.json();
-        const sess = json.data;
-        if (sess && sess.status === 'active') {
-          const rem = sess.remainingSeconds ?? sess.remainingSecondsAtResume ?? (this.user?.balance?.remainingSeconds || 0);
-          this.activeSession = {
-            ...sess,
-            remainingSeconds: Number(rem) || 0
-          };
-          this.currentPcId = sess.pcId;
-          this.currentScreen = 'session';
-          desktopWindow.pisonetDesktop?.unlockGameplayOverlay?.();
-          this.startSessionTimer();
-          this.render();
+      // 1. Remote Script / Command Execution Relay
+      this.socket.on('agent:command:run', async (payload: { id: string; command: string; type?: 'powershell' | 'cmd'; targetPcId?: string }) => {
+        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId !== this.pcId) {
           return;
         }
-      }
+        this.logMessage(`[Remote Command] Executing: ${payload.command.slice(0, 60)}...`);
+        let res: { output: string; exitCode: number; error?: string };
 
-      const meRes = await fetch(`${this.apiBase}/api/v1/auth/me`, {
-        headers: { Authorization: `Bearer ${this.token}` }
-      });
-
-      if (meRes.ok) {
-        const json = await meRes.json();
-        this.user = json.user;
-        desktopWindow.pisonetDesktop?.lockScreen?.();
-        if (this.user?.mustChangePassword) {
-          this.currentScreen = 'changePassword';
+        if (desktopWindow.pisonetDesktop) {
+          res = await desktopWindow.pisonetDesktop.executeCommand(payload.command, payload.type || 'powershell');
         } else {
-          this.currentScreen = 'account';
-        }
-        this.render();
-      } else {
-        this.handleLogout();
-      }
-    } catch {
-      this.currentScreen = 'login';
-      this.render();
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Timers & Audio
-  // --------------------------------------------------------------------------
-  private startSessionTimer(): void {
-    this.stopSessionTimer();
-    const multiplier = this.speedMultiplier > 0 ? this.speedMultiplier : 1.08;
-    const intervalMs = Math.max(100, Math.round(1000 / multiplier));
-    this.sessionInterval = setInterval(() => {
-      if (!this.activeSession || this.activeSession.status !== 'active') return;
-
-      if (this.activeSession.type === 'fixed-time') {
-        let rem = Number(this.activeSession.remainingSeconds);
-        if (!isFinite(rem) || isNaN(rem) || rem < 0) {
-          rem = Number(this.user?.balance?.remainingSeconds) || 0;
+          res = {
+            output: `[Web Terminal Simulation] Command acknowledged: ${payload.command}`,
+            exitCode: 0
+          };
         }
 
-        if (rem > 0) {
-          rem = Math.max(0, rem - 1);
-          this.activeSession.remainingSeconds = rem;
-          if (this.user?.balance) {
-            this.user.balance.remainingSeconds = rem;
-          }
-          this.checkThresholds(rem);
-        } else {
-          this.activeSession.remainingSeconds = 0;
-          this.handleTimeExpired();
-          return;
-        }
-      } else {
-        const activeSec = Number(this.activeSession.totalActiveSeconds) || 0;
-        this.activeSession.totalActiveSeconds = activeSec + 1;
-      }
-
-      this.updateClockDisplay();
-    }, intervalMs);
-  }
-
-  private stopSessionTimer(): void {
-    if (this.sessionInterval) {
-      clearInterval(this.sessionInterval);
-      this.sessionInterval = null;
-    }
-  }
-
-  public speakVoice(text: string): void {
-    try {
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1.0;
-        utterance.volume = 1.0;
-        utterance.pitch = 1.05;
-        window.speechSynthesis.speak(utterance);
-      }
-    } catch {}
-  }
-
-  public playFiveMinuteAlert(): void {
-    try {
-      if (!this.audioContext) {
-        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        this.audioContext = new AudioCtx();
-      }
-      if (this.audioContext.state === 'suspended') {
-        this.audioContext.resume();
-      }
-      const now = this.audioContext.currentTime;
-
-      // Tri-tone melodic alert: E5 (659Hz) -> A5 (880Hz) -> C6 (1046Hz)
-      const osc1 = this.audioContext.createOscillator();
-      const gain1 = this.audioContext.createGain();
-      osc1.type = 'triangle';
-      osc1.frequency.setValueAtTime(659.25, now);
-      gain1.gain.setValueAtTime(0.28, now);
-      gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.22);
-      osc1.connect(gain1);
-      gain1.connect(this.audioContext.destination);
-      osc1.start(now);
-      osc1.stop(now + 0.22);
-
-      const osc2 = this.audioContext.createOscillator();
-      const gain2 = this.audioContext.createGain();
-      osc2.type = 'triangle';
-      osc2.frequency.setValueAtTime(880, now + 0.2);
-      gain2.gain.setValueAtTime(0.32, now + 0.2);
-      gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.45);
-      osc2.connect(gain2);
-      gain2.connect(this.audioContext.destination);
-      osc2.start(now + 0.2);
-      osc2.stop(now + 0.45);
-
-      const osc3 = this.audioContext.createOscillator();
-      const gain3 = this.audioContext.createGain();
-      osc3.type = 'sine';
-      osc3.frequency.setValueAtTime(1046.5, now + 0.42);
-      gain3.gain.setValueAtTime(0.38, now + 0.42);
-      gain3.gain.exponentialRampToValueAtTime(0.01, now + 0.85);
-      osc3.connect(gain3);
-      gain3.connect(this.audioContext.destination);
-      osc3.start(now + 0.42);
-      osc3.stop(now + 0.85);
-
-      setTimeout(() => {
-        this.speakVoice('Warning: 5 minutes remaining. Please top up your time.');
-      }, 700);
-    } catch {
-      this.speakVoice('Warning: 5 minutes remaining. Please top up your time.');
-    }
-  }
-
-  public playOneMinuteAlert(): void {
-    try {
-      if (!this.audioContext) {
-        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        this.audioContext = new AudioCtx();
-      }
-      if (this.audioContext.state === 'suspended') {
-        this.audioContext.resume();
-      }
-      const now = this.audioContext.currentTime;
-
-      // Urgent fast-pulsing alert beeps (B5 987Hz -> E6 1318Hz -> E6 1318Hz)
-      const notes = [
-        { freq: 987.77, start: now, dur: 0.15 },
-        { freq: 1318.51, start: now + 0.18, dur: 0.18 },
-        { freq: 1318.51, start: now + 0.38, dur: 0.25 }
-      ];
-
-      for (const n of notes) {
-        const osc = this.audioContext.createOscillator();
-        const gain = this.audioContext.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(n.freq, n.start);
-        gain.gain.setValueAtTime(0.28, n.start);
-        gain.gain.exponentialRampToValueAtTime(0.01, n.start + n.dur);
-        osc.connect(gain);
-        gain.connect(this.audioContext.destination);
-        osc.start(n.start);
-        osc.stop(n.start + n.dur);
-      }
-
-      setTimeout(() => {
-        this.speakVoice('Attention: 1 minute remaining. Station will shut down.');
-      }, 650);
-    } catch {
-      this.speakVoice('Attention: 1 minute remaining. Station will shut down.');
-    }
-  }
-
-  private checkThresholds(remaining: number): void {
-    const thresholds = [300, 60, 30];
-    for (const t of thresholds) {
-      if (remaining <= t && remaining > t - 3 && !this.warnedThresholds.has(t)) {
-        this.warnedThresholds.add(t);
-
-        if (t === 300) {
-          desktopWindow.pisonetDesktop?.restoreWindow?.();
-          desktopWindow.pisonetDesktop?.setOverlaySize?.(336, 126);
-          this.playFiveMinuteAlert();
-          this.showToast('⚠️ 5 MINUTES REMAINING! Palihug og top-up o hulog og sensilyo aron dili mapalong ang PC.', 'warning');
-          this.render();
-        } else if (t === 60) {
-          desktopWindow.pisonetDesktop?.restoreWindow?.();
-          desktopWindow.pisonetDesktop?.setOverlaySize?.(336, 126);
-          this.playOneMinuteAlert();
-          this.showToast('🚨 1 MINUTO NA LANG! Mag-automatic shutdown ang PC ug ma-logout ang account!', 'error');
-          this.render();
-        } else if (t === 30) {
-          this.speakVoice('30 seconds left.');
-          this.showToast('⏱️ 30 Seconds Remaining!', 'error');
-        }
-      }
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Idle Power-Saving Watchdog (10 Minutes Auto-Shutdown)
-  // --------------------------------------------------------------------------
-  private startIdleTimer(): void {
-    if (this.idleInterval) clearInterval(this.idleInterval);
-
-    // Passive interaction listeners to continuously reset idle timer
-    const activityEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart'];
-    for (const evt of activityEvents) {
-      window.addEventListener(evt, () => this.handleUserActivity(), { passive: true });
-    }
-
-    this.idleInterval = setInterval(() => {
-      // Watchdog counts idle seconds only when station has no active session and is on login or outage screen
-      if (!this.activeSession && !this.isStandby && (this.currentScreen === 'login' || this.currentScreen === 'outage')) {
-        this.idleSeconds++;
-
-        // At 9 minutes (540s), display 60-second countdown warning modal
-        if (this.idleSeconds >= this.IDLE_WARNING_SECONDS) {
-          const secondsLeft = Math.max(0, this.IDLE_SHUTDOWN_SECONDS - this.idleSeconds);
-          this.showIdleShutdownModal(secondsLeft);
-        }
-
-        // At 10 minutes (600s), execute shutdown
-        if (this.idleSeconds >= this.IDLE_SHUTDOWN_SECONDS) {
-          this.triggerIdleShutdown();
-        }
-      } else {
-        if (this.idleSeconds > 0) {
-          this.resetIdleTimer();
-        }
-      }
-    }, 1000);
-  }
-
-  public handleUserActivity(): void {
-    if (this.idleSeconds >= this.IDLE_WARNING_SECONDS) {
-      this.resetIdleTimer();
-    } else {
-      this.idleSeconds = 0;
-    }
-  }
-
-  public resetIdleTimer(): void {
-    this.idleSeconds = 0;
-    this.hideIdleShutdownModal();
-  }
-
-  private showIdleShutdownModal(secondsLeft: number): void {
-    let modal = document.getElementById('idle-shutdown-overlay');
-    if (!modal) {
-      modal = document.createElement('div');
-      modal.id = 'idle-shutdown-overlay';
-      modal.className = 'idle-shutdown-overlay';
-      document.body.appendChild(modal);
-
-      try {
-        this.playWarningBeep();
-      } catch {}
-    }
-
-    modal.innerHTML = `
-      <div class="idle-shutdown-box">
-        <div class="idle-pulse-icon">⚡</div>
-        <h2 style="font-size:1.6rem; font-weight:800; color:#fff; margin-bottom:6px; letter-spacing:-0.02em;">PC IDLE POWER SAVER</h2>
-        <p style="color:#cbd5e1; font-size:0.95rem; margin-bottom:16px;">
-          Walay naggamit niini nga PC sulod sa 10 ka minuto.<br/>Mag-shutdown ang PC aron makadaginot sa kuryente sulod sa:
-        </p>
-        <div class="idle-countdown-number">${secondsLeft}s</div>
-        <p style="color:#38bdf8; font-size:0.88rem; font-weight:600; margin-bottom:20px;">
-          Tuploka ang mouse o keyboard aron i-cancel ang shutdown.
-        </p>
-        <button type="button" class="btn-cancel-idle" id="cancel-idle-btn">
-          ❌ I-CANCEL ANG SHUTDOWN
-        </button>
-      </div>
-    `;
-
-    const cancelBtn = modal.querySelector('#cancel-idle-btn');
-    if (cancelBtn) {
-      cancelBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.resetIdleTimer();
-      });
-    }
-  }
-
-  private hideIdleShutdownModal(): void {
-    const modal = document.getElementById('idle-shutdown-overlay');
-    if (modal) {
-      modal.remove();
-    }
-  }
-
-  public triggerIdleShutdown(): void {
-    this.resetIdleTimer();
-    console.log('[IdleWatchdog] PC idle limit reached (10 minutes). Triggering shutdown.');
-    if (desktopWindow.pisonetDesktop?.shutdownPC) {
-      desktopWindow.pisonetDesktop.shutdownPC(0);
-    } else {
-      this.isStandby = true;
-      this.currentScreen = 'standby';
-      this.render();
-    }
-  }
-
-  public powerOnFromStandby(): void {
-    this.isStandby = false;
-    this.currentScreen = 'login';
-    this.resetIdleTimer();
-    this.render();
-    this.showToast('PC powered on successfully! Maayong pag-abot sa Artemia Pisonet.', 'success');
-  }
-
-  private playWarningBeep(): void {
-    try {
-      if (!this.audioContext) {
-        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        this.audioContext = new AudioCtx();
-      }
-      if (this.audioContext.state === 'suspended') {
-        this.audioContext.resume();
-      }
-      const osc = this.audioContext.createOscillator();
-      const gain = this.audioContext.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, this.audioContext.currentTime);
-      gain.gain.setValueAtTime(0.18, this.audioContext.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.35);
-      osc.connect(gain);
-      gain.connect(this.audioContext.destination);
-      osc.start();
-      osc.stop(this.audioContext.currentTime + 0.35);
-    } catch {}
-  }
-
-  private playAnnouncementChime(): void {
-    try {
-      if (!this.audioContext) {
-        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        this.audioContext = new AudioCtx();
-      }
-      if (this.audioContext.state === 'suspended') {
-        this.audioContext.resume();
-      }
-      const now = this.audioContext.currentTime;
-
-      // Note 1: 587.33 Hz (D5)
-      const osc1 = this.audioContext.createOscillator();
-      const gain1 = this.audioContext.createGain();
-      osc1.type = 'sine';
-      osc1.frequency.setValueAtTime(587.33, now);
-      gain1.gain.setValueAtTime(0.2, now);
-      gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-      osc1.connect(gain1);
-      gain1.connect(this.audioContext.destination);
-      osc1.start(now);
-      osc1.stop(now + 0.2);
-
-      // Note 2: 880 Hz (A5)
-      const osc2 = this.audioContext.createOscillator();
-      const gain2 = this.audioContext.createGain();
-      osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(880, now + 0.18);
-      gain2.gain.setValueAtTime(0.25, now + 0.18);
-      gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.55);
-      osc2.connect(gain2);
-      gain2.connect(this.audioContext.destination);
-      osc2.start(now + 0.18);
-      osc2.stop(now + 0.55);
-    } catch {}
-  }
-
-  private displayAnnouncement(message: string, durationSeconds: number = 8, _sender?: string): void {
-    // 1. Expand Electron window to full screen if in gameplay mode so giant text fits
-    desktopWindow.pisonetDesktop?.showAnnouncement?.(durationSeconds);
-
-    // 2. Clear any active announcement
-    if (this.announcementTimeout) {
-      clearTimeout(this.announcementTimeout);
-      this.announcementTimeout = null;
-    }
-    const existing = document.getElementById('fullscreen-announcement-overlay');
-    if (existing) {
-      existing.remove();
-    }
-
-    // 3. Play pleasant 2-tone audio chime
-    this.playAnnouncementChime();
-
-    // 4. Construct clean fullscreen overlay with ONLY giant text + progress bar
-    const overlay = document.createElement('div');
-    overlay.id = 'fullscreen-announcement-overlay';
-    overlay.className = 'announcement-fullscreen-overlay';
-
-    // Safe HTML text escaping
-    const safeMsg = message
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-
-    overlay.innerHTML = `
-      <div class="announcement-content-wrap">
-        <div class="announcement-header-tag">
-          <span class="announcement-icon-pulse">📢</span>
-          <span>PAHIBALO GIKAN SA COUNTER</span>
-        </div>
-        <div class="announcement-giant-text">
-          ${safeMsg}
-        </div>
-        <div class="announcement-progress-track">
-          <div class="announcement-progress-bar" style="animation-duration: ${durationSeconds}s;"></div>
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(overlay);
-
-    // 5. Automatically dismiss after durationSeconds
-    this.announcementTimeout = setTimeout(() => {
-      overlay.classList.add('fade-out');
-      setTimeout(() => {
-        overlay.remove();
-        desktopWindow.pisonetDesktop?.hideAnnouncement?.();
-      }, 350);
-      this.announcementTimeout = null;
-    }, durationSeconds * 1000);
-  }
-
-  private showToast(message: string, type: 'info' | 'success' | 'error' | 'warning' = 'info'): void {
-    const root = document.getElementById('toast-root');
-    if (!root) return;
-
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    root.appendChild(toast);
-
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      toast.style.transform = 'translateY(10px)';
-      toast.style.transition = 'all 0.3s ease';
-      setTimeout(() => toast.remove(), 300);
-    }, 4000);
-  }
-
-  // --------------------------------------------------------------------------
-  // Handlers
-  // --------------------------------------------------------------------------
-  public async handleLogin(event: Event): Promise<void> {
-    event.preventDefault();
-    const userField = document.getElementById('login-username') as HTMLInputElement;
-    const passField = document.getElementById('login-password') as HTMLInputElement;
-    const submitBtn = document.getElementById('login-submit-btn') as HTMLButtonElement;
-    const errorEl = document.getElementById('login-error-msg');
-
-    const username = userField?.value.trim() || '';
-    const password = passField?.value || '';
-
-    if (!username || !password) {
-      if (errorEl) {
-        errorEl.textContent = 'Please enter both username and password.';
-        errorEl.style.display = 'block';
-      }
-      return;
-    }
-
-    if (errorEl) errorEl.style.display = 'none';
-    if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Signing In...';
-    }
-
-    try {
-      const res = await fetch(`${this.apiBase}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-      });
-
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        if (errorEl) {
-          errorEl.textContent = data.message || 'Login failed. Invalid username or password.';
-          errorEl.style.display = 'block';
-        }
-        if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.textContent = 'Sign In to Terminal';
-        }
-        return;
-      }
-
-      // Cancel any pending shutdown from previous session expiry
-      if (this.shutdownInterval) {
-        clearInterval(this.shutdownInterval);
-        this.shutdownInterval = null;
-      }
-      desktopWindow.pisonetDesktop?.cancelShutdown?.();
-
-      this.token = data.token;
-      this.user = data.user;
-      sessionStorage.setItem('artemia_customer_token', data.token);
-      sessionStorage.setItem('artemia_customer_user', JSON.stringify(data.user));
-      this.initSocket();
-
-      if (data.mustChangePassword) {
-        this.currentScreen = 'changePassword';
-      } else {
-        await this.syncCustomerState();
-        return;
-      }
-      this.render();
-    } catch (e: any) {
-      if (errorEl) {
-        errorEl.textContent = `Server connection error (${this.apiBase}). Ensure server is online.`;
-        errorEl.style.display = 'block';
-      }
-      if (submitBtn) {
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Sign In to Terminal';
-      }
-    }
-  }
-
-  public async handleChangePassword(event: Event): Promise<void> {
-    event.preventDefault();
-    if (!this.token) return;
-
-    const newPassField = document.getElementById('new-password') as HTMLInputElement;
-    const confirmPassField = document.getElementById('confirm-password') as HTMLInputElement;
-    const errorEl = document.getElementById('password-error-msg');
-    const submitBtn = document.getElementById('save-password-btn') as HTMLButtonElement;
-
-    const newPass = newPassField?.value || '';
-    const confirmPass = confirmPassField?.value || '';
-
-    if (!newPass || newPass.length < 6) {
-      if (errorEl) {
-        errorEl.textContent = 'Password must be at least 6 characters.';
-        errorEl.style.display = 'block';
-      }
-      return;
-    }
-
-    if (newPass !== confirmPass) {
-      if (errorEl) {
-        errorEl.textContent = 'Passwords do not match.';
-        errorEl.style.display = 'block';
-      }
-      return;
-    }
-
-    if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Updating Password...';
-    }
-
-    try {
-      const res = await fetch(`${this.apiBase}/api/v1/auth/change-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.token}`
-        },
-        body: JSON.stringify({ newPassword: newPass })
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        if (errorEl) {
-          errorEl.textContent = data.message || 'Failed to update password.';
-          errorEl.style.display = 'block';
-        }
-        if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.textContent = 'Save Password & Continue';
-        }
-        return;
-      }
-
-      this.showToast('Password updated successfully! Welcome!', 'success');
-      if (this.user) {
-        this.user.mustChangePassword = false;
-        sessionStorage.setItem('artemia_customer_user', JSON.stringify(this.user));
-      }
-      await this.syncCustomerState();
-    } catch {
-      if (errorEl) {
-        errorEl.textContent = 'Network error saving password.';
-        errorEl.style.display = 'block';
-      }
-      if (submitBtn) {
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Save Password & Continue';
-      }
-    }
-  }
-
-  public async handleStartOrResume(): Promise<void> {
-    if (!this.token || !this.currentPcId) return;
-
-    // Zero balance guard: Do not allow unlock if remainingSeconds is 0 and no open-time auth
-    const remaining = this.user?.balance?.remainingSeconds || 0;
-    if (remaining <= 0 && !this.user?.openTimeAuthorizationId) {
-      this.showToast('0 Balance! Please top up at the counter to unlock desktop.', 'error');
-      return;
-    }
-
-    const btn = document.getElementById('start-session-btn') as HTMLButtonElement;
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = 'Starting Session...';
-    }
-
-    try {
-      // First attempt resume
-      const resumeRes = await fetch(`${this.apiBase}/api/v1/sessions/resume`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.token}`
-        },
-        body: JSON.stringify({ targetPcId: this.currentPcId })
-      });
-
-      const resumeData = await resumeRes.json();
-      if (resumeRes.ok && resumeData.success) {
-        const sess = resumeData.data;
-        const rem = resumeData.remainingSeconds ?? sess?.remainingSeconds ?? sess?.remainingSecondsAtResume ?? remaining;
-        this.activeSession = {
-          ...sess,
-          remainingSeconds: Number(rem) || 0
-        };
-        if (this.user && this.user.balance) {
-          this.user.balance.remainingSeconds = Number(rem) || 0;
-        }
-        this.currentScreen = 'session';
-        this.expiredNotice = false;
-        desktopWindow.pisonetDesktop?.unlockGameplayOverlay?.();
-        this.startSessionTimer();
-        this.render();
-        this.showToast('Session resumed successfully! Enjoy playing!', 'success');
-        return;
-      }
-
-      // If no session to resume, try start fresh fixed-time session
-      const startRes = await fetch(`${this.apiBase}/api/v1/sessions/start`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.token}`
-        },
-        body: JSON.stringify({ pcId: this.currentPcId })
-      });
-
-      const startData = await startRes.json();
-      if (startRes.ok && startData.success) {
-        const sess = startData.data;
-        const rem = startData.remainingSeconds ?? sess?.remainingSeconds ?? sess?.remainingSecondsAtResume ?? remaining;
-        this.activeSession = {
-          ...sess,
-          remainingSeconds: Number(rem) || 0
-        };
-        if (this.user && this.user.balance) {
-          this.user.balance.remainingSeconds = Number(rem) || 0;
-        }
-        this.currentScreen = 'session';
-        this.expiredNotice = false;
-        desktopWindow.pisonetDesktop?.unlockGameplayOverlay?.();
-        this.startSessionTimer();
-        this.render();
-        this.showToast('Session started successfully!', 'success');
-        return;
-      }
-
-      this.showToast(startData.message || resumeData.message || 'Unable to start session', 'error');
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = 'Start / Resume Playing';
-      }
-    } catch (e: any) {
-      this.showToast('Failed to start session. Check server connection.', 'error');
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = 'Start / Resume Playing';
-      }
-    }
-  }
-
-  public openPauseConfirmModal(): void {
-    this.confirmPauseModalOpen = true;
-    this.render();
-  }
-
-  public closePauseConfirmModal(): void {
-    this.confirmPauseModalOpen = false;
-    this.render();
-  }
-
-  public async confirmPauseAndLogout(): Promise<void> {
-    const modalBtn = document.getElementById('confirm-pause-btn') as HTMLButtonElement;
-    if (modalBtn) {
-      modalBtn.disabled = true;
-      modalBtn.textContent = 'Pausing...';
-    }
-
-    try {
-      if (this.token && this.activeSession) {
-        const curRemaining = this.activeSession.remainingSeconds;
-        await fetch(`${this.apiBase}/api/v1/sessions/pause`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.token}`
-          },
-          body: JSON.stringify({
-            sessionId: this.activeSession.id,
-            remainingSeconds: curRemaining
-          })
+        this.socket?.emit('agent:command:result', {
+          id: payload.id,
+          pcId: this.pcId,
+          pcName: this.pcName,
+          output: res.output,
+          exitCode: res.exitCode,
+          error: res.error,
+          executedAt: new Date().toISOString()
         });
-      }
-    } catch (err) {
-      console.warn('Backend pause warning:', err);
-    } finally {
-      this.confirmPauseModalOpen = false;
-      this.stopSessionTimer();
-      this.activeSession = null;
-      await this.handleLogout();
-      this.showToast('Session paused! Remaining time saved safely to your account.', 'success');
-    }
-  }
+      });
 
-  public async handleLogout(): Promise<void> {
-    this.token = null;
-    this.user = null;
-    this.activeSession = null;
-    this.confirmPauseModalOpen = false;
-    this.stopSessionTimer();
-    sessionStorage.removeItem('artemia_customer_token');
-    sessionStorage.removeItem('artemia_customer_user');
-    this.initSocket();
-    this.currentScreen = 'login';
-    document.body.classList.remove('in-gameplay-mode');
-    if (desktopWindow.pisonetDesktop?.lockScreen) {
-      await desktopWindow.pisonetDesktop.lockScreen();
-    }
-    this.render();
-  }
-
-  public handleTimeExpired(): void {
-    this.stopSessionTimer();
-    this.activeSession = null;
-    this.expiredNotice = true;
-
-    // Protection: Clear user session & auto-logout
-    this.token = null;
-    this.user = null;
-    sessionStorage.removeItem('artemia_customer_token');
-    sessionStorage.removeItem('artemia_customer_user');
-
-    // Immediately enforce fullscreen Kiosk lock
-    document.body.classList.remove('in-gameplay-mode');
-    desktopWindow.pisonetDesktop?.lockScreen?.();
-
-    // Begin 15-second shutdown sequence
-    this.currentScreen = 'shutdown';
-    this.shutdownCountdown = 15;
-    this.render();
-    this.playWarningBeep();
-
-    // Trigger Windows shutdown (15s delay)
-    desktopWindow.pisonetDesktop?.shutdownPC?.(15);
-
-    if (this.shutdownInterval) {
-      clearInterval(this.shutdownInterval);
-    }
-
-    this.shutdownInterval = setInterval(() => {
-      this.shutdownCountdown--;
-      const countdownEl = document.getElementById('shutdown-timer-digits');
-      if (countdownEl) {
-        countdownEl.textContent = `${this.shutdownCountdown}`;
-      }
-      if (this.shutdownCountdown <= 0) {
-        clearInterval(this.shutdownInterval);
-        this.shutdownInterval = null;
-        const msgEl = document.getElementById('shutdown-status-msg');
-        if (msgEl) {
-          msgEl.innerHTML = '<strong style="color:#ef4444; font-size:1.1rem;">PC IS SHUTTING DOWN NOW... Goodbye!</strong>';
+      // 2. Storage & %TEMP% Cleaner Relay
+      this.socket.on('agent:clean:run', async (payload: { targetPcId?: string }) => {
+        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId !== this.pcId) {
+          return;
         }
+        this.logMessage('Cleaning junk, temporary files, and Recycle Bin...');
+        let res: { deletedBytes: number; cleanedPaths: string[]; error?: string };
+
+        if (desktopWindow.pisonetDesktop) {
+          res = await desktopWindow.pisonetDesktop.cleanTemp();
+        } else {
+          res = {
+            deletedBytes: 254800000,
+            cleanedPaths: ['%TEMP%', 'Recycle Bin']
+          };
+        }
+
+        this.logMessage(`Cleanup complete. Freed ${(res.deletedBytes / (1024 * 1024)).toFixed(1)} MB.`);
+        this.socket?.emit('agent:clean:result', {
+          pcId: this.pcId,
+          pcName: this.pcName,
+          deletedBytes: res.deletedBytes,
+          cleanedPaths: res.cleanedPaths,
+          error: res.error,
+          timestamp: new Date().toISOString()
+        });
+      });
+
+      // 3. Game Auto-Updater Relay
+      this.socket.on('agent:game:update', async (payload: { gameId: string; command?: string; targetPcId?: string }) => {
+        if (payload.targetPcId && payload.targetPcId !== 'all' && payload.targetPcId !== 'fleet' && payload.targetPcId !== this.pcId) {
+          return;
+        }
+        this.logMessage(`[Game Updater] Launching auto-update for ${payload.gameId.toUpperCase()}...`);
+        let res: { status: string; log: string };
+
+        if (desktopWindow.pisonetDesktop) {
+          res = await desktopWindow.pisonetDesktop.updateGame(payload.gameId, payload.command);
+        } else {
+          res = {
+            status: 'completed',
+            log: `Simulated update trigger for ${payload.gameId}`
+          };
+        }
+
+        this.socket?.emit('agent:game:status', {
+          gameId: payload.gameId,
+          pcId: this.pcId,
+          pcName: this.pcName,
+          status: res.status,
+          logLine: res.log,
+          updatedAt: new Date().toISOString()
+        });
+      });
+
+      // 4. Remote File Browser Relay
+      this.socket.on('agent:fs:list:req', async (payload: { pcId: string; path: string }) => {
+        if (payload.pcId && payload.pcId !== this.pcId) return;
+        let res: { entries: any[]; error?: string };
+        if (desktopWindow.pisonetDesktop) {
+          res = await desktopWindow.pisonetDesktop.listFiles(payload.path);
+        } else {
+          res = {
+            entries: [
+              { name: 'C:\\', path: 'C:\\', isDirectory: true, sizeBytes: 0, modifiedAt: new Date().toISOString() },
+              { name: 'D:\\', path: 'D:\\', isDirectory: true, sizeBytes: 0, modifiedAt: new Date().toISOString() }
+            ]
+          };
+        }
+        this.socket?.emit('agent:fs:list:res', {
+          pcId: this.pcId,
+          path: payload.path,
+          entries: res.entries,
+          error: res.error
+        });
+      });
+
+      // 5. Remote File Delete Relay
+      this.socket.on('agent:fs:delete:req', async (payload: { pcId: string; path: string }) => {
+        if (payload.pcId && payload.pcId !== this.pcId) return;
+        this.logMessage(`[File Manager] Deleting: ${payload.path}`);
+        let res: { success: boolean; error?: string };
+        if (desktopWindow.pisonetDesktop) {
+          res = await desktopWindow.pisonetDesktop.deletePath(payload.path);
+        } else {
+          res = { success: true };
+        }
+        this.socket?.emit('agent:fs:delete:res', {
+          pcId: this.pcId,
+          path: payload.path,
+          success: res.success,
+          error: res.error
+        });
+      });
+
+      // 6. Remote Process List Relay
+      this.socket.on('agent:process:list:req', async (payload: { pcId: string }) => {
+        if (payload.pcId && payload.pcId !== this.pcId) return;
+        let res: { processes: any[]; error?: string };
+        if (desktopWindow.pisonetDesktop) {
+          res = await desktopWindow.pisonetDesktop.listProcesses();
+        } else {
+          res = {
+            processes: [
+              { pid: 1420, name: 'steam.exe', memoryMb: 350, cpuPercent: 3, path: 'C:\\Steam\\steam.exe' },
+              { pid: 3824, name: 'chrome.exe', memoryMb: 620, cpuPercent: 5, path: 'C:\\Chrome\\chrome.exe' }
+            ]
+          };
+        }
+        this.socket?.emit('agent:process:list:res', {
+          pcId: this.pcId,
+          processes: res.processes,
+          error: res.error
+        });
+      });
+
+      // 7. Remote Process Kill Relay
+      this.socket.on('agent:process:kill:req', async (payload: { pcId: string; pid?: number; name?: string }) => {
+        if (payload.pcId && payload.pcId !== this.pcId) return;
+        this.logMessage(`[Task Manager] Killing process: ${payload.name || payload.pid}`);
+        let res: { success: boolean; error?: string };
+        if (desktopWindow.pisonetDesktop) {
+          res = await desktopWindow.pisonetDesktop.killProcess(payload.pid, payload.name);
+        } else {
+          res = { success: true };
+        }
+        this.socket?.emit('agent:process:kill:res', {
+          pcId: this.pcId,
+          pid: payload.pid,
+          success: res.success,
+          error: res.error
+        });
+      });
+
+      // 8. Remote Screen Capture Relay
+      this.socket.on('agent:screen:req', async (payload: { pcId: string }) => {
+        if (payload.pcId && payload.pcId !== this.pcId) return;
+        let res: { base64Image: string; error?: string };
+        if (desktopWindow.pisonetDesktop) {
+          res = await desktopWindow.pisonetDesktop.captureScreen();
+        } else {
+          res = { base64Image: '', error: 'Screenshots require native Electron client on station.' };
+        }
+        this.socket?.emit('agent:screen:res', {
+          pcId: this.pcId,
+          base64Image: res.base64Image,
+          timestamp: new Date().toISOString(),
+          error: res.error
+        });
+      });
+
+    } catch (e) {
+      console.warn('Socket connection error:', e);
+    }
+  }
+
+  private startTelemetryLoop() {
+    setInterval(async () => {
+      if (!this.isConnected || !this.socket) return;
+
+      if (desktopWindow.pisonetDesktop) {
+        try {
+          const drivesRes = await desktopWindow.pisonetDesktop.getDiskDrives();
+          if (drivesRes?.drives?.length) {
+            const cDrive = drivesRes.drives[0];
+            this.telemetry.diskUsedGb = cDrive.usedGb;
+            this.telemetry.diskTotalGb = cDrive.totalGb;
+          }
+        } catch {}
       }
-    }, 1000);
+
+      this.socket.emit('pc:telemetry', {
+        pcId: this.pcId,
+        ...this.telemetry,
+        timestamp: new Date().toISOString()
+      });
+
+      this.updateTelemetryDOM();
+    }, 5000);
   }
 
-  private renderStandbyScreen(pc?: PublicPC): string {
-    return `
-      <div class="auth-card-wrapper">
-        <div class="auth-card standby-card">
-          <div class="standby-icon-pulse">🔌</div>
-          <h2 style="font-size:1.8rem; font-weight:800; color:#fff; margin-bottom:8px; letter-spacing:-0.02em;">PC IN STANDBY (POWER OFF)</h2>
-          <div style="font-size:0.95rem; color:#94a3b8; font-weight:500; margin-bottom:20px; line-height:1.5;">
-            Napalong ang PC aron makadaginot sa kuryente kay walay naggamit sulod sa <strong>10 ka minuto</strong>.
+  private logMessage(msg: string) {
+    this.lastUpdateLog = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    const logEl = document.getElementById('log-box');
+    if (logEl) {
+      logEl.innerText = this.lastUpdateLog;
+    }
+  }
+
+  private updateStatusBadge(online: boolean) {
+    const badge = document.getElementById('status-pill');
+    if (badge) {
+      badge.className = online ? 'status-pill online' : 'status-pill offline';
+      badge.innerText = online ? '● FLEET CONNECTED' : '○ CONNECTING...';
+    }
+  }
+
+  private updateTelemetryDOM() {
+    const cpuEl = document.getElementById('val-cpu');
+    const ramEl = document.getElementById('val-ram');
+    const diskEl = document.getElementById('val-disk');
+    if (cpuEl) cpuEl.innerText = `${this.telemetry.cpuPercent}%`;
+    if (ramEl) ramEl.innerText = `${this.telemetry.ramPercent}%`;
+    if (diskEl) diskEl.innerText = `${this.telemetry.diskUsedGb} / ${this.telemetry.diskTotalGb} GB`;
+  }
+
+  private renderUI() {
+    const root = document.getElementById('app') || document.body;
+    root.innerHTML = `
+      <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: #07090e; color: #f1f5f9; display: flex; flex-direction: column; height: 100vh; overflow: hidden; user-select: none; }
+        .station-header {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 18px 28px; background: rgba(15, 23, 42, 0.85); border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .station-branding { display: flex; align-items: center; gap: 14px; }
+        .logo-box {
+          width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, #06b6d4, #3b82f6);
+          display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.25rem; color: #fff;
+          box-shadow: 0 0 16px rgba(6, 182, 212, 0.4);
+        }
+        .station-title { font-size: 1.2rem; font-weight: 800; letter-spacing: 0.5px; }
+        .station-sub { font-size: 0.8rem; color: #94a3b8; }
+        .header-actions { display: flex; align-items: center; gap: 12px; }
+        .status-pill {
+          padding: 6px 14px; border-radius: 9999px; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.5px;
+        }
+        .status-pill.online { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+        .status-pill.offline { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+        .btn-minimize {
+          background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15);
+          color: #e2e8f0; padding: 6px 14px; border-radius: 8px; font-size: 0.8rem; font-weight: 700; cursor: pointer;
+        }
+        .btn-minimize:hover { background: rgba(255, 255, 255, 0.15); }
+        
+        .station-body {
+          flex: 1; padding: 28px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto;
+        }
+        .banner-notice {
+          background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.25); border-radius: 12px;
+          padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;
+        }
+        .banner-text { font-size: 0.88rem; color: #bae6fd; line-height: 1.5; }
+        .telemetry-grid {
+          display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;
+        }
+        .stat-card {
+          background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 8px;
+        }
+        .stat-label { font-size: 0.75rem; text-transform: uppercase; color: #64748b; font-weight: 700; }
+        .stat-val { font-size: 1.6rem; font-weight: 800; color: #38bdf8; font-family: monospace; }
+        
+        .log-section {
+          background: #04060a; border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 12px; padding: 18px;
+          display: flex; flex-direction: column; gap: 10px;
+        }
+        .log-header { font-size: 0.8rem; text-transform: uppercase; color: #94a3b8; font-weight: 800; }
+        .log-box {
+          font-family: Consolas, monospace; font-size: 0.85rem; color: #34d399; background: #000;
+          padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        .quick-actions {
+          display: flex; gap: 10px; flex-wrap: wrap; margin-top: auto;
+        }
+        .btn-action {
+          background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); color: #cbd5e1;
+          padding: 10px 18px; border-radius: 10px; font-size: 0.85rem; font-weight: 700; cursor: pointer;
+        }
+        .btn-action:hover { background: rgba(51, 65, 85, 0.8); color: #fff; }
+      </style>
+
+      <div class="station-header">
+        <div class="station-branding">
+          <div class="logo-box">AF</div>
+          <div>
+            <div class="station-title">Artemia Fleet Agent</div>
+            <div class="station-sub">Station ID: <strong style="color:#38bdf8">${this.pcId.toUpperCase()}</strong></div>
           </div>
-          <button id="power-on-btn" type="button" class="btn-primary-gaming" style="background:linear-gradient(135deg, #10b981, #059669);">
-            <span>⚡ POWER ON / PAANDARA ANG PC</span>
-          </button>
+        </div>
+        <div class="header-actions">
+          <div id="status-pill" class="status-pill offline">○ CONNECTING...</div>
+          <button class="btn-minimize" id="btn-minimize-window">Minimize</button>
+        </div>
+      </div>
+
+      <div class="station-body">
+        <div class="banner-notice">
+          <div class="banner-text">
+            🛡️ <strong>Maintenance & Remote Control Active:</strong> Timer lockscreen is completely removed. Full desktop and game access is unlocked. Admin can push game updates, delete files, and run maintenance remotely without interrupting user play.
+          </div>
+        </div>
+
+        <div class="telemetry-grid">
+          <div class="stat-card">
+            <div class="stat-label">CPU Usage</div>
+            <div id="val-cpu" class="stat-val">${this.telemetry.cpuPercent}%</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Memory Usage</div>
+            <div id="val-ram" class="stat-val">${this.telemetry.ramPercent}%</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">System Drive (C:)</div>
+            <div id="val-disk" class="stat-val">${this.telemetry.diskUsedGb} / ${this.telemetry.diskTotalGb} GB</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Kiosk State</div>
+            <div class="stat-val" style="color:#34d399; font-size:1.3rem;">UNLOCKED</div>
+          </div>
+        </div>
+
+        <div class="log-section">
+          <div class="log-header">Live Maintenance Status</div>
+          <div id="log-box" class="log-box">${this.lastUpdateLog}</div>
+        </div>
+
+        <div class="quick-actions">
+          <button class="btn-action" id="btn-clean-local">🧹 Clean %TEMP% Junk Now</button>
+          <button class="btn-action" id="btn-change-id">⚙️ Change Station PC ID</button>
         </div>
       </div>
     `;
-  }
 
-  private renderWebTesterBar(): string {
-    if (desktopWindow.pisonetDesktop?.isElectron) return '';
+    document.getElementById('btn-minimize-window')?.addEventListener('click', () => {
+      desktopWindow.pisonetDesktop?.minimize();
+    });
 
-    return `
-      <div class="web-tester-bar" id="web-tester-bar">
-        <div class="tester-inner">
-          <div class="tester-info">
-            <span class="tester-status-dot"></span>
-            <span class="tester-label">🧪 Tester Mode (Laptop)</span>
-            <span class="tester-station-tag">${this.currentPcId.toUpperCase()}</span>
-          </div>
-          <div class="tester-btn-group">
-            <button type="button" class="tester-btn" id="btn-test-sound" title="Play 5-min chime & voice alert">🔊 Test Audio Alert</button>
-            <button type="button" class="tester-btn" id="btn-test-5min" title="Set time to 5m 5s to hear 5-minute alert">⏱️ Test 5m Alert</button>
-            <button type="button" class="tester-btn" id="btn-test-1min" title="Set time to 1m 5s to hear 1-minute alert">🚨 Test 1m Alert</button>
-            <button type="button" class="tester-btn" id="btn-test-idle" title="Fast-forward idle timer to 9m 50s">⚡ Test 10m Idle</button>
-            <button type="button" class="tester-btn success" id="btn-test-coin-5" title="Simulate ₱5 coin drop">+₱5 Coin (40m)</button>
-            <button type="button" class="tester-btn success" id="btn-test-coin-10" title="Simulate ₱10 coin drop">+₱10 Coin (80m)</button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  private renderShutdownScreen(pc?: PublicPC): string {
-    return `
-      <div class="auth-card shutdown-card">
-        <div class="shutdown-icon-pulse">🔌</div>
-        <h2 style="font-size:1.8rem; font-weight:800; color:#fff; margin-bottom:4px; letter-spacing:-0.02em;">TIME EXPIRED — 0 BALANCE</h2>
-        <div style="font-size:0.95rem; color:#f87171; font-weight:700; margin-bottom:16px;">
-          Awtomatikong Na-Logout ang Imong Account
-        </div>
-
-        <div class="shutdown-timer-hero">
-          <div style="font-size:0.75rem; color:#fca5a5; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px;">
-            Ang PC Awtomatikong Mo-Shutdown Sulod Sa:
-          </div>
-          <div id="shutdown-timer-digits" class="shutdown-digits">
-            ${this.shutdownCountdown}
-          </div>
-          <div style="font-size:0.85rem; color:#fca5a5; margin-top:8px; font-weight:700; letter-spacing:0.1em;">SECONDS</div>
-        </div>
-
-        <div id="shutdown-status-msg" style="font-size:0.92rem; color:#cbd5e1; line-height:1.55; margin-bottom:24px;">
-          ⚠️ <strong>Pahibalo sa Customer:</strong><br>
-          Palihug kuhaa ang imong mga gamit (USB flash drive, headset, charger, cell phone).<br>
-          Kung gusto ka mopadayon pagdula, palihug og duol <strong>dayon</strong> sa counter aron mag-top up.
-        </div>
-
-        <div style="display:flex; justify-content:center; gap:8px; font-size:0.75rem; color:#94a3b8;">
-          <span style="background:rgba(255,255,255,0.06); padding:5px 12px; border-radius:6px; font-weight:700; color:#22d3ee;">Station: ${pc ? pc.name : 'PC'}</span>
-          <span style="background:rgba(255,255,255,0.06); padding:5px 12px; border-radius:6px; font-weight:700; color:#10b981;">Account Protected & Logged Out</span>
-        </div>
-      </div>
-    `;
-  }
-
-  public togglePasswordVisibility(): void {
-    this.showPassword = !this.showPassword;
-    const passField = document.getElementById('login-password') as HTMLInputElement;
-    const btn = document.getElementById('toggle-password-btn') as HTMLButtonElement;
-    if (passField) {
-      passField.type = this.showPassword ? 'text' : 'password';
-    }
-    if (btn) {
-      btn.textContent = this.showPassword ? 'Hide' : 'Show';
-    }
-  }
-
-  public toggleOverlayMode(): void {
-    this.isCompactOverlay = !this.isCompactOverlay;
-    if (desktopWindow.pisonetDesktop?.toggleCompactMode) {
-      desktopWindow.pisonetDesktop.toggleCompactMode(this.isCompactOverlay);
-    }
-    this.render();
-  }
-
-  public promptServerSetup(): void {
-    const current = this.apiBase;
-    const input = prompt('Enter Artemia Server URL (e.g. http://192.168.1.7:3000):', current);
-    if (input && input.trim()) {
-      const clean = input.trim().replace(/\/$/, '');
-      localStorage.setItem('artemia_server_url', clean);
-      this.apiBase = clean;
-      this.initSocket();
-      this.fetchPcs();
-      this.showToast(`Connecting to server: ${clean}`, 'info');
-      this.render();
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Targeted DOM Updaters
-  // --------------------------------------------------------------------------
-  private updateClockDisplay(): void {
-    const mainClock = document.getElementById('clock-digits');
-    const subClock = document.getElementById('clock-sub');
-    const pauseClock = document.getElementById('pause-confirm-clock');
-
-    if (pauseClock && this.activeSession) {
-      const rem = Number(this.activeSession.remainingSeconds) || 0;
-      pauseClock.textContent = this.activeSession.type === 'fixed-time'
-        ? formatSecondsToDigital(rem)
-        : formatSecondsToDigital(Number(this.activeSession.totalActiveSeconds) || 0);
-    }
-
-    if (!mainClock || !this.activeSession) return;
-
-    if (this.activeSession.type === 'fixed-time') {
-      const rem = Number(this.activeSession.remainingSeconds) || 0;
-      mainClock.textContent = formatSecondsToDigital(rem);
-      if (rem <= 60) {
-        mainClock.className = 'hud-digits critical-time';
-      } else if (rem <= 300) {
-        mainClock.className = 'hud-digits low-time';
+    document.getElementById('btn-clean-local')?.addEventListener('click', async () => {
+      if (desktopWindow.pisonetDesktop) {
+        this.logMessage('Running local temp clean...');
+        const res = await desktopWindow.pisonetDesktop.cleanTemp();
+        this.logMessage(`Freed ${(res.deletedBytes / (1024 * 1024)).toFixed(1)} MB.`);
       } else {
-        mainClock.className = 'hud-digits';
+        this.logMessage('Cleaned simulated browser cache.');
       }
-      if (subClock) {
-        subClock.textContent = formatSecondsToHumanReadable(rem);
+    });
+
+    document.getElementById('btn-change-id')?.addEventListener('click', () => {
+      const next = prompt('Enter new PC Station ID (e.g. pc-01, pc-02):', this.pcId);
+      if (next && next.trim()) {
+        localStorage.setItem('artemia_station_id', next.trim().toLowerCase());
+        window.location.reload();
       }
-    } else {
-      const active = Number(this.activeSession.totalActiveSeconds) || 0;
-      mainClock.textContent = formatSecondsToDigital(active);
-      if (subClock) {
-        subClock.textContent = `Accrued: ${formatMinorUnitsToCurrency(this.activeSession.accruedChargesMinorUnits)}`;
-      }
-    }
-  }
-
-  private updateConnectionIndicator(): void {
-    const dot = document.getElementById('conn-dot');
-    const label = document.getElementById('conn-label');
-    if (dot && label) {
-      if (this.isConnected) {
-        dot.style.background = '#10b981';
-        dot.style.boxShadow = '0 0 10px #10b981';
-        label.textContent = 'Atlas Cloud Online';
-      } else {
-        dot.style.background = '#f43f5e';
-        dot.style.boxShadow = '0 0 10px #f43f5e';
-        label.textContent = 'Server Offline (Check IP)';
-      }
-    }
-  }
-
-  private updateStationUI(): void {
-    const selector = document.getElementById('pc-selector') as HTMLSelectElement;
-    if (selector) {
-      const currentVal = selector.value;
-      selector.innerHTML = this.pcs.length > 0
-        ? this.pcs.map((p) => `<option value="${p.id}" ${p.id === this.currentPcId ? 'selected' : ''}>${p.name} (${p.status.toUpperCase()})</option>`).join('')
-        : `<option value="">No Stations Registered</option>`;
-      if (currentVal && this.pcs.some((p) => p.id === currentVal)) {
-        selector.value = currentVal;
-      }
-    }
-
-    const badge = document.getElementById('current-pc-badge');
-    const currentPc = this.getCurrentPc();
-    if (badge && currentPc) {
-      badge.textContent = `${currentPc.name} • ${currentPc.identifier}`;
-    }
-  }
-
-  private getCurrentPc(): PublicPC | undefined {
-    return this.pcs.find((p) => p.id === this.currentPcId) || this.pcs[0];
-  }
-
-  // --------------------------------------------------------------------------
-  // Main Render Logic
-  // --------------------------------------------------------------------------
-  public render(): void {
-    const container = document.getElementById('app');
-    if (!container) return;
-
-    // 1. If currently in gameplay session, render sleek floating HUD overlay ONLY
-    if (this.currentScreen === 'session' && this.activeSession) {
-      document.body.classList.add('in-gameplay-mode');
-      const currentPc = this.getCurrentPc();
-      container.innerHTML = this.renderActiveSessionScreen(this.activeSession, currentPc) + this.renderWebTesterBar();
-      this.attachEventListeners();
-      return;
-    }
-
-    // 2. Otherwise (login, account, password change): full kiosk lockscreen
-    document.body.classList.remove('in-gameplay-mode');
-    const currentPc = this.getCurrentPc();
-    const topBarHtml = this.renderTopBar(currentPc);
-
-    let mainContentHtml = '';
-    if (this.isStandby || this.currentScreen === 'standby') {
-      mainContentHtml = this.renderStandbyScreen(currentPc);
-    } else if (this.currentScreen === 'shutdown') {
-      mainContentHtml = this.renderShutdownScreen(currentPc);
-    } else if (this.currentScreen === 'changePassword' && this.user) {
-      mainContentHtml = this.renderPasswordChangeScreen(this.user);
-    } else if (this.currentScreen === 'account' && this.user) {
-      mainContentHtml = this.renderAccountScreen(this.user, currentPc);
-    } else {
-      mainContentHtml = this.renderLoginScreen(currentPc);
-    }
-
-    const modalHtml = this.confirmPauseModalOpen ? this.renderPauseModal() : '';
-    const testerBarHtml = this.renderWebTesterBar();
-
-    container.innerHTML = `
-      ${topBarHtml}
-      <main class="main-view-container">
-        ${mainContentHtml}
-      </main>
-      ${modalHtml}
-      ${testerBarHtml}
-    `;
-
-    this.attachEventListeners();
-  }
-
-  private renderTopBar(pc?: PublicPC): string {
-    const isElectron = !!desktopWindow.pisonetDesktop?.isElectron;
-    const pcOptions = this.pcs.map(p =>
-      `<option value="${p.id}" ${p.id.toLowerCase() === this.currentPcId.toLowerCase() ? 'selected' : ''}>${p.name} (${p.status.toUpperCase()})</option>`
-    ).join('');
-
-    return `
-      <header class="demo-topbar">
-        <div class="brand-wrapper">
-          <div class="brand-logo-cyber">
-            <span>AP</span>
-          </div>
-          <div class="brand-info">
-            <h1 class="brand-title">ARTEMIA ESPORTS & PISONET LOUNGE</h1>
-            <span class="brand-subtitle">High-Performance Gaming Terminal</span>
-          </div>
-        </div>
-
-        <div class="station-meta-wrapper">
-          <!-- Station Switcher Dropdown in Web Mode (No Install) -->
-          ${!isElectron ? `
-            <div class="station-switcher-pill" title="Switch Target PC Station">
-              <span class="station-icon">🖥️</span>
-              <select id="pc-selector" class="station-select-control">
-                ${pcOptions || `<option value="${this.currentPcId}">${pc ? pc.name : this.currentPcId.toUpperCase()}</option>`}
-              </select>
-            </div>
-          ` : `
-            <div class="station-pill-highlight">
-              <span class="station-icon">🖥️</span>
-              <span class="station-name">${pc ? pc.name : 'PC 01'}</span>
-            </div>
-          `}
-
-          <!-- Live Cloud Health Indicator -->
-          <div class="station-cloud-status" title="${this.isConnected ? 'Connected to 24/7 Cloud (MongoDB Atlas)' : 'Connecting to Cloud...'}">
-            <span class="cloud-dot ${this.isConnected ? 'online' : 'offline'}"></span>
-            <span class="cloud-text">${this.isConnected ? 'CLOUD LIVE' : 'CONNECTING'}</span>
-          </div>
-
-          <!-- Electron Window Exit / Minimize Control -->
-          ${isElectron ? `
-            <div class="electron-window-controls">
-              <button id="btn-desktop-minimize" class="btn-subtle-win" title="Minimize / Window Mode">🗕</button>
-              <button id="btn-desktop-exit" class="btn-subtle-win danger" title="Exit Terminal">✕</button>
-            </div>
-          ` : ''}
-
-          <!-- Hidden gear settings button for setup -->
-          <button id="server-setup-btn" class="btn-subtle-gear" title="Terminal Settings">
-            ⚙️
-          </button>
-        </div>
-      </header>
-    `;
-  }
-
-  private renderLoginScreen(pc?: PublicPC): string {
-    const isLocked = this.stationLockedMessage || (pc ? pc.status === 'locked' || pc.status === 'offline' || pc.status === 'maintenance' : false);
-
-    return `
-      <div class="auth-card-wrapper">
-        <div class="auth-card premium-card">
-          <div class="auth-header">
-            <div class="auth-avatar-shield">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                <circle cx="12" cy="7" r="4"></circle>
-              </svg>
-            </div>
-            <h2 class="card-title">Customer Sign In</h2>
-            <p class="card-subtitle">
-              Pagsulod sa imong account aron makadula sa <strong class="station-highlight">${pc ? pc.name : 'Terminal'}</strong>
-            </p>
-          </div>
-
-          ${isLocked ? `
-            <div class="locked-banner">
-              <div class="locked-icon">🔒</div>
-              <div class="locked-text">
-                <strong>NAKA-LOCK KINI NGA STATION</strong>
-                <p>Naka-lock kini sa counter. Palihug duol sa tindahan aron ma-activate o ma-unlock kini nga PC.</p>
-              </div>
-            </div>
-          ` : ''}
-
-          <div id="login-error-msg" class="login-alert-error" style="display:none;"></div>
-
-          <form id="customer-login-form" class="auth-form">
-            <div class="form-group">
-              <label class="form-label" for="login-username">Account Username</label>
-              <div class="input-with-icon">
-                <span class="input-icon">👤</span>
-                <input
-                  id="login-username"
-                  class="input-field"
-                  type="text"
-                  placeholder="I-type imong username"
-                  required
-                  autocomplete="username"
-                  ${isLocked ? 'disabled' : ''}
-                />
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="login-password">Password</label>
-              <div class="input-with-icon">
-                <span class="input-icon">🔑</span>
-                <input
-                  id="login-password"
-                  class="input-field"
-                  type="password"
-                  placeholder="I-type imong password"
-                  required
-                  autocomplete="current-password"
-                  ${isLocked ? 'disabled' : ''}
-                />
-                <button type="button" class="btn-toggle-eye" id="toggle-password-btn">
-                  Show
-                </button>
-              </div>
-            </div>
-
-            <button id="login-submit-btn" type="submit" class="btn-primary-gaming" ${isLocked ? 'disabled' : ''}>
-              <span>🎮 SIGN IN & PLAY</span>
-            </button>
-          </form>
-
-          <div class="helper-box-counter">
-            <span class="helper-icon">💡</span>
-            <div class="helper-content">
-              <strong>Bag-o ka sa Artemia Pisonet?</strong>
-              <p>Duol lang sa counter/bantay aron magpa-rehistro sa imong account ug magpa-load og oras.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  private renderPasswordChangeScreen(user: CustomerUser): string {
-    return `
-      <div class="auth-card-wrapper">
-        <div class="auth-card premium-card">
-          <div class="auth-header">
-            <div class="auth-avatar-shield" style="border-color:#10b981; color:#10b981;">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
-            </div>
-            <h2 class="card-title">Setup Personal Password</h2>
-            <p class="card-subtitle">
-              Maayong pag-abot, <strong style="color:#22d3ee;">${user.fullName}</strong>! Palihug paghimo sa imong kaugalingong password aron mas luwas ang imong account.
-            </p>
-          </div>
-
-          <div id="password-error-msg" class="login-alert-error" style="display:none;"></div>
-
-          <form id="change-password-form" class="auth-form">
-            <div class="form-group">
-              <label class="form-label" for="new-password">Bag-ong Password</label>
-              <div class="input-with-icon">
-                <span class="input-icon">🔒</span>
-                <input id="new-password" class="input-field" type="password" placeholder="Labing menos 6 ka letra o numero" required />
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="confirm-password">I-confirm ang Password</label>
-              <div class="input-with-icon">
-                <span class="input-icon">✓</span>
-                <input id="confirm-password" class="input-field" type="password" placeholder="I-type usab ang bag-ong password" required />
-              </div>
-            </div>
-
-            <button id="save-password-btn" type="submit" class="btn-primary-gaming" style="background:linear-gradient(135deg, #10b981, #059669);">
-              <span>✓ I-SAVE UG PADAYON</span>
-            </button>
-          </form>
-        </div>
-      </div>
-    `;
-  }
-
-  private renderAccountScreen(user: CustomerUser, pc?: PublicPC): string {
-    const remaining = user.balance?.remainingSeconds || 0;
-    const hasRemainingTime = remaining > 0;
-    const isAuthorizedOpenTime = Boolean(user.openTimeAuthorizationId);
-    const canPlay = (hasRemainingTime || isAuthorizedOpenTime) && user.status === 'active';
-
-    return `
-      <div class="auth-card-wrapper">
-        <div class="account-card premium-card">
-          <div class="account-header">
-            <div class="user-greeting-box">
-              <div class="user-avatar-badge">${(user.fullName || user.username).charAt(0).toUpperCase()}</div>
-              <div>
-                <span class="greeting-subtitle">Maayong pag-abot,</span>
-                <h2 class="user-full-name">${user.fullName}</h2>
-                <div class="user-handle">@${user.username}</div>
-              </div>
-            </div>
-
-            <button id="logout-btn" class="btn-signout" title="Sign out safely">
-              🚪 Sign Out
-            </button>
-          </div>
-
-          ${!hasRemainingTime && !isAuthorizedOpenTime ? `
-            <div class="topup-required-banner">
-              <div class="banner-icon">⛔</div>
-              <div class="banner-text">
-                <strong>ZERO BALANCE (0 MINUTO NA LANG)</strong>
-                <p>Naka-lock ang desktop access. Palihug duol sa counter aron mag-load o mag-top up sa imong account.</p>
-              </div>
-            </div>
-          ` : ''}
-
-          <!-- Giant Digital Timer Hero -->
-          <div class="hero-time-card ${remaining <= 300 && hasRemainingTime ? 'low-time-alert' : ''}">
-            <span class="time-card-label">IMONG ORAS NGA PWEDE GAMITON:</span>
-            <div class="giant-digital-clock">
-              ${formatSecondsToDigital(remaining)}
-            </div>
-            <div class="human-time-badge">
-              ${hasRemainingTime ? formatSecondsToHumanReadable(remaining) : 'Walay nahabilin nga oras'}
-            </div>
-          </div>
-
-          <!-- Station Specs Info Row -->
-          <div class="station-info-row">
-            <div class="info-item">
-              <span class="info-label">Active Terminal</span>
-              <strong class="info-val">${pc ? pc.name : 'PC 01'}</strong>
-            </div>
-            <div class="info-item">
-              <span class="info-label">Account Status</span>
-              <strong class="info-val status-active">✓ Active & Ready</strong>
-            </div>
-          </div>
-
-          <!-- Primary Start Button -->
-          ${canPlay ? `
-            <button id="start-session-btn" class="btn-start-gaming">
-              <span>🚀 SUGDI ANG PAGDULA (START PLAYING)</span>
-            </button>
-          ` : `
-            <button class="btn-disabled-topup" disabled>
-              <span>⛔ DUOL SA COUNTER ARON MAG-TOP UP</span>
-            </button>
-          `}
-        </div>
-      </div>
-    `;
-  }
-
-  private renderActiveSessionScreen(session: LiveSession, pc?: PublicPC): string {
-    const isFixed = session.type === 'fixed-time';
-    const remaining = Number(session.remainingSeconds) || 0;
-    const isLowTime = isFixed && remaining <= 300;
-    const isCritical = isFixed && remaining <= 60;
-
-    // When customer clicked "Save & Pause", render confirmation buttons directly inside the HUD
-    if (this.confirmPauseModalOpen) {
-      return `
-        <div class="hud-timer-overlay hud-pause-mode" id="hud-timer-widget">
-          <!-- Draggable Header -->
-          <div class="hud-header">
-            <div class="hud-drag-handle" title="Click and drag to move timer">
-              <span class="hud-drag-icon">⏸</span>
-              <span style="color:#f59e0b; font-weight:800; font-size:0.75rem;">CONFIRM PAUSE?</span>
-            </div>
-            <div class="hud-actions">
-              <span id="pause-confirm-clock" style="font-size:0.75rem; color:#22d3ee; font-family:var(--font-mono); font-weight:800;">
-                ${isFixed ? formatSecondsToDigital(remaining) : formatSecondsToDigital(session.totalActiveSeconds)}
-              </span>
-            </div>
-          </div>
-
-          <!-- Direct Visible Buttons Row inside HUD -->
-          <div class="hud-confirm-actions">
-            <button id="confirm-pause-btn" class="hud-confirm-btn save" title="Save remaining time and lock station">
-              ✓ Yes, Save & Lock
-            </button>
-            <button id="cancel-pause-btn" class="hud-confirm-btn cancel" title="Keep playing">
-              ✕ Keep Playing
-            </button>
-          </div>
-        </div>
-      `;
-    }
-
-    return `
-      <div class="hud-timer-overlay" id="hud-timer-widget">
-        <!-- Low Time / Critical Alert Banner (When <= 300s / 5 mins) -->
-        ${isLowTime ? `
-          <div class="hud-top-warning-banner ${isCritical ? 'critical' : ''}">
-            ⚠️ ${isCritical ? '1 MIN LEFT — MAG SHUTDOWN NA ANG PC!' : '5 MINS LEFT — TOP UP NA ARON DILI MA-SHUTDOWN!'}
-          </div>
-        ` : ''}
-
-        <!-- Draggable Bar -->
-        <div class="hud-header">
-          <div class="hud-drag-handle" title="Click and drag to move timer anywhere on screen">
-            <span class="hud-drag-icon">⠿</span>
-            <span class="hud-station-tag">${pc ? pc.name : 'PC 01'}</span>
-            <span class="hud-user-tag">@${this.user ? this.user.username : session.customerName}</span>
-          </div>
-
-          <div class="hud-actions">
-            <!-- Minimize Button -->
-            <button id="minimize-hud-btn" class="hud-btn hud-btn-min" title="Minimize to Taskbar (Play Fullscreen)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-            </button>
-
-            <!-- Pause & Save CTA -->
-            <button id="pause-session-btn" class="hud-btn hud-btn-pause" title="Pause session & save remaining time">
-              ⏸ Save & Pause
-            </button>
-          </div>
-        </div>
-
-        <!-- Clock & Subtitle Row -->
-        <div class="hud-body">
-          <div id="clock-digits" class="hud-digits ${isCritical ? 'critical-time' : isLowTime ? 'low-time' : ''}">
-            ${isFixed ? formatSecondsToDigital(remaining) : formatSecondsToDigital(session.totalActiveSeconds)}
-          </div>
-
-          <div class="hud-meta-col">
-            <span class="hud-mode-pill ${isFixed ? 'fixed-time' : 'open-time'}">
-              ${isFixed ? '⏱ FIXED' : '♾ OPEN'}
-            </span>
-            <div id="clock-sub" class="hud-sub-clock">
-              ${isFixed ? formatSecondsToHumanReadable(remaining) : 'Playing'}
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  private renderPauseModal(): string {
-    const rem = this.activeSession ? formatSecondsToHumanReadable(this.activeSession.remainingSeconds) : '';
-    return `
-      <div class="modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:center; z-index:9999;">
-        <div class="modal-content" style="background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:16px; padding:28px; max-width:440px; width:90%; color:#fff;">
-          <h3 class="modal-title" style="font-size:1.25rem; font-weight:800; margin-bottom:10px;">Pause Session & Release PC?</h3>
-          <div class="modal-body" style="font-size:0.9rem; color:#cbd5e1; line-height:1.5; margin-bottom:20px;">
-            <p>Your exact remaining time of <strong style="color:#22d3ee;">${rem}</strong> will be saved safely to your account in MongoDB Atlas.</p>
-            <p style="margin-top:8px;">This PC will be re-locked for other players. You can return later and resume playing on <strong>any available PC</strong>!</p>
-          </div>
-          <div class="modal-actions" style="display:flex; justify-content:flex-end; gap:12px;">
-            <button id="cancel-pause-btn" class="btn btn-secondary" style="padding:10px 18px; background:rgba(255,255,255,0.1); border:none; border-radius:8px; color:#fff; font-weight:600; cursor:pointer;">
-              Keep Playing
-            </button>
-            <button id="confirm-pause-btn" class="btn btn-primary" style="padding:10px 18px; background:#06b6d4; border:none; border-radius:8px; color:#fff; font-weight:700; cursor:pointer;">
-              Yes, Pause & Save Time
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  // --------------------------------------------------------------------------
-  // Event Attachments
-  // --------------------------------------------------------------------------
-  private attachEventListeners(): void {
-    const selector = document.getElementById('pc-selector') as HTMLSelectElement;
-    if (selector) {
-      selector.addEventListener('change', (e) => {
-        this.currentPcId = (e.target as HTMLSelectElement).value;
-        localStorage.setItem('artemia_station_id', this.currentPcId);
-        this.initSocket();
-        this.render();
-        this.showToast(`Switched to station: ${this.currentPcId.toUpperCase()}`, 'info');
-      });
-    }
-
-    const btnMin = document.getElementById('btn-desktop-minimize');
-    if (btnMin) {
-      btnMin.addEventListener('click', () => {
-        desktopWindow.pisonetDesktop?.minimize?.();
-      });
-    }
-
-    const btnExit = document.getElementById('btn-desktop-exit');
-    if (btnExit) {
-      btnExit.addEventListener('click', () => {
-        desktopWindow.pisonetDesktop?.close?.();
-      });
-    }
-
-    const serverBtn = document.getElementById('server-setup-btn');
-    if (serverBtn) {
-      serverBtn.addEventListener('click', () => this.promptServerSetup());
-    }
-
-    const toggleBtn = document.getElementById('toggle-password-btn');
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', () => this.togglePasswordVisibility());
-    }
-
-    const loginForm = document.getElementById('customer-login-form');
-    if (loginForm) {
-      loginForm.addEventListener('submit', (e) => this.handleLogin(e));
-    }
-
-    const passForm = document.getElementById('change-password-form');
-    if (passForm) {
-      passForm.addEventListener('submit', (e) => this.handleChangePassword(e));
-    }
-
-    const startBtn = document.getElementById('start-session-btn');
-    if (startBtn) {
-      startBtn.addEventListener('click', () => this.handleStartOrResume());
-    }
-
-    const logoutBtn = document.getElementById('logout-btn');
-    if (logoutBtn) {
-      logoutBtn.addEventListener('click', () => this.handleLogout());
-    }
-
-    const pauseBtn = document.getElementById('pause-session-btn');
-    if (pauseBtn) {
-      pauseBtn.addEventListener('click', () => this.openPauseConfirmModal());
-    }
-
-    const cancelBtn = document.getElementById('cancel-pause-btn');
-    if (cancelBtn) {
-      cancelBtn.addEventListener('click', () => this.closePauseConfirmModal());
-    }
-    const confirmBtn = document.getElementById('confirm-pause-btn');
-    if (confirmBtn) {
-      confirmBtn.addEventListener('click', () => this.confirmPauseAndLogout());
-    }
-
-    const minBtn = document.getElementById('minimize-hud-btn');
-    if (minBtn) {
-      minBtn.addEventListener('click', () => {
-        desktopWindow.pisonetDesktop?.minimize?.();
-      });
-    }
-
-    const compactBtn = document.getElementById('toggle-compact-btn');
-    if (compactBtn) {
-      compactBtn.addEventListener('click', () => this.toggleOverlayMode());
-    }
-
-    // Power On button from Standby
-    const powerOnBtn = document.getElementById('power-on-btn');
-    if (powerOnBtn) {
-      powerOnBtn.addEventListener('click', () => this.powerOnFromStandby());
-    }
-
-    // Web Tester Toolbar Event Handlers
-    const testSoundBtn = document.getElementById('btn-test-sound');
-    if (testSoundBtn) {
-      testSoundBtn.addEventListener('click', () => this.playFiveMinuteAlert());
-    }
-
-    const test5MinBtn = document.getElementById('btn-test-5min');
-    if (test5MinBtn) {
-      test5MinBtn.addEventListener('click', () => {
-        if (this.activeSession) {
-          this.activeSession.remainingSeconds = 305;
-          this.warnedThresholds.delete(300);
-          this.updateClockDisplay();
-          this.showToast('Time set to 5m 5s! Listen in 5 seconds...', 'info');
-        } else {
-          this.testWarning(305);
-          this.showToast('Test session started at 5m 5s! Listen in 5 seconds...', 'info');
-        }
-      });
-    }
-
-    const test1MinBtn = document.getElementById('btn-test-1min');
-    if (test1MinBtn) {
-      test1MinBtn.addEventListener('click', () => {
-        if (this.activeSession) {
-          this.activeSession.remainingSeconds = 65;
-          this.warnedThresholds.delete(60);
-          this.updateClockDisplay();
-          this.showToast('Time set to 1m 5s! Listen in 5 seconds...', 'warning');
-        } else {
-          this.testWarning(65);
-          this.showToast('Test session started at 1m 5s! Listen in 5 seconds...', 'warning');
-        }
-      });
-    }
-
-    const testIdleBtn = document.getElementById('btn-test-idle');
-    if (testIdleBtn) {
-      testIdleBtn.addEventListener('click', () => {
-        this.idleSeconds = 548;
-        this.showToast('Idle timer set to 9m 48s! Shutdown countdown appearing in 2 seconds...', 'info');
-      });
-    }
-
-    const testCoin5Btn = document.getElementById('btn-test-coin-5');
-    if (testCoin5Btn) {
-      testCoin5Btn.addEventListener('click', () => {
-        if (this.activeSession) {
-          this.activeSession.remainingSeconds += 2400;
-          this.warnedThresholds.clear();
-          this.updateClockDisplay();
-          this.showToast('Simulated ₱5 Coin Drop: +40 Minutes added to session!', 'success');
-        } else {
-          this.showToast('Simulated ₱5 Coin Drop (40 Minutes). Log in to activate!', 'success');
-        }
-      });
-    }
-
-    const testCoin10Btn = document.getElementById('btn-test-coin-10');
-    if (testCoin10Btn) {
-      testCoin10Btn.addEventListener('click', () => {
-        if (this.activeSession) {
-          this.activeSession.remainingSeconds += 4800;
-          this.warnedThresholds.clear();
-          this.updateClockDisplay();
-          this.showToast('Simulated ₱10 Coin Drop: +80 Minutes added to session!', 'success');
-        } else {
-          this.showToast('Simulated ₱10 Coin Drop (80 Minutes). Log in to activate!', 'success');
-        }
-      });
-    }
-  }
-
-  // Developer & Operator test helpers to preview warning & shutdown screens
-  public testWarning(secondsLeft: number = 295): void {
-    this.user = {
-      id: 'cust-demo',
-      username: 'sample_customer',
-      fullName: 'Sample Customer',
-      role: 'customer',
-      status: 'active',
-      balance: {
-        remainingSeconds: secondsLeft,
-        totalPurchasedSeconds: 3600,
-        totalPlayedSeconds: 3305
-      }
-    };
-    this.activeSession = {
-      id: 'demo-session',
-      pcId: this.currentPcId,
-      customerId: 'cust-demo',
-      customerName: 'Sample Customer',
-      type: 'fixed-time',
-      status: 'active',
-      remainingSeconds: secondsLeft,
-      totalActiveSeconds: 3305,
-      rateMinorUnitsPerHour: 2000,
-      accruedChargesMinorUnits: 0,
-      startedAt: new Date().toISOString()
-    };
-    this.currentScreen = 'session';
-    this.render();
-    this.checkThresholds(secondsLeft);
-  }
-
-  public testShutdown(): void {
-    this.handleTimeExpired();
+    });
   }
 }
 
-// Instantiate on DOM load
-window.addEventListener('DOMContentLoaded', () => {
-  const appInstance = new CustomerDesktopApp();
-  (window as any).artemiaCustomerApp = appInstance;
-});
+// Instantiate agent on DOM ready
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', () => {
+    new StationMaintenanceAgent();
+  });
+}

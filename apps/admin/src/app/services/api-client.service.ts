@@ -106,12 +106,6 @@ export class ApiClientService {
     this.initSocketConnection();
   }
 
-  public onSocketEvent(event: string, callback: (data: any) => void): void {
-    if (this.socket) {
-      this.socket.on(event, callback);
-    }
-  }
-
   // -------------------------------------------------------------
   // REST API Methods
   // -------------------------------------------------------------
@@ -341,5 +335,56 @@ export class ApiClientService {
 
   public async getDailySalesPreview() {
     return this.request<{ success: boolean; data: any; html: string }>('/api/v1/reports/daily-preview');
+  }
+
+  // -------------------------------------------------------------
+  // Fleet Maintenance & Remote Management APIs
+  // -------------------------------------------------------------
+  public async getMaintenanceOverview() {
+    return this.request<{ success: boolean; data: any }>('/api/v1/maintenance/overview');
+  }
+
+  public async executeRemoteCommand(targetPcId: string, command: string, shell: 'powershell' | 'cmd' = 'powershell') {
+    return this.request<{ success: boolean; message: string; payload: any }>('/api/v1/maintenance/command', {
+      method: 'POST',
+      body: JSON.stringify({ targetPcId, command, shell })
+    });
+  }
+
+  public async cleanTempFiles(targetPcId: string = 'all') {
+    return this.request<{ success: boolean; message: string }>('/api/v1/maintenance/clean-temp', {
+      method: 'POST',
+      body: JSON.stringify({ targetPcId })
+    });
+  }
+
+  public async triggerGameUpdate(targetPcId: string = 'all', gameKey: string, updateCommand?: string) {
+    return this.request<{ success: boolean; message: string }>('/api/v1/maintenance/game-update', {
+      method: 'POST',
+      body: JSON.stringify({ targetPcId, gameKey, updateCommand })
+    });
+  }
+
+  public async executePowerAction(targetPcId: string = 'all', action: 'restart' | 'shutdown' | 'sleep' | 'lock' | 'unlock') {
+    return this.request<{ success: boolean; message: string }>('/api/v1/maintenance/power', {
+      method: 'POST',
+      body: JSON.stringify({ targetPcId, action })
+    });
+  }
+
+  // Direct Socket IPC Relays for File Manager, Process Manager, and Screen View
+  public emitSocket(event: string, data: any) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit(event, data);
+    }
+  }
+
+  public onSocketEvent(event: string, callback: (data: any) => void): () => void {
+    if (this.socket) {
+      this.socket.on(event, callback);
+    }
+    return () => {
+      this.socket?.off(event, callback);
+    };
   }
 }

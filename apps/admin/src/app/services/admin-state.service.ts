@@ -494,6 +494,147 @@ export class AdminStateService {
 
 
   // -------------------------------------------------------------
+  // Fleet Maintenance & Remote Management Hub
+  // -------------------------------------------------------------
+  public async cleanTempFiles(targetPcId: string = 'all'): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await this.apiClient.cleanTempFiles(targetPcId);
+      return { success: res.success, message: res.message };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Clean temp files failed.' };
+    }
+  }
+
+  public async executeRemoteCommand(targetPcId: string, command: string, shell: 'powershell' | 'cmd' = 'powershell'): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await this.apiClient.executeRemoteCommand(targetPcId, command, shell);
+      return { success: res.success, message: res.message };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Remote command failed.' };
+    }
+  }
+
+  public async triggerGameUpdate(targetPcId: string = 'all', gameKey: string, updateCommand?: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await this.apiClient.triggerGameUpdate(targetPcId, gameKey, updateCommand);
+      return { success: res.success, message: res.message };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Game update request failed.' };
+    }
+  }
+
+  public async executePowerAction(targetPcId: string = 'all', action: 'restart' | 'shutdown' | 'sleep' | 'lock' | 'unlock'): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await this.apiClient.executePowerAction(targetPcId, action);
+      await this.syncFromBackend();
+      return { success: res.success, message: res.message };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Power action failed.' };
+    }
+  }
+
+  // Socket-based Request/Response Helpers with timeout
+  public browseDirectory(pcId: string, dirPath: string): Promise<any[]> {
+    return new Promise((resolve) => {
+      const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve([]);
+      }, 8000);
+
+      const cleanup = this.apiClient.onSocketEvent('maintenance:fs:list:res', (data: any) => {
+        if (data.reqId === reqId || (data.pcId === pcId && data.path === dirPath)) {
+          clearTimeout(timer);
+          cleanup();
+          resolve(data.entries || []);
+        }
+      });
+
+      this.apiClient.emitSocket('maintenance:fs:list:req', { reqId, pcId, path: dirPath });
+    });
+  }
+
+  public deleteRemoteFile(pcId: string, targetPath: string): Promise<{ success: boolean; message?: string }> {
+    return new Promise((resolve) => {
+      const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve({ success: false, message: 'Request timed out' });
+      }, 8000);
+
+      const cleanup = this.apiClient.onSocketEvent('maintenance:fs:delete:res', (data: any) => {
+        if (data.reqId === reqId || (data.pcId === pcId && data.path === targetPath)) {
+          clearTimeout(timer);
+          cleanup();
+          resolve({ success: data.success, message: data.message });
+        }
+      });
+
+      this.apiClient.emitSocket('maintenance:fs:delete:req', { reqId, pcId, path: targetPath });
+    });
+  }
+
+  public getProcessList(pcId: string): Promise<any[]> {
+    return new Promise((resolve) => {
+      const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve([]);
+      }, 8000);
+
+      const cleanup = this.apiClient.onSocketEvent('maintenance:process:list:res', (data: any) => {
+        if (data.reqId === reqId || data.pcId === pcId) {
+          clearTimeout(timer);
+          cleanup();
+          resolve(data.processes || []);
+        }
+      });
+
+      this.apiClient.emitSocket('maintenance:process:list:req', { reqId, pcId });
+    });
+  }
+
+  public killRemoteProcess(pcId: string, pidOrName: string | number): Promise<{ success: boolean; message?: string }> {
+    return new Promise((resolve) => {
+      const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve({ success: false, message: 'Request timed out' });
+      }, 8000);
+
+      const cleanup = this.apiClient.onSocketEvent('maintenance:process:kill:res', (data: any) => {
+        if (data.reqId === reqId || data.pcId === pcId) {
+          clearTimeout(timer);
+          cleanup();
+          resolve({ success: data.success, message: data.message });
+        }
+      });
+
+      this.apiClient.emitSocket('maintenance:process:kill:req', { reqId, pcId, target: pidOrName });
+    });
+  }
+
+  public captureScreen(pcId: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, 10000);
+
+      const cleanup = this.apiClient.onSocketEvent('maintenance:screen:res', (data: any) => {
+        if (data.reqId === reqId || data.pcId === pcId) {
+          clearTimeout(timer);
+          cleanup();
+          resolve(data.imageData || null);
+        }
+      });
+
+      this.apiClient.emitSocket('maintenance:screen:req', { reqId, pcId });
+    });
+  }
+
+  // -------------------------------------------------------------
   // Settings
   // -------------------------------------------------------------
   public async updatePricingConfig(updates: Partial<PricingConfig>): Promise<void> {

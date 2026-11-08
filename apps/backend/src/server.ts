@@ -23,6 +23,7 @@ import { openTimeRoutes } from './routes/open-time.routes';
 import { pricingRoutes } from './routes/pricing.routes';
 import { reportRoutes } from './routes/reports.routes';
 import { syncRoutes } from './routes/sync.routes';
+import { maintenanceRoutes } from './routes/maintenance.routes';
 
 const app = new Hono();
 
@@ -77,6 +78,7 @@ app.route('/api/v1/pricing', pricingRoutes);
 app.route('/pricing', pricingRoutes);
 app.route('/api/v1/reports', reportRoutes);
 app.route('/api/v1/sync', syncRoutes);
+app.route('/api/v1/maintenance', maintenanceRoutes);
 
 // Client App Auto-Update & Download routes
 app.get('/api/v1/client-app/update-check', (c) => {
