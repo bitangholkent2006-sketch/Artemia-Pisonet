@@ -548,18 +548,24 @@ ipcMain.handle('maintenance:get-disk-drives', async () => {
       try {
         const raw = JSON.parse(stdout || '[]');
         const list = Array.isArray(raw) ? raw : [raw];
-        const drives = list.map((d: any) => {
-          const freeGb = Math.round((d.Free || 0) / (1024 * 1024 * 1024));
-          const usedGb = Math.round((d.Used || 0) / (1024 * 1024 * 1024));
-          const totalGb = freeGb + usedGb;
-          return {
-            drive: d.Root || 'C:\\',
-            freeGb,
-            totalGb,
-            usedGb,
-            percentUsed: totalGb > 0 ? Math.round((usedGb / totalGb) * 100) : 0
-          };
-        });
+        const drives = list
+          .filter((d: any) => d && d.Root && (d.Free != null || d.Used != null))
+          .map((d: any) => {
+            const cleanDrive = String(d.Root || 'C:').replace(/\\$/, '').toUpperCase();
+            const freeGb = Math.round((d.Free || 0) / (1024 * 1024 * 1024));
+            const usedGb = Math.round((d.Used || 0) / (1024 * 1024 * 1024));
+            const totalGb = freeGb + usedGb;
+            const percentUsed = totalGb > 0 ? Math.round((usedGb / totalGb) * 100) : 0;
+            return {
+              drive: cleanDrive,
+              label: cleanDrive === 'C:' ? 'System' : 'Storage',
+              freeGb,
+              totalGb,
+              usedGb,
+              usedPercent: percentUsed,
+              percentUsed
+            };
+          });
         resolve({ drives });
       } catch {
         resolve({ drives: [] });

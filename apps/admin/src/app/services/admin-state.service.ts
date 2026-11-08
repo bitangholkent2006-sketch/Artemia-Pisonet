@@ -155,7 +155,13 @@ export class AdminStateService {
     this.apiClient.onSocketEvent('pc:telemetry', (data: any) => {
       if (data?.pcId) {
         const currentPcs = this.state.pcs || [];
-        const index = currentPcs.findIndex(p => p.id === data.pcId);
+        const targetId = String(data.pcId).toLowerCase();
+        const index = currentPcs.findIndex(p =>
+          p.id.toLowerCase() === targetId ||
+          p.identifier?.toLowerCase() === targetId ||
+          p.name?.toLowerCase() === targetId ||
+          p.id.toLowerCase() === `pc-${targetId}`
+        );
         if (index !== -1) {
           const updated = [...currentPcs];
           updated[index] = { ...updated[index], ...data };

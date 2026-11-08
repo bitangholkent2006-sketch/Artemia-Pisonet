@@ -82,6 +82,7 @@ class StationMaintenanceAgent {
     ramPercent: 42,
     diskUsedGb: 320,
     diskTotalGb: 500,
+    diskUsage: [] as any[],
     activeApp: 'Desktop Idle'
   };
 
@@ -797,21 +798,35 @@ class StationMaintenanceAgent {
     setInterval(async () => {
       if (!this.isConnected || !this.socket) return;
 
-      if (desktopWindow.pisonetDesktop) {
+      if (desktopWindow.pisonetDesktop?.getDiskDrives) {
         try {
           const drivesRes = await desktopWindow.pisonetDesktop.getDiskDrives();
-          if (drivesRes?.drives?.length) {
-            const cDrive = drivesRes.drives[0];
-            this.telemetry.diskUsedGb = cDrive.usedGb;
-            this.telemetry.diskTotalGb = cDrive.totalGb;
+          if (drivesRes?.drives && Array.isArray(drivesRes.drives)) {
+            this.telemetry.diskUsage = drivesRes.drives;
+            if (drivesRes.drives.length > 0) {
+              const cDrive = drivesRes.drives[0];
+              this.telemetry.diskUsedGb = cDrive.usedGb;
+              this.telemetry.diskTotalGb = cDrive.totalGb;
+            }
           }
         } catch {}
       }
 
-      this.socket.emit('pc:telemetry', {
+      const telemetryPayload = {
         pcId: this.pcId,
         ...this.telemetry,
+        diskUsage: this.telemetry.diskUsage,
         timestamp: new Date().toISOString()
+      };
+
+      this.socket.emit('pc:telemetry', telemetryPayload);
+
+      this.socket.emit('pc:heartbeat', {
+        pcId: this.pcId,
+        telemetry: {
+          ...this.telemetry,
+          diskUsage: this.telemetry.diskUsage
+        }
       });
 
       this.updateTelemetryDOM();

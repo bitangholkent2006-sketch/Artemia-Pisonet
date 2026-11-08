@@ -41,3 +41,4 @@ echo Dili na kinahanglan i-double click ang .bat file!
 echo ========================================================
 echo.
 pause
+

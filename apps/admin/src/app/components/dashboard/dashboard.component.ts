@@ -180,23 +180,28 @@ import { PC, PCStatus } from '@pisonet/shared';
               💻 {{ pc.specs || 'Ryzen Gaming Station • 16GB RAM' }}
             </div>
 
-            <!-- Storage / Disks Progress Bars -->
+            <!-- Storage / Disks Progress Bars (Dynamically detected from real PC drives) -->
             <div class="disk-usage-section">
-              <div class="disk-row">
-                <span class="disk-name">Drive C: (System)</span>
-                <span class="disk-val">{{ getDrivePercent(pc, 'C:') }}% Full</span>
-              </div>
-              <div class="disk-progress-bar">
-                <div class="disk-fill" [style.width.%]="getDrivePercent(pc, 'C:')" [ngClass]="{'warning': getDrivePercent(pc, 'C:') > 85}"></div>
-              </div>
-
-              <div class="disk-row" style="margin-top: 6px;">
-                <span class="disk-name">Drive D: (Games Drive)</span>
-                <span class="disk-val">{{ getDrivePercent(pc, 'D:') }}% Full</span>
-              </div>
-              <div class="disk-progress-bar">
-                <div class="disk-fill games" [style.width.%]="getDrivePercent(pc, 'D:')"></div>
-              </div>
+              <ng-container *ngIf="getPcDrives(pc).length > 0; else noDrives">
+                <div *ngFor="let d of getPcDrives(pc)" class="disk-item">
+                  <div class="disk-row">
+                    <span class="disk-name">💽 Drive {{ d.drive }} {{ d.label ? '(' + d.label + ')' : '' }}</span>
+                    <span class="disk-val">
+                      {{ d.usedPercent }}% Full
+                      <span class="disk-sub" *ngIf="d.totalGb">({{ d.freeGb }}GB free of {{ d.totalGb }}GB)</span>
+                    </span>
+                  </div>
+                  <div class="disk-progress-bar">
+                    <div class="disk-fill" [style.width.%]="d.usedPercent" [ngClass]="{'warning': d.usedPercent > 80 && d.usedPercent <= 90, 'danger': d.usedPercent > 90}"></div>
+                  </div>
+                </div>
+              </ng-container>
+              <ng-template #noDrives>
+                <div class="disk-row" style="margin-bottom: 0;">
+                  <span class="disk-name" style="color: #64748b;">💽 Storage</span>
+                  <span class="disk-val" style="color: #64748b; font-weight: 500;">Scanning drives...</span>
+                </div>
+              </ng-template>
             </div>
           </div>
 
@@ -585,12 +590,33 @@ import { PC, PCStatus } from '@pisonet/shared';
       padding: 10px 12px;
       margin-bottom: 16px;
     }
+    .disk-item {
+      margin-bottom: 8px;
+    }
+    .disk-item:last-child {
+      margin-bottom: 0;
+    }
     .disk-row {
       display: flex;
       justify-content: space-between;
+      align-items: center;
       font-size: 0.72rem;
       color: #94a3b8;
       margin-bottom: 4px;
+    }
+    .disk-name {
+      font-weight: 700;
+      color: #cbd5e1;
+    }
+    .disk-val {
+      font-weight: 700;
+      color: #38bdf8;
+    }
+    .disk-sub {
+      font-size: 0.68rem;
+      font-weight: 400;
+      color: #64748b;
+      margin-left: 4px;
     }
     .disk-progress-bar {
       height: 6px;
@@ -602,12 +628,13 @@ import { PC, PCStatus } from '@pisonet/shared';
       height: 100%;
       background: #0284c7;
       border-radius: 3px;
+      transition: width 0.3s ease;
     }
     .disk-fill.warning {
-      background: #e11d48;
+      background: #f59e0b;
     }
-    .disk-fill.games {
-      background: #8b5cf6;
+    .disk-fill.danger {
+      background: #e11d48;
     }
     .pc-quick-modules {
       display: grid;
@@ -911,6 +938,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
     if (lower.includes('chrome') || lower.includes('edge') || lower.includes('browser')) return '🌐';
     if (lower.includes('steam') || lower.includes('epic')) return '🚀';
     return '⚡';
+  }
+
+  getPcDrives(pc: PC): any[] {
+    if (pc.diskUsage && Array.isArray(pc.diskUsage) && pc.diskUsage.length > 0) {
+      return pc.diskUsage;
+    }
+    return [];
   }
 
   getDrivePercent(pc: PC, drive: string): number {

@@ -148,29 +148,57 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     // PC Terminal Heartbeat Event & Telemetry
     authSocket.on('pc:heartbeat', async (data: { pcId: string; telemetry?: any }) => {
-      const targetId = pcId || data?.pcId;
+      const targetId = authSocket.data.pcId || pcId || data?.pcId;
       if (targetId) {
         await PcService.recordHeartbeat(targetId);
         if (data?.telemetry) {
           try {
             const { getCollections } = await import('../database/connection');
             const collections = getCollections();
+            const diskUsage = data.telemetry.diskUsage || (data.telemetry.diskTotalGb ? [{
+              drive: 'C:',
+              label: 'System',
+              totalGb: data.telemetry.diskTotalGb,
+              freeGb: (data.telemetry.diskTotalGb || 0) - (data.telemetry.diskUsedGb || 0),
+              usedPercent: data.telemetry.diskTotalGb > 0 ? Math.round(((data.telemetry.diskUsedGb || 0) / data.telemetry.diskTotalGb) * 100) : 0
+            }] : []);
+
             await collections.pcs.updateOne(
               { id: targetId },
               {
                 $set: {
                   cpuPercent: data.telemetry.cpuPercent,
                   ramPercent: data.telemetry.ramPercent,
-                  diskUsage: data.telemetry.diskUsage,
+                  diskUsage: diskUsage,
                   activeApp: data.telemetry.activeApp,
                   uptimeSeconds: data.telemetry.uptimeSeconds,
                   updatedAt: new Date()
                 }
               }
             );
-            broadcastRealtimeEvent('pc:telemetry', { pcId: targetId, ...data.telemetry }, 'staff');
+            broadcastRealtimeEvent('pc:telemetry', { pcId: targetId, ...data.telemetry, diskUsage }, 'staff');
           } catch {}
         }
+      }
+    });
+
+    authSocket.on('pc:telemetry', async (data: any) => {
+      const targetId = authSocket.data.pcId || pcId || data?.pcId;
+      if (targetId) {
+        const diskUsage = data.diskUsage || data.telemetry?.diskUsage;
+        try {
+          const { getCollections } = await import('../database/connection');
+          const collections = getCollections();
+          const updateFields: any = { updatedAt: new Date() };
+          if (data.cpuPercent != null) updateFields.cpuPercent = data.cpuPercent;
+          if (data.ramPercent != null) updateFields.ramPercent = data.ramPercent;
+          if (diskUsage != null) updateFields.diskUsage = diskUsage;
+          if (data.activeApp != null) updateFields.activeApp = data.activeApp;
+          if (data.uptimeSeconds != null) updateFields.uptimeSeconds = data.uptimeSeconds;
+
+          await collections.pcs.updateOne({ id: targetId }, { $set: updateFields });
+          broadcastRealtimeEvent('pc:telemetry', { pcId: targetId, ...data, diskUsage }, 'staff');
+        } catch {}
       }
     });
 
