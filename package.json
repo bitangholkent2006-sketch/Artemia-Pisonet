@@ -7,11 +7,6 @@
     "packages/*",
     "apps/*"
   ],
-  "packageManager": "npm@10.8.2",
-  "engines": {
-    "node": ">=20.0.0",
-    "npm": ">=10.0.0"
-  },
   "scripts": {
     "build": "npm run build:shared && npm run build:backend",
     "prestart": "npm run build:shared && npm run build:backend",
