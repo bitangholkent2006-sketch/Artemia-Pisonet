@@ -18,6 +18,25 @@ if (process.platform === 'win32') {
   } catch {}
 }
 
+function isAutoStartEnabled(): boolean {
+  try {
+    const settings = app.getLoginItemSettings();
+    return !!settings.openAtLogin;
+  } catch {
+    return false;
+  }
+}
+
+function setAutoStart(enable: boolean) {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enable,
+      name: "Artemia Fleet Station Agent",
+      path: process.execPath
+    });
+  } catch {}
+}
+
 function createTray() {
   if (tray) return;
   try {
@@ -31,6 +50,14 @@ function createTray() {
         { label: `Artemia Station: ${process.env.COMPUTERNAME || os.hostname() || 'PC'}`, enabled: false },
         { label: `Status: ${isStationLocked ? '🔒 LOCKED' : '🟢 ACTIVE / ONLINE'}`, enabled: false },
         { type: 'separator' },
+        {
+          label: 'Run on Windows Startup (Automatic)',
+          type: 'checkbox',
+          checked: isAutoStartEnabled(),
+          click: (item) => {
+            setAutoStart(item.checked);
+          }
+        },
         {
           label: 'Show Maintenance Console',
           click: () => {
@@ -554,6 +581,8 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
+    // Automatically register auto-start on Windows so pisonet agent runs on power-on
+    setAutoStart(true);
     createWindow();
     createTray();
   });
