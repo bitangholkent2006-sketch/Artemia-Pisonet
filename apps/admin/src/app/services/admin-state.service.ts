@@ -126,14 +126,35 @@ export class AdminStateService {
   }
 
   private setupRealtimeListeners() {
+    this.apiClient.onSocketEvent('pc:updated', () => this.syncFromBackend());
+    this.apiClient.onSocketEvent('pc:registered', () => this.syncFromBackend());
+    this.apiClient.onSocketEvent('pc:status', () => this.syncFromBackend());
+    this.apiClient.onSocketEvent('pc:status-changed', () => this.syncFromBackend());
+    this.apiClient.onSocketEvent('pc:telemetry', (data: any) => {
+      if (data?.pcId) {
+        const currentPcs = this.state.pcs || [];
+        const index = currentPcs.findIndex(p => p.id === data.pcId);
+        if (index !== -1) {
+          const updated = [...currentPcs];
+          updated[index] = { ...updated[index], ...data };
+          this.rawStateService.updateState({ pcs: updated });
+        }
+      }
+    });
     this.apiClient.onSocketEvent('session:started', () => this.syncFromBackend());
     this.apiClient.onSocketEvent('session:paused', () => this.syncFromBackend());
     this.apiClient.onSocketEvent('session:resumed', () => this.syncFromBackend());
     this.apiClient.onSocketEvent('session:ended', () => this.syncFromBackend());
     this.apiClient.onSocketEvent('session:expired', () => this.syncFromBackend());
-    this.apiClient.onSocketEvent('pc:status-changed', () => this.syncFromBackend());
     this.apiClient.onSocketEvent('balance:updated', () => this.syncFromBackend());
     this.apiClient.onSocketEvent('payment:recorded', () => this.syncFromBackend());
+
+    // Failsafe auto-poll fleet status every 8 seconds
+    setInterval(() => {
+      if (this.state?.activeAuth?.isAuthenticated) {
+        this.syncFromBackend();
+      }
+    }, 8000);
   }
 
   public get state(): PisonetAppState {
