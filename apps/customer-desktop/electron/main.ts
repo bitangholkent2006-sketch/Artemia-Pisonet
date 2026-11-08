@@ -1,10 +1,14 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer } from 'electron';
+import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { exec, spawn } from 'child_process';
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let isQuitting = false;
+let isStationLocked = false;
+let isAnnouncementActive = false;
 
 // Ensure any old registry lock policies are removed on launch
 if (process.platform === 'win32') {
@@ -12,6 +16,61 @@ if (process.platform === 'win32') {
     exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" /v "NoWinKeys" /f', () => {});
     exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" /v "DisableTaskMgr" /f', () => {});
   } catch {}
+}
+
+function createTray() {
+  if (tray) return;
+  try {
+    const iconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH6AYNEi4q35g68wAAAFpJREFUWMPt1zEOACAIA1Dk/5/OBp2c6oBNl86G5iVAeEQk10E7q9v61b0Z4M+vA1yAAGYBM3c7YF7B/n8AJkAAASCAABBAAAgggAAgggACQACBmwHufU8860v6AMX8Jq2G8e/7AAAAAElFTkSuQmCC';
+    const icon = nativeImage.createFromDataURL(`data:image/png;base64,${iconBase64}`);
+    tray = new Tray(icon);
+    tray.setToolTip("Artemia Fleet Agent - Online (Background Daemon)");
+
+    const updateTrayMenu = () => {
+      const contextMenu = Menu.buildFromTemplate([
+        { label: `Artemia Station: ${process.env.COMPUTERNAME || os.hostname() || 'PC'}`, enabled: false },
+        { label: `Status: ${isStationLocked ? '🔒 LOCKED' : '🟢 ACTIVE / ONLINE'}`, enabled: false },
+        { type: 'separator' },
+        {
+          label: 'Show Maintenance Console',
+          click: () => {
+            mainWindow?.show();
+            mainWindow?.focus();
+          }
+        },
+        {
+          label: 'Hide to Background',
+          click: () => {
+            if (!isStationLocked) {
+              mainWindow?.hide();
+            }
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Quit Agent (Operator)',
+          click: () => {
+            isQuitting = true;
+            app.quit();
+          }
+        }
+      ]);
+      tray?.setContextMenu(contextMenu);
+    };
+
+    updateTrayMenu();
+
+    tray.on('click', () => {
+      if (mainWindow?.isVisible()) {
+        if (!isStationLocked) mainWindow.hide();
+      } else {
+        mainWindow?.show();
+        mainWindow?.focus();
+      }
+    });
+  } catch (e) {
+    console.error('Failed to create tray:', e);
+  }
 }
 
 function createWindow() {
@@ -25,7 +84,7 @@ function createWindow() {
     transparent: false,
     backgroundColor: '#07090e',
     show: false,
-    kiosk: false, // NO KIOSK LOCK - Full desktop access preserved
+    kiosk: false,
     fullscreen: false,
     alwaysOnTop: false,
     minimizable: true,
@@ -54,6 +113,21 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     if (mainWindow) {
       mainWindow.show();
+      // Quick startup flick: show briefly for 1.2s then hide silently to background/tray
+      setTimeout(() => {
+        if (mainWindow && !isStationLocked && !isAnnouncementActive) {
+          mainWindow.hide();
+        }
+      }, 1200);
+    }
+  });
+
+  // Intercept window close to keep background agent running silently in system tray
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow?.hide();
+      return false;
     }
   });
 
@@ -77,18 +151,53 @@ ipcMain.handle('window:maximize', () => {
   return true;
 });
 
+// Close button in UI hides to tray instead of quitting!
 ipcMain.handle('window:close', () => {
-  mainWindow?.close();
+  if (!isStationLocked) {
+    mainWindow?.hide();
+  }
+  return true;
+});
+
+ipcMain.handle('window:hide-to-tray', () => {
+  if (!isStationLocked) {
+    mainWindow?.hide();
+  }
   return true;
 });
 
 ipcMain.handle('window:set-lock-mode', (_event, locked: boolean) => {
+  isStationLocked = locked;
   if (mainWindow) {
     if (locked) {
+      mainWindow.setFullScreen(true);
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.show();
       mainWindow.focus();
     } else {
+      mainWindow.setFullScreen(false);
       mainWindow.setAlwaysOnTop(false);
+      mainWindow.hide();
+    }
+  }
+  return true;
+});
+
+ipcMain.handle('window:set-announcement-mode', (_event, active: boolean) => {
+  isAnnouncementActive = active;
+  if (mainWindow) {
+    if (active) {
+      mainWindow.setFullScreen(true);
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      // If not locked, return silently to hidden background!
+      if (!isStationLocked) {
+        mainWindow.setFullScreen(false);
+        mainWindow.setAlwaysOnTop(false);
+        mainWindow.hide();
+      }
     }
   }
   return true;
@@ -446,11 +555,17 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     createWindow();
+    createTray();
   });
 }
 
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  // Keep running in background daemon / system tray mode on Windows
+  if (process.platform === 'darwin') {
     app.quit();
   }
 });

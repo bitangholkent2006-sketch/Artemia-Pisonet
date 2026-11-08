@@ -14,6 +14,8 @@ interface WindowWithDesktop extends Window {
     restartPC: () => Promise<boolean>;
     cancelShutdown: () => Promise<boolean>;
     setLockMode?: (locked: boolean) => Promise<boolean>;
+    setAnnouncementMode?: (active: boolean) => Promise<boolean>;
+    hideToTray?: () => Promise<boolean>;
 
     // Maintenance Native Bridge
     executeCommand: (cmd: string, type: 'powershell' | 'cmd') => Promise<{ output: string; exitCode: number; error?: string }>;
@@ -55,6 +57,7 @@ class StationMaintenanceAgent {
   private isPoweredOff = false;
   private lastUpdateLog: string = 'Station ready. No active background jobs.';
   private announcementTimeout: any = null;
+  private announcementInterval: any = null;
 
   public matchesThisStation(targetId?: string): boolean {
     if (!targetId || targetId === 'all' || targetId === 'fleet') return true;
@@ -400,23 +403,63 @@ class StationMaintenanceAgent {
     }
   }
 
-  public showAnnouncement(msg: string, sender: string = 'Counter Operator', durationSec: number = 8) {
+  public showAnnouncement(msg: string, sender: string = 'Counter Operator', durationSec: number = 10) {
     this.playChime();
     this.logMessage(`[Announcement] ${sender}: "${msg}"`);
 
+    // Signal Electron to go fullscreen on top of all windows across the whole screen
+    if (desktopWindow.pisonetDesktop?.setAnnouncementMode) {
+      desktopWindow.pisonetDesktop.setAnnouncementMode(true).catch(() => {});
+    }
+
+    const overlay = document.getElementById('announcement-overlay');
     const card = document.getElementById('announcement-card');
     const senderEl = document.getElementById('announcement-sender');
     const textEl = document.getElementById('announcement-text');
+    const timerEl = document.getElementById('announcement-timer');
 
-    if (card && senderEl && textEl) {
-      senderEl.innerText = `📢 PAHIBALO GIKAN SA: ${sender.toUpperCase()}`;
-      textEl.innerText = msg;
+    if (senderEl) senderEl.innerText = `📢 PAHIBALO GIKAN SA: ${sender.toUpperCase()}`;
+    if (textEl) textEl.innerText = msg;
+
+    if (overlay) {
+      overlay.classList.add('visible');
+    } else if (card) {
       card.classList.add('visible');
+    }
 
-      if (this.announcementTimeout) clearTimeout(this.announcementTimeout);
-      this.announcementTimeout = setTimeout(() => {
-        card.classList.remove('visible');
-      }, durationSec * 1000);
+    let remaining = Math.max(5, durationSec);
+    if (timerEl) timerEl.innerText = `Mawala kini sa ${remaining}s...`;
+
+    if (this.announcementInterval) clearInterval(this.announcementInterval);
+    if (this.announcementTimeout) clearTimeout(this.announcementTimeout);
+
+    this.announcementInterval = setInterval(() => {
+      remaining--;
+      if (timerEl) {
+        timerEl.innerText = remaining > 0 ? `Mawala kini sa ${remaining}s...` : 'Nakahuman na...';
+      }
+      if (remaining <= 0) {
+        if (this.announcementInterval) clearInterval(this.announcementInterval);
+      }
+    }, 1000);
+
+    this.announcementTimeout = setTimeout(() => {
+      this.dismissAnnouncement();
+    }, durationSec * 1000);
+  }
+
+  public dismissAnnouncement() {
+    if (this.announcementInterval) clearInterval(this.announcementInterval);
+    if (this.announcementTimeout) clearTimeout(this.announcementTimeout);
+
+    const overlay = document.getElementById('announcement-overlay');
+    const card = document.getElementById('announcement-card');
+    if (overlay) overlay.classList.remove('visible');
+    if (card) card.classList.remove('visible');
+
+    // Signal Electron that announcement is done (will hide window if not locked)
+    if (desktopWindow.pisonetDesktop?.setAnnouncementMode) {
+      desktopWindow.pisonetDesktop.setAnnouncementMode(false).catch(() => {});
     }
   }
 
@@ -906,17 +949,52 @@ class StationMaintenanceAgent {
         .power-title { font-size: 2rem; font-weight: 900; color: #f43f5e; margin-bottom: 12px; }
         .power-sub { font-size: 1.1rem; color: #94a3b8; max-width: 540px; margin-bottom: 24px; line-height: 1.6; }
 
-        /* FLOATING ANNOUNCEMENT CARD */
-        .announcement-card {
-          position: fixed; top: -120px; left: 50%; transform: translateX(-50%); z-index: 100001;
-          background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.98));
-          border: 2px solid #06b6d4; box-shadow: 0 10px 40px rgba(6, 182, 212, 0.45);
-          border-radius: 14px; padding: 18px 28px; max-width: 640px; width: 90%;
-          transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: none; opacity: 0;
+        /* FULL SCREEN ANNOUNCEMENT OVERLAY */
+        .announcement-overlay {
+          position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 100003;
+          background: rgba(3, 7, 18, 0.90); backdrop-filter: blur(14px);
+          display: none; align-items: center; justify-content: center; padding: 32px;
+          animation: fadeIn 0.3s ease-out;
         }
-        .announcement-card.visible { top: 24px; opacity: 1; pointer-events: auto; }
-        .announcement-sender { font-size: 0.78rem; text-transform: uppercase; font-weight: 800; color: #38bdf8; margin-bottom: 6px; }
-        .announcement-text { font-size: 1.15rem; font-weight: 700; color: #fff; line-height: 1.5; }
+        .announcement-overlay.visible { display: flex; }
+        .announcement-modal {
+          background: linear-gradient(145deg, #0f172a 0%, #1e1b4b 100%);
+          border: 2px solid #38bdf8;
+          box-shadow: 0 0 60px rgba(56, 189, 248, 0.4), 0 25px 50px -12px rgba(0, 0, 0, 0.85);
+          border-radius: 24px; padding: 40px 48px; max-width: 860px; width: 95%;
+          text-align: center; transform: scale(0.95);
+          animation: modalPop 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes modalPop { to { transform: scale(1); } }
+        .announcement-badge {
+          display: inline-flex; align-items: center; gap: 10px;
+          background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4);
+          color: #38bdf8; padding: 8px 22px; border-radius: 9999px;
+          font-size: 0.95rem; font-weight: 800; letter-spacing: 0.05em;
+          text-transform: uppercase; margin-bottom: 22px;
+        }
+        .announcement-pulse-dot {
+          width: 9px; height: 9px; border-radius: 50%; background: #38bdf8;
+          box-shadow: 0 0 10px #38bdf8; animation: pulseGlow 1.5s infinite;
+        }
+        .announcement-text {
+          font-size: 2rem; font-weight: 800; color: #ffffff; line-height: 1.45;
+          margin-bottom: 30px; word-wrap: break-word; text-shadow: 0 2px 12px rgba(0,0,0,0.6);
+        }
+        .announcement-footer {
+          display: flex; align-items: center; justify-content: space-between;
+          border-top: 1px solid rgba(255, 255, 255, 0.12); padding-top: 22px;
+        }
+        .announcement-timer { font-size: 0.95rem; color: #94a3b8; font-weight: 600; }
+        .announcement-dismiss-btn {
+          background: linear-gradient(135deg, #0284c7 0%, #2563eb 100%);
+          color: #ffffff; border: none; padding: 12px 32px; border-radius: 12px;
+          font-size: 1rem; font-weight: 800; cursor: pointer; transition: all 0.2s;
+          box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
+        }
+        .announcement-dismiss-btn:hover {
+          transform: translateY(-2px); box-shadow: 0 6px 20px rgba(37, 99, 235, 0.6);
+        }
 
         /* FLOATING TOAST NOTIFICATION */
         .toast-notification {
@@ -939,10 +1017,19 @@ class StationMaintenanceAgent {
         }
       </style>
 
-      <!-- FLOATING ANNOUNCEMENT BANNER -->
-      <div id="announcement-card" class="announcement-card">
-        <div id="announcement-sender" class="announcement-sender">📢 PAHIBALO GIKAN SA COUNTER</div>
-        <div id="announcement-text" class="announcement-text">Palihog hinay-hinay sa keyboard ug mouse.</div>
+      <!-- FULL SCREEN ANNOUNCEMENT OVERLAY -->
+      <div id="announcement-overlay" class="announcement-overlay">
+        <div class="announcement-modal">
+          <div class="announcement-badge">
+            <span class="announcement-pulse-dot"></span>
+            <span id="announcement-sender">📢 PAHIBALO GIKAN SA COUNTER / ADMIN</span>
+          </div>
+          <div id="announcement-text" class="announcement-text">Palihog hinay-hinay sa keyboard ug mouse.</div>
+          <div class="announcement-footer">
+            <span id="announcement-timer" class="announcement-timer">Mawala kini sa 10s...</span>
+            <button id="announcement-dismiss-btn" class="announcement-dismiss-btn">OK / NA-RECEIVE NA</button>
+          </div>
+        </div>
       </div>
 
       <!-- FLOATING TOAST NOTIFICATION -->
@@ -982,7 +1069,8 @@ class StationMaintenanceAgent {
         </div>
         <div class="header-actions">
           <div id="status-pill" class="status-pill offline">○ CONNECTING...</div>
-          <button class="btn-minimize" id="btn-minimize-window">Minimize</button>
+          <button class="btn-minimize" id="btn-hide-window" title="Hide to Background Tray">🙈 Hide to Background</button>
+          <button class="btn-minimize" id="btn-minimize-window" title="Minimize">Minimize</button>
         </div>
       </div>
 
@@ -1024,8 +1112,24 @@ class StationMaintenanceAgent {
       </div>
     `;
 
+    document.getElementById('announcement-dismiss-btn')?.addEventListener('click', () => {
+      this.dismissAnnouncement();
+    });
+
+    document.getElementById('btn-hide-window')?.addEventListener('click', () => {
+      if (desktopWindow.pisonetDesktop?.hideToTray) {
+        desktopWindow.pisonetDesktop.hideToTray();
+      } else {
+        desktopWindow.pisonetDesktop?.minimize();
+      }
+    });
+
     document.getElementById('btn-minimize-window')?.addEventListener('click', () => {
-      desktopWindow.pisonetDesktop?.minimize();
+      if (desktopWindow.pisonetDesktop?.hideToTray) {
+        desktopWindow.pisonetDesktop.hideToTray();
+      } else {
+        desktopWindow.pisonetDesktop?.minimize();
+      }
     });
 
     document.getElementById('btn-clean-local')?.addEventListener('click', async () => {
