@@ -495,7 +495,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
       this.consoleLogs.unshift({
         timestamp: new Date(),
         pcName: name,
-        message: data.message || `Status: ${data.status}`,
+        message: data.message || data.logLine || `Status: ${data.status}`,
         type: data.status === 'completed' ? 'success' : data.status === 'failed' ? 'error' : 'info'
       });
     });

@@ -261,7 +261,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy {
   private sub!: Subscription;
   private autoRefreshTimer: any = null;
 
-  selectedPcId: string = 'pc-01';
+  selectedPcId: string = '';
   screenImage: string | null = null;
   lastCapturedTime: Date | null = null;
   isCapturing = false;
@@ -272,11 +272,16 @@ export class ScreenViewComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
-      if (!this.selectedPc && this.state.pcs?.length > 0) {
-        this.selectedPcId = this.state.pcs[0].id;
+      if (this.state.pcs?.length > 0) {
+        if (!this.selectedPcId || !this.state.pcs.some((p: any) => p.id === this.selectedPcId)) {
+          this.selectedPcId = this.state.pcs[0].id;
+          this.captureCurrentScreen();
+        }
       }
     });
-    this.captureCurrentScreen();
+    if (this.selectedPcId) {
+      this.captureCurrentScreen();
+    }
   }
 
   ngOnDestroy() {

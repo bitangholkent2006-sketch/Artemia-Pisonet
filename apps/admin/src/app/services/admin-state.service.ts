@@ -586,7 +586,7 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:fs:list:res', (data: any) => {
-        if (data.reqId === reqId || (data.pcId === pcId && data.path === dirPath)) {
+        if (data.reqId === reqId || (data.pcId === pcId)) {
           clearTimeout(timer);
           cleanup();
           resolve(data.entries || []);
@@ -669,7 +669,7 @@ export class AdminStateService {
         if (data.reqId === reqId || data.pcId === pcId) {
           clearTimeout(timer);
           cleanup();
-          resolve(data.imageData || null);
+          resolve(data.imageData || data.base64Image || null);
         }
       });
 

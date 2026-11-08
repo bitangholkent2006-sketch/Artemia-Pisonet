@@ -361,7 +361,7 @@ export class RemoteTerminalComponent implements OnInit, OnDestroy {
       this.history.push({
         targetName: name,
         command: res.command || 'Command executed',
-        output: res.stdout || res.stderr || '(No output returned)',
+        output: res.output || res.stdout || res.stderr || '(No output returned)',
         exitCode: res.exitCode ?? 0
       });
       this.isExecuting = false;
@@ -392,6 +392,10 @@ export class RemoteTerminalComponent implements OnInit, OnDestroy {
     const cmd = this.currentCommand.trim();
     this.isExecuting = true;
     this.currentCommand = '';
+
+    setTimeout(() => {
+      if (this.isExecuting) this.isExecuting = false;
+    }, 12000);
 
     await this.adminState.executeRemoteCommand(this.targetScope, cmd, this.selectedShell);
   }

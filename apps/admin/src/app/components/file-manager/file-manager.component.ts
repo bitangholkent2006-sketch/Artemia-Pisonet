@@ -534,8 +534,8 @@ export class FileManagerComponent implements OnInit, OnDestroy {
   state: any = { pcs: [] };
   private sub!: Subscription;
 
-  selectedPcId: string = 'pc-01';
-  currentPath: string = 'C:\\\\';
+  selectedPcId: string = '';
+  currentPath: string = 'C:\\';
   entries: FileEntry[] = [];
   isLoading = false;
 
@@ -554,11 +554,16 @@ export class FileManagerComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
-      if (!this.selectedPc && this.state.pcs?.length > 0) {
-        this.selectedPcId = this.state.pcs[0].id;
+      if (this.state.pcs?.length > 0) {
+        if (!this.selectedPcId || !this.state.pcs.some((p: any) => p.id === this.selectedPcId)) {
+          this.selectedPcId = this.state.pcs[0].id;
+          this.loadDirectory();
+        }
       }
     });
-    this.loadDirectory();
+    if (this.selectedPcId) {
+      this.loadDirectory();
+    }
   }
 
   ngOnDestroy() {

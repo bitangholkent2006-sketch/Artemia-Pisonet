@@ -164,6 +164,11 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       }
     });
 
+    authSocket.on('admin:join', () => {
+      authSocket.join('staff');
+      authSocket.join('fleet');
+    });
+
     // Remote Maintenance & Shell Execution Relays
     authSocket.on('maintenance:command:run', (payload: any) => {
       const target = payload.targetPcId || 'fleet';
@@ -173,6 +178,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('agent:command:result', (result: any) => {
       io?.to('staff').emit('maintenance:command:result', result);
+      io?.emit('maintenance:command:result', result);
     });
 
     authSocket.on('maintenance:clean:run', (payload: any) => {
@@ -183,6 +189,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('agent:clean:result', (result: any) => {
       io?.to('staff').emit('maintenance:clean:result', result);
+      io?.emit('maintenance:clean:result', result);
     });
 
     authSocket.on('maintenance:game:update', (payload: any) => {
@@ -193,6 +200,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('agent:game:status', (status: any) => {
       io?.to('staff').emit('maintenance:game:status', status);
+      io?.emit('maintenance:game:status', status);
     });
 
     // Remote File Manager Relays
@@ -204,6 +212,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('agent:fs:list:res', (payload: any) => {
       io?.to('staff').emit('maintenance:fs:list:res', payload);
+      io?.emit('maintenance:fs:list:res', payload);
     });
 
     authSocket.on('maintenance:fs:delete:req', (payload: any) => {
@@ -214,6 +223,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('agent:fs:delete:res', (payload: any) => {
       io?.to('staff').emit('maintenance:fs:delete:res', payload);
+      io?.emit('maintenance:fs:delete:res', payload);
     });
 
     // Remote Process Manager Relays
@@ -225,6 +235,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('agent:process:list:res', (payload: any) => {
       io?.to('staff').emit('maintenance:process:list:res', payload);
+      io?.emit('maintenance:process:list:res', payload);
     });
 
     authSocket.on('maintenance:process:kill:req', (payload: any) => {
@@ -235,6 +246,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('agent:process:kill:res', (payload: any) => {
       io?.to('staff').emit('maintenance:process:kill:res', payload);
+      io?.emit('maintenance:process:kill:res', payload);
     });
 
     // Remote Screen Capture Relays
@@ -246,6 +258,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('agent:screen:res', (payload: any) => {
       io?.to('staff').emit('maintenance:screen:res', payload);
+      io?.emit('maintenance:screen:res', payload);
     });
 
     // Active Session Lease Renewal Heartbeat

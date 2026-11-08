@@ -37,6 +37,8 @@ export class ApiClientService {
   private isBackendLiveSubject = new BehaviorSubject<boolean>(false);
   public isBackendLive$: Observable<boolean> = this.isBackendLiveSubject.asObservable();
 
+  private eventListeners = new Map<string, Set<(data: any) => void>>();
+
   constructor() {
     this.initSocketConnection();
   }
@@ -86,6 +88,13 @@ export class ApiClientService {
       this.socket.on('connect', () => {
         this.connectionStatusSubject.next('connected');
         this.isBackendLiveSubject.next(true);
+        // Re-attach all registered listeners on reconnection
+        for (const [event, listeners] of this.eventListeners.entries()) {
+          for (const cb of listeners) {
+            this.socket?.off(event, cb);
+            this.socket?.on(event, cb);
+          }
+        }
       });
 
       this.socket.on('disconnect', () => {
@@ -389,16 +398,25 @@ export class ApiClientService {
 
   // Direct Socket IPC Relays for File Manager, Process Manager, and Screen View
   public emitSocket(event: string, data: any) {
-    if (this.socket && this.socket.connected) {
+    if (this.socket) {
+      if (!this.socket.connected) {
+        this.socket.connect();
+      }
       this.socket.emit(event, data);
     }
   }
 
   public onSocketEvent(event: string, callback: (data: any) => void): () => void {
+    if (!this.eventListeners.has(event)) {
+      this.eventListeners.set(event, new Set());
+    }
+    this.eventListeners.get(event)!.add(callback);
+
     if (this.socket) {
       this.socket.on(event, callback);
     }
     return () => {
+      this.eventListeners.get(event)?.delete(callback);
       this.socket?.off(event, callback);
     };
   }
