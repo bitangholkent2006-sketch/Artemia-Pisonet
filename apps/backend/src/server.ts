@@ -150,6 +150,10 @@ app.get('/download/client', (c) => {
   return c.redirect('https://github.com/bitangholkent2006-sketch/Artemia-Pisonet/releases/download/v1.0.0/Artemia-Customer-Terminal-PC.zip', 302);
 });
 
+app.get('/download', (c) => {
+  return c.redirect('/download/client', 302);
+});
+
 // Live Web Customer Terminal / Simulator routes (allows testing terminal on any browser/laptop)
 const possibleTerminalDirs = [
   path.resolve(process.cwd(), 'apps/backend/public/terminal'),

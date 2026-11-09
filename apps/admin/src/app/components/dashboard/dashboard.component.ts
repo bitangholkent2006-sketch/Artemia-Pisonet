@@ -81,6 +81,16 @@ import { PC, PCStatus } from '@pisonet/shared';
           <span>Fleet Actions (Apply to All):</span>
         </div>
         <div class="bulk-buttons">
+          <a
+            class="btn btn-sm btn-primary"
+            href="https://github.com/bitangholkent2006-sketch/Artemia-Pisonet/releases/download/v1.0.0/Artemia-Customer-Terminal-PC.zip"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Download client PC ZIP directly from the website"
+            style="background: linear-gradient(135deg, #10b981, #06b6d4); text-decoration: none; display: inline-flex; align-items: center; gap: 4px;"
+          >
+            📥 Download Client (.zip)
+          </a>
           <button class="btn btn-sm btn-primary" (click)="bulkWakeOnLan()">
             ⚡ Wake-on-LAN All
           </button>
