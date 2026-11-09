@@ -688,10 +688,14 @@ export class AdminStateService {
       const timer = setTimeout(() => {
         cleanup();
         resolve(null);
-      }, 10000);
+      }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:screen:res', (data: any) => {
-        if (data.reqId === reqId || (data.pcId?.toLowerCase() === pcId.toLowerCase())) {
+        const matchReq = data.reqId && data.reqId === reqId;
+        const dId = (data.pcId || '').toLowerCase();
+        const pId = pcId.toLowerCase();
+        const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId;
+        if (matchReq || matchId) {
           clearTimeout(timer);
           cleanup();
           resolve(data.imageData || data.base64Image || null);

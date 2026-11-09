@@ -67,7 +67,7 @@ export interface ClickRipple {
             *ngFor="let pc of state.pcs"
             type="button"
             class="station-pill"
-            [ngClass]="{'active': selectedPcId === pc.id, 'offline': pc.status === 'offline'}"
+            [ngClass]="{'active': matchesStation(pc, selectedPcId), 'offline': pc.status === 'offline'}"
             (click)="selectStation(pc.id)"
           >
             <span class="dot" [ngClass]="pc.status"></span>
@@ -106,19 +106,19 @@ export interface ClickRipple {
 
         <!-- Interactive Screen Viewport -->
         <div class="monitor-viewport" [ngClass]="{'interactive': isControlEnabled}">
-          <div *ngIf="isCapturing && !screenImage" class="viewport-placeholder">
+          <div *ngIf="isCapturing && !currentScreenImage" class="viewport-placeholder">
             <span class="spinner"></span>
-            <div>Connecting to {{ selectedPc.name }} display stream...</div>
+            <div>Connecting to {{ selectedPc.name || 'station' }} display stream...</div>
           </div>
 
-          <div *ngIf="!isCapturing && !screenImage" class="viewport-placeholder">
+          <div *ngIf="!isCapturing && !currentScreenImage" class="viewport-placeholder">
             <span class="camera-icon">🖥️</span>
-            <div>Walay live snapshot. I-click ang "Capture Now" aron makita ang live desktop.</div>
+            <div>Walay live snapshot sa {{ selectedPc.name || 'station' }}. I-click ang "Capture Now" aron makita ang live desktop.</div>
           </div>
 
-          <div class="screen-wrapper" *ngIf="screenImage">
+          <div class="screen-wrapper" *ngIf="currentScreenImage">
             <img
-              [src]="screenImage"
+              [src]="currentScreenImage"
               class="live-screen-image"
               alt="Live Screen Stream"
               draggable="false"
@@ -608,8 +608,17 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   selectedPcId: string = '';
   screenImage: string | null = null;
+  screenImages: { [pcId: string]: string } = {};
   lastCapturedTime: Date | null = null;
   isCapturing = false;
+
+  get currentScreenImage(): string | null {
+    if (!this.selectedPc) return null;
+    return this.screenImages[this.selectedPc.id] ||
+           this.screenImages[this.selectedPc.id.toLowerCase()] ||
+           (this.selectedPc.name ? this.screenImages[this.selectedPc.name.toLowerCase()] : null) ||
+           this.screenImage;
+  }
 
   // Remote Desktop Control state
   isControlEnabled = false;
@@ -621,7 +630,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   constructor(public adminState: AdminStateService) {}
 
-  private matchesStation(p: any, id: string): boolean {
+  public matchesStation(p: any, id: string): boolean {
     if (!p || !id) return false;
     const a = (p.id || '').toLowerCase();
     const b = id.toLowerCase();
@@ -633,6 +642,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   ngOnChanges(changes: SimpleChanges) {
     if (changes['initialPcId'] && this.initialPcId && this.initialPcId !== this.selectedPcId) {
       this.selectedPcId = this.initialPcId;
+      this.isCapturing = false;
       this.captureCurrentScreen();
     }
   }
@@ -667,8 +677,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   selectStation(pcId: string) {
-    if (this.selectedPcId === pcId) return;
     this.selectedPcId = pcId;
+    this.isCapturing = false;
     this.captureCurrentScreen();
   }
 
@@ -709,12 +719,16 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   async captureCurrentScreen() {
-    if (!this.selectedPcId || this.isCapturing) return;
+    if (!this.selectedPc) return;
+    const targetId = this.selectedPc.id;
     this.isCapturing = true;
     try {
-      const img = await this.adminState.captureScreen(this.selectedPcId);
+      const img = await this.adminState.captureScreen(targetId);
       if (img) {
         this.screenImage = img;
+        this.screenImages[targetId] = img;
+        this.screenImages[targetId.toLowerCase()] = img;
+        if (this.selectedPc.name) this.screenImages[this.selectedPc.name.toLowerCase()] = img;
         this.lastCapturedTime = new Date();
       }
     } finally {
@@ -724,9 +738,10 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   // Mouse Interactivity on Remote Screen
   onScreenClick(event: MouseEvent) {
-    if (!this.isControlEnabled || !this.selectedPcId) return;
+    if (!this.isControlEnabled || !this.selectedPc) return;
     event.preventDefault();
     event.stopPropagation();
+    const targetId = this.selectedPc.id;
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -738,7 +753,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.lastActionMessage = `🖱️ Click sent at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
 
     this.adminState.sendRemoteInput({
-      pcId: this.selectedPcId,
+      pcId: targetId,
       type: 'click',
       xPercent,
       yPercent
@@ -749,9 +764,10 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   onScreenDblClick(event: MouseEvent) {
-    if (!this.isControlEnabled || !this.selectedPcId) return;
+    if (!this.isControlEnabled || !this.selectedPc) return;
     event.preventDefault();
     event.stopPropagation();
+    const targetId = this.selectedPc.id;
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -763,7 +779,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.lastActionMessage = `⚡ Double-click sent at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
 
     this.adminState.sendRemoteInput({
-      pcId: this.selectedPcId,
+      pcId: targetId,
       type: 'dclick',
       xPercent,
       yPercent
@@ -773,9 +789,10 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   onScreenContextMenu(event: MouseEvent) {
-    if (!this.isControlEnabled || !this.selectedPcId) return;
+    if (!this.isControlEnabled || !this.selectedPc) return;
     event.preventDefault();
     event.stopPropagation();
+    const targetId = this.selectedPc.id;
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -787,7 +804,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.lastActionMessage = `🔘 Right-click sent at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
 
     this.adminState.sendRemoteInput({
-      pcId: this.selectedPcId,
+      pcId: targetId,
       type: 'rclick',
       xPercent,
       yPercent
@@ -806,10 +823,11 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   // Keyboard and Text tools
   sendKey(keyString: string) {
-    if (!this.selectedPcId) return;
+    if (!this.selectedPc) return;
+    const targetId = this.selectedPc.id;
     this.lastActionMessage = `⌨️ Sent Key: ${keyString}`;
     this.adminState.sendRemoteInput({
-      pcId: this.selectedPcId,
+      pcId: targetId,
       type: 'key',
       key: keyString
     });
@@ -817,11 +835,12 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   sendText() {
-    if (!this.selectedPcId || !this.remoteText.trim()) return;
+    if (!this.selectedPc || !this.remoteText.trim()) return;
+    const targetId = this.selectedPc.id;
     const textToSend = this.remoteText.trim();
     this.lastActionMessage = `⌨️ Typed text: "${textToSend}"`;
     this.adminState.sendRemoteInput({
-      pcId: this.selectedPcId,
+      pcId: targetId,
       type: 'text',
       text: textToSend
     });
