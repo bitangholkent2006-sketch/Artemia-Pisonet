@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage, 
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as crypto from 'crypto';
 import { exec, spawn, execFile } from 'child_process';
 
 let mainWindow: BrowserWindow | null = null;
@@ -274,19 +275,126 @@ ipcMain.handle('window:set-announcement-mode', (_event, active: boolean) => {
   return true;
 });
 
+// Hardware MAC extraction for physical machine uniqueness
+function getPrimaryMacAddress(): string {
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const [name, addrs] of Object.entries(interfaces)) {
+      if (!addrs) continue;
+      // Filter out virtual / loopback / container network adapters
+      if (/vEthernet|virtual|vmware|vbox|hamachi|loopback|pseudo|wsl/i.test(name)) continue;
+      for (const addr of addrs) {
+        if (!addr.internal && addr.mac && addr.mac !== '00:00:00:00:00:00') {
+          return addr.mac.toUpperCase();
+        }
+      }
+    }
+    for (const addrs of Object.values(interfaces)) {
+      if (!addrs) continue;
+      for (const addr of addrs) {
+        if (!addr.internal && addr.mac && addr.mac !== '00:00:00:00:00:00') {
+          return addr.mac.toUpperCase();
+        }
+      }
+    }
+  } catch {}
+  return '00:00:00:00:00:00';
+}
+
+// Persistent Station Identity (Ensures cloned Windows images get distinct stations)
+function getStationIdentity(): { hardwareId: string; macAddress: string; customName?: string; customStationId?: string } {
+  const primaryMac = getPrimaryMacAddress();
+  const identityFilePath = path.join(app.getPath('userData'), 'station_identity.json');
+  let hardwareId = '';
+  let customName = '';
+  let customStationId = '';
+
+  // Check if manual station override file exists: C:\artemia\station.txt or ./station_id.txt
+  const manualOverrides = [
+    'C:\\artemia\\station.txt',
+    path.join(process.cwd(), 'station_id.txt'),
+    path.join(app.getPath('userData'), 'station_id.txt')
+  ];
+  for (const mPath of manualOverrides) {
+    try {
+      if (fs.existsSync(mPath)) {
+        const content = fs.readFileSync(mPath, 'utf8').trim();
+        if (content) {
+          customStationId = content.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+          customName = content.toUpperCase();
+          break;
+        }
+      }
+    } catch {}
+  }
+
+  try {
+    if (fs.existsSync(identityFilePath)) {
+      const data = JSON.parse(fs.readFileSync(identityFilePath, 'utf8'));
+      if (data && data.hardwareId) {
+        hardwareId = data.hardwareId;
+        if (!customStationId && data.customStationId) customStationId = data.customStationId;
+        if (!customName && data.customName) customName = data.customName;
+      }
+    }
+  } catch {}
+
+  if (!hardwareId) {
+    hardwareId = crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 10));
+    try {
+      fs.writeFileSync(identityFilePath, JSON.stringify({
+        hardwareId,
+        macAddress: primaryMac,
+        created: new Date().toISOString()
+      }, null, 2), 'utf8');
+    } catch {}
+  }
+
+  return {
+    hardwareId,
+    macAddress: primaryMac,
+    customName: customName || undefined,
+    customStationId: customStationId || undefined
+  };
+}
+
 // System Info & Plug-and-Play Specs
 ipcMain.handle('system:get-info', () => {
   const hostname = process.env.COMPUTERNAME || os.hostname() || 'STATION-PC';
   const cpus = os.cpus();
   const cpuModel = cpus.length > 0 ? cpus[0].model.replace(/\(R\)|\(TM\)/g, '').trim() : 'Gaming CPU';
   const totalMemGb = Math.round(os.totalmem() / (1024 * 1024 * 1024));
+  const identity = getStationIdentity();
   return {
     platform: process.platform,
     version: app.getVersion(),
     hostname,
     specs: `${cpuModel} • ${totalMemGb}GB RAM`,
+    macAddress: identity.macAddress,
+    hardwareId: identity.hardwareId,
+    customName: identity.customName,
+    customStationId: identity.customStationId,
     isElectron: true
   };
+});
+
+ipcMain.handle('system:save-station-identity', (_event, data: { stationId?: string; name?: string }) => {
+  try {
+    const identityFilePath = path.join(app.getPath('userData'), 'station_identity.json');
+    let currentData: any = {};
+    if (fs.existsSync(identityFilePath)) {
+      try {
+        currentData = JSON.parse(fs.readFileSync(identityFilePath, 'utf8'));
+      } catch {}
+    }
+    if (data?.stationId) currentData.customStationId = data.stationId;
+    if (data?.name) currentData.customName = data.name;
+    currentData.updatedAt = new Date().toISOString();
+    fs.writeFileSync(identityFilePath, JSON.stringify(currentData, null, 2), 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
 });
 
 ipcMain.handle('system:set-autostart', (_event, enable: boolean) => {

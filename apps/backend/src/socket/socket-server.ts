@@ -110,14 +110,16 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     }
 
     // PC Join & Auto-Discovery (Plug and Play - No manual registration required)
-    authSocket.on('pc:join', async (data: { pcId: string; name?: string; specs?: string; ipAddress?: string }) => {
+    authSocket.on('pc:join', async (data: { pcId: string; name?: string; specs?: string; ipAddress?: string; macAddress?: string; hardwareId?: string }) => {
       const rawId = (data?.pcId || pcId || 'pc-01').toLowerCase();
       const rawName = data?.name || rawId.toUpperCase();
       const pc = await PcService.autoDiscoverOrRegisterPc(
         rawId,
         rawName,
         data?.ipAddress || (socket.handshake.address?.replace('::ffff:', '') || '127.0.0.1'),
-        data?.specs
+        data?.specs,
+        data?.macAddress,
+        data?.hardwareId
       );
       authSocket.join(`pc:${rawId}`);
       authSocket.join(`pc:${rawName.toLowerCase()}`);
@@ -125,17 +127,19 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       authSocket.join(`pc:${pc.identifier.toLowerCase()}`);
       authSocket.join('fleet');
       authSocket.data.pcId = pc.id;
-      authSocket.emit('pc:identity:sync', { pcId: pc.id, name: pc.name, identifier: pc.identifier });
+      authSocket.emit('pc:identity:sync', { pcId: pc.id, name: pc.name, identifier: pc.identifier, hardwareId: pc.hardwareId });
     });
 
-    authSocket.on('pc:auto-discover', async (data: { pcId: string; name?: string; specs?: string }) => {
+    authSocket.on('pc:auto-discover', async (data: { pcId: string; name?: string; specs?: string; macAddress?: string; hardwareId?: string }) => {
       const rawId = (data?.pcId || 'pc-01').toLowerCase();
       const rawName = data?.name || rawId.toUpperCase();
       const pc = await PcService.autoDiscoverOrRegisterPc(
         rawId,
         rawName,
         socket.handshake.address?.replace('::ffff:', '') || '127.0.0.1',
-        data?.specs
+        data?.specs,
+        data?.macAddress,
+        data?.hardwareId
       );
       authSocket.join(`pc:${rawId}`);
       authSocket.join(`pc:${rawName.toLowerCase()}`);
@@ -143,14 +147,14 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       authSocket.join(`pc:${pc.identifier.toLowerCase()}`);
       authSocket.join('fleet');
       authSocket.data.pcId = pc.id;
-      authSocket.emit('pc:identity:sync', { pcId: pc.id, name: pc.name, identifier: pc.identifier });
+      authSocket.emit('pc:identity:sync', { pcId: pc.id, name: pc.name, identifier: pc.identifier, hardwareId: pc.hardwareId });
     });
 
     // PC Terminal Heartbeat Event & Telemetry
-    authSocket.on('pc:heartbeat', async (data: { pcId: string; telemetry?: any }) => {
+    authSocket.on('pc:heartbeat', async (data: { pcId: string; telemetry?: any; macAddress?: string; hardwareId?: string }) => {
       const targetId = authSocket.data.pcId || pcId || data?.pcId;
       if (targetId) {
-        await PcService.recordHeartbeat(targetId);
+        await PcService.recordHeartbeat(targetId, socket.handshake.address?.replace('::ffff:', ''), data?.macAddress, data?.hardwareId);
         if (data?.telemetry) {
           try {
             const { getCollections } = await import('../database/connection');

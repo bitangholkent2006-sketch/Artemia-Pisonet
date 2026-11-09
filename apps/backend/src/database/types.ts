@@ -50,6 +50,7 @@ export interface DbPC {
   status: PCStatus;
   connectionState: PCConnectionState;
   deviceKeyHash?: string;
+  hardwareId?: string;
   activeSessionId: string | null;
   activeCustomerId: string | null;
   activeCustomerName: string | null;

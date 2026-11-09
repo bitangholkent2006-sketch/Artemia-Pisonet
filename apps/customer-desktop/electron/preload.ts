@@ -6,7 +6,18 @@ export interface PisonetDesktopApi {
   minimize: () => Promise<void>;
   maximize: () => Promise<void>;
   close: () => Promise<void>;
-  getSystemInfo: () => Promise<{ platform: string; version: string; hostname: string; specs?: string; isElectron: boolean }>;
+  getSystemInfo: () => Promise<{
+    platform: string;
+    version: string;
+    hostname: string;
+    specs?: string;
+    macAddress?: string;
+    hardwareId?: string;
+    customName?: string;
+    customStationId?: string;
+    isElectron: boolean;
+  }>;
+  saveStationIdentity?: (data: { stationId?: string; name?: string }) => Promise<boolean>;
   setAutoStart: (enable: boolean) => Promise<boolean>;
   shutdownPC: (timeoutSeconds?: number) => Promise<boolean>;
   restartPC: () => Promise<boolean>;
@@ -39,6 +50,7 @@ const api: PisonetDesktopApi = {
   maximize: () => ipcRenderer.invoke('window:maximize'),
   close: () => ipcRenderer.invoke('window:close'),
   getSystemInfo: () => ipcRenderer.invoke('system:get-info'),
+  saveStationIdentity: (data: { stationId?: string; name?: string }) => ipcRenderer.invoke('system:save-station-identity', data),
   setAutoStart: (enable: boolean) => ipcRenderer.invoke('system:set-autostart', enable),
   shutdownPC: (timeoutSeconds?: number) => ipcRenderer.invoke('system:shutdown', timeoutSeconds),
   restartPC: () => ipcRenderer.invoke('system:restart'),

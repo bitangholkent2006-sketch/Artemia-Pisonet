@@ -8,7 +8,18 @@ interface WindowWithDesktop extends Window {
     minimize: () => Promise<void>;
     maximize: () => Promise<void>;
     close: () => Promise<void>;
-    getSystemInfo: () => Promise<{ platform: string; version: string; hostname: string; specs?: string; isElectron: boolean }>;
+    getSystemInfo: () => Promise<{
+      platform: string;
+      version: string;
+      hostname: string;
+      specs?: string;
+      macAddress?: string;
+      hardwareId?: string;
+      customName?: string;
+      customStationId?: string;
+      isElectron: boolean;
+    }>;
+    saveStationIdentity?: (data: { stationId?: string; name?: string }) => Promise<boolean>;
     setAutoStart: (enable: boolean) => Promise<boolean>;
     shutdownPC: (timeoutSeconds?: number) => Promise<boolean>;
     restartPC: () => Promise<boolean>;
@@ -56,6 +67,8 @@ class StationMaintenanceAgent {
   private pcName: string = 'PC-01';
   private dbPcId: string = '';
   private identifier: string = '';
+  private hardwareId: string = '';
+  private macAddress: string = '';
   private specs: string = 'Standard Gaming Terminal';
   private isConnected = false;
   private isLocked = false;
@@ -273,13 +286,17 @@ class StationMaintenanceAgent {
     if (desktopWindow.pisonetDesktop) {
       try {
         const info = await desktopWindow.pisonetDesktop.getSystemInfo();
-        if (info?.hostname) {
-          if (!savedId && !paramId) {
+        if (info) {
+          if (info.hardwareId) this.hardwareId = info.hardwareId;
+          if (info.macAddress) this.macAddress = info.macAddress;
+          if (info.specs) this.specs = info.specs;
+
+          if (info.customStationId && !paramId) {
+            this.pcId = info.customStationId.toLowerCase();
+            this.pcName = (info.customName || info.customStationId).toUpperCase();
+          } else if (info.hostname && !savedId && !paramId) {
             this.pcId = info.hostname.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
             this.pcName = info.hostname.toUpperCase();
-          }
-          if (info.specs) {
-            this.specs = info.specs;
           }
         }
       } catch {}
@@ -305,7 +322,13 @@ class StationMaintenanceAgent {
     }
 
     if (this.socket && this.isConnected) {
-      this.socket.emit('pc:auto-discover', { pcId: this.pcId, name: this.pcName, specs: this.specs });
+      this.socket.emit('pc:auto-discover', {
+        pcId: this.pcId,
+        name: this.pcName,
+        specs: this.specs,
+        macAddress: this.macAddress,
+        hardwareId: this.hardwareId
+      });
     }
 
     // Initial check from backend public endpoint
@@ -318,15 +341,33 @@ class StationMaintenanceAgent {
       if (res.ok) {
         const json = await res.json();
         const list = json?.data || [];
-        const current = list.find((p: any) =>
-          this.matchesThisStation(p.id) ||
-          this.matchesThisStation(p.identifier) ||
-          this.matchesThisStation(p.name)
-        );
+        let current: any = null;
+
+        // 1. Prioritize persistent hardwareId match
+        if (this.hardwareId) {
+          current = list.find((p: any) => p.hardwareId === this.hardwareId);
+        }
+
+        // 2. Physical MAC match
+        if (!current && this.macAddress && this.macAddress !== '00:00:00:00:00:00') {
+          current = list.find((p: any) => p.macAddress && p.macAddress.toUpperCase() === this.macAddress.toUpperCase());
+        }
+
+        // 3. Fallback: only match if DB record does NOT belong to a different hardware machine
+        if (!current) {
+          current = list.find((p: any) => {
+            if (p.hardwareId && this.hardwareId && p.hardwareId !== this.hardwareId) return false;
+            if (p.macAddress && this.macAddress && p.macAddress !== 'AUTO-DISCOVERED' && p.macAddress.toUpperCase() !== this.macAddress.toUpperCase()) return false;
+            return this.matchesThisStation(p.id) || this.matchesThisStation(p.identifier) || this.matchesThisStation(p.name);
+          });
+        }
+
         if (current) {
           this.dbPcId = current.id.toLowerCase();
+          this.pcId = current.id.toLowerCase();
           this.identifier = (current.identifier || this.pcName).toUpperCase();
           this.pcName = (current.name || this.pcName).toUpperCase();
+          localStorage.setItem('artemia_station_id', this.dbPcId);
           this.logMessage(`Station matched in Fleet Database: ID=${current.id}, Name=${this.pcName}`);
           if (current.status === 'locked') {
             this.setLockedState(true);
@@ -501,19 +542,54 @@ class StationMaintenanceAgent {
         this.updateStatusBadge(true);
         const activeId = this.dbPcId || this.pcId;
         // Plug-and-play auto-discovery: Registers station without manual admin setup
-        this.socket?.emit('pc:join', { pcId: activeId, name: this.pcName, specs: this.specs });
-        this.socket?.emit('pc:auto-discover', { pcId: activeId, name: this.pcName, specs: this.specs });
-        this.socket?.emit('pc:heartbeat', { pcId: activeId, telemetry: this.telemetry });
+        this.socket?.emit('pc:join', {
+          pcId: activeId,
+          name: this.pcName,
+          specs: this.specs,
+          macAddress: this.macAddress,
+          hardwareId: this.hardwareId
+        });
+        this.socket?.emit('pc:auto-discover', {
+          pcId: activeId,
+          name: this.pcName,
+          specs: this.specs,
+          macAddress: this.macAddress,
+          hardwareId: this.hardwareId
+        });
+        this.socket?.emit('pc:heartbeat', {
+          pcId: activeId,
+          telemetry: this.telemetry,
+          macAddress: this.macAddress,
+          hardwareId: this.hardwareId
+        });
         this.socket?.emit('maintenance:agent:ready', { pcId: activeId });
         this.logMessage(`Connected to Artemia Fleet Server (${this.apiBase})`);
         this.checkInitialStatus();
       });
 
-      this.socket.on('pc:identity:sync', (data: { pcId: string; name?: string; identifier?: string }) => {
+      this.socket.on('pc:identity:sync', (data: { pcId: string; name?: string; identifier?: string; hardwareId?: string }) => {
         if (data?.pcId) {
+          if (data.hardwareId && this.hardwareId && data.hardwareId !== this.hardwareId) {
+            return;
+          }
           this.dbPcId = data.pcId.toLowerCase();
+          this.pcId = data.pcId.toLowerCase();
           if (data.name) this.pcName = data.name.toUpperCase();
           if (data.identifier) this.identifier = data.identifier;
+          localStorage.setItem('artemia_station_id', this.dbPcId);
+          if (desktopWindow.pisonetDesktop?.saveStationIdentity) {
+            desktopWindow.pisonetDesktop.saveStationIdentity({ stationId: this.dbPcId, name: this.pcName }).catch(() => {});
+          }
+
+          const titleSub = document.querySelector('.station-sub');
+          if (titleSub) {
+            titleSub.innerHTML = `Station ID: <strong style="color:#38bdf8">${this.pcName}</strong> ${this.specs ? `<span style="font-size:0.75rem; color:#64748b; margin-left:8px;">(${this.specs})</span>` : ''}`;
+          }
+          const lockStationTag = document.getElementById('lock-station-tag');
+          if (lockStationTag) {
+            lockStationTag.innerText = this.pcName;
+          }
+
           this.logMessage(`Station synchronized with Fleet Database: ${this.dbPcId} (${this.pcName})`);
         }
       });
@@ -931,6 +1007,8 @@ class StationMaintenanceAgent {
 
       this.socket.emit('pc:heartbeat', {
         pcId: activeId,
+        macAddress: this.macAddress,
+        hardwareId: this.hardwareId,
         telemetry: {
           ...this.telemetry,
           diskUsage: this.telemetry.diskUsage

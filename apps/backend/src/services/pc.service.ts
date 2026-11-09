@@ -47,27 +47,94 @@ export class PcService {
     identifier: string,
     name?: string,
     ipAddress = '127.0.0.1',
-    specs = 'Client Gaming PC'
+    specs = 'Client Gaming PC',
+    macAddress?: string,
+    hardwareId?: string
   ): Promise<DbPC> {
     const collections = getCollections();
+    const cleanHardwareId = hardwareId?.trim();
+    const cleanMac = macAddress?.trim().toUpperCase();
     const cleanIdentifier = identifier.trim().toUpperCase();
     const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-
-    // Check if PC exists by id or identifier or name
-    let pc = await collections.pcs.findOne({
-      $or: [
-        { id: cleanId },
-        { id: identifier.toLowerCase() },
-        { identifier: cleanIdentifier }
-      ]
-    });
-
     const now = new Date();
 
+    let pc: DbPC | null = null;
+
+    // 1. Primary Hardware Identification Match (UUID persisted on client disk)
+    if (cleanHardwareId) {
+      pc = await collections.pcs.findOne({ hardwareId: cleanHardwareId });
+    }
+
+    // 2. Physical Network Interface MAC Match (if valid physical MAC)
+    if (!pc && cleanMac && cleanMac !== 'AUTO-DISCOVERED' && cleanMac !== '00:00:00:00:00:00') {
+      pc = await collections.pcs.findOne({ macAddress: cleanMac });
+    }
+
+    // 3. Fallback to Identifier Match ONLY if existing record does NOT belong to a different physical machine
     if (!pc) {
-      const count = await collections.pcs.countDocuments();
-      const generatedId = cleanId.startsWith('pc-') ? cleanId : `pc-${(count + 1).toString().padStart(2, '0')}`;
-      const stationName = name?.trim() || `PC-${(count + 1).toString().padStart(2, '0')}`;
+      const candidate = await collections.pcs.findOne({
+        $or: [
+          { id: cleanId },
+          { id: identifier.toLowerCase() },
+          { identifier: cleanIdentifier }
+        ]
+      });
+
+      if (candidate) {
+        // Disallow collision: If candidate already has a DIFFERENT hardwareId or MAC, do NOT reuse!
+        const differentHardware = candidate.hardwareId && cleanHardwareId && candidate.hardwareId !== cleanHardwareId;
+        const differentMac = candidate.macAddress && cleanMac &&
+          candidate.macAddress !== 'AUTO-DISCOVERED' && cleanMac !== 'AUTO-DISCOVERED' && cleanMac !== '00:00:00:00:00:00' &&
+          candidate.macAddress.toUpperCase() !== cleanMac.toUpperCase();
+
+        if (!differentHardware && !differentMac) {
+          pc = candidate;
+        } else {
+          console.log(`[AutoDiscover] Station "${cleanIdentifier}" has distinct hardware from existing ${candidate.id}. Allocating separate station slot.`);
+        }
+      }
+    }
+
+    if (pc) {
+      // Existing physical station updating status/heartbeat
+      const updates: Partial<DbPC> = {
+        connectionState: 'connected',
+        status: pc.status === 'offline' ? (pc.activeSessionId ? 'in-use' : 'available') : pc.status,
+        lastHeartbeat: now,
+        ipAddress: ipAddress || pc.ipAddress,
+        specs: specs || pc.specs,
+        updatedAt: now
+      };
+      if (cleanHardwareId && !pc.hardwareId) updates.hardwareId = cleanHardwareId;
+      if (cleanMac && cleanMac !== '00:00:00:00:00:00' && cleanMac !== 'AUTO-DISCOVERED') updates.macAddress = cleanMac;
+
+      await collections.pcs.updateOne({ _id: pc._id }, { $set: updates });
+      Object.assign(pc, updates);
+    } else {
+      // Register NEW distinct PC station
+      const allPcs = await collections.pcs.find({}).toArray();
+      let maxNum = 0;
+      for (const p of allPcs) {
+        const m = p.id.match(/^pc-(\d+)$/i);
+        if (m) {
+          const n = parseInt(m[1], 10);
+          if (n > maxNum) maxNum = n;
+        }
+      }
+      const nextNum = Math.max(maxNum + 1, allPcs.length + 1);
+      const generatedId = `pc-${nextNum.toString().padStart(2, '0')}`;
+
+      // Ensure identifier and name are completely unique across all stations
+      let stationName = name?.trim();
+      let uniqueIdentifier = cleanIdentifier;
+
+      const existingIdent = allPcs.some(p => p.identifier === uniqueIdentifier || p.id === cleanId);
+      const existingName = allPcs.some(p => p.name.toUpperCase() === (stationName || '').toUpperCase());
+
+      if (existingIdent || existingName || !stationName || stationName === 'STATION-PC' || stationName === 'CLIENT GAMING PC') {
+        stationName = `PC-${nextNum.toString().padStart(2, '0')}`;
+        uniqueIdentifier = `${cleanIdentifier}-${nextNum.toString().padStart(2, '0')}`;
+      }
 
       const rawDeviceKey = crypto.randomBytes(24).toString('hex');
       const deviceKeyHash = await bcrypt.hash(rawDeviceKey, 10);
@@ -76,9 +143,10 @@ export class PcService {
         _id: new ObjectId(),
         id: generatedId,
         name: stationName,
-        identifier: cleanIdentifier,
+        identifier: uniqueIdentifier,
         ipAddress: ipAddress.trim(),
-        macAddress: 'AUTO-DISCOVERED',
+        macAddress: (cleanMac && cleanMac !== '00:00:00:00:00:00') ? cleanMac : 'AUTO-DISCOVERED',
+        hardwareId: cleanHardwareId,
         specs: specs.trim(),
         status: 'available',
         connectionState: 'connected',
@@ -94,29 +162,13 @@ export class PcService {
       };
 
       await collections.pcs.insertOne(pc);
-      console.log(`[AutoDiscover] Auto-registered new station: ${pc.name} (${pc.id}) from ${ipAddress}`);
-    } else {
-      await collections.pcs.updateOne(
-        { _id: pc._id },
-        {
-          $set: {
-            connectionState: 'connected',
-            status: 'available',
-            lastHeartbeat: now,
-            ipAddress: ipAddress || pc.ipAddress,
-            updatedAt: now
-          }
-        }
-      );
-      pc.connectionState = 'connected';
-      pc.status = 'available';
-      pc.lastHeartbeat = now;
+      console.log(`[AutoDiscover] Auto-registered new station: ${pc.name} (${pc.id}) [Hardware: ${cleanHardwareId || cleanMac || 'New'}]`);
     }
 
     try {
       const { broadcastRealtimeEvent } = await import('../socket/socket-server');
       broadcastRealtimeEvent('pc:updated', pc, 'staff');
-      broadcastRealtimeEvent('pc:status', { pcId: pc.id, status: 'available' });
+      broadcastRealtimeEvent('pc:status', { pcId: pc.id, status: pc.status });
     } catch {}
 
     return pc;
@@ -243,24 +295,39 @@ export class PcService {
 
   public static async recordHeartbeat(
     pcId: string,
-    ipAddress?: string
+    ipAddress?: string,
+    macAddress?: string,
+    hardwareId?: string
   ): Promise<void> {
     const collections = getCollections();
     const now = new Date();
-    const cleanIdentifier = pcId.trim().toUpperCase();
-    const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-    let pc = await collections.pcs.findOne({
-      $or: [
-        { id: pcId },
-        { id: cleanId },
-        { id: `pc-${cleanId}` },
-        { identifier: cleanIdentifier },
-        { name: cleanIdentifier }
-      ]
-    });
+    const cleanHardwareId = hardwareId?.trim();
+    const cleanMac = macAddress?.trim().toUpperCase();
+
+    let pc: DbPC | null = null;
+    if (cleanHardwareId) {
+      pc = await collections.pcs.findOne({ hardwareId: cleanHardwareId });
+    }
+    if (!pc && cleanMac && cleanMac !== 'AUTO-DISCOVERED' && cleanMac !== '00:00:00:00:00:00') {
+      pc = await collections.pcs.findOne({ macAddress: cleanMac });
+    }
+    if (!pc) {
+      const cleanIdentifier = pcId.trim().toUpperCase();
+      const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+      pc = await collections.pcs.findOne({
+        $or: [
+          { id: pcId },
+          { id: cleanId },
+          { id: `pc-${cleanId}` },
+          { identifier: cleanIdentifier },
+          { name: cleanIdentifier }
+        ]
+      });
+    }
+
     if (!pc) {
       // Auto-register newly connected station automatically
-      await PcService.autoDiscoverOrRegisterPc(pcId, pcId.toUpperCase(), ipAddress);
+      await PcService.autoDiscoverOrRegisterPc(pcId, pcId.toUpperCase(), ipAddress, undefined, macAddress, hardwareId);
       return;
     }
 
@@ -270,6 +337,8 @@ export class PcService {
       updatedAt: now
     };
     if (ipAddress) updates['ipAddress'] = ipAddress;
+    if (cleanHardwareId && !pc.hardwareId) updates['hardwareId'] = cleanHardwareId;
+    if (cleanMac && cleanMac !== '00:00:00:00:00:00' && cleanMac !== 'AUTO-DISCOVERED' && !pc.macAddress) updates['macAddress'] = cleanMac;
 
     let statusChanged = false;
     let newStatus = pc.status;
