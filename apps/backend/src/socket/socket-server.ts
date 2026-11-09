@@ -242,41 +242,40 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       authSocket.join('fleet');
     });
 
+    const emitToPcTarget = (eventName: string, payload: any, targetId?: string) => {
+      if (!io) return;
+      const t = (targetId || 'fleet').toLowerCase().trim();
+      if (t === 'all' || t === 'fleet') {
+        io.to('fleet').emit(eventName, payload);
+        return;
+      }
+      const clean = t.replace(/^pc-/, '');
+      io.to(`pc:${t}`).to(`pc:${clean}`).to(`pc:pc-${clean}`).emit(eventName, payload);
+    };
+
     // Remote Maintenance & Shell Execution Relays
     authSocket.on('maintenance:command:run', (payload: any) => {
-      const target = (payload.targetPcId || 'fleet').toLowerCase();
-      const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
-      io?.to(room).emit('agent:command:run', payload);
-      io?.emit('agent:command:run', payload);
+      emitToPcTarget('agent:command:run', payload, payload.targetPcId || payload.pcId);
     });
 
     authSocket.on('agent:command:result', (result: any) => {
       io?.to('staff').emit('maintenance:command:result', result);
-      io?.emit('maintenance:command:result', result);
     });
 
     authSocket.on('maintenance:clean:run', (payload: any) => {
-      const target = (payload.targetPcId || 'fleet').toLowerCase();
-      const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
-      io?.to(room).emit('agent:clean:run', payload);
-      io?.emit('agent:clean:run', payload);
+      emitToPcTarget('agent:clean:run', payload, payload.targetPcId || payload.pcId);
     });
 
     authSocket.on('agent:clean:result', (result: any) => {
       io?.to('staff').emit('maintenance:clean:result', result);
-      io?.emit('maintenance:clean:result', result);
     });
 
     authSocket.on('maintenance:game:update', (payload: any) => {
-      const target = (payload.targetPcId || 'fleet').toLowerCase();
-      const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
-      io?.to(room).emit('agent:game:update', payload);
-      io?.emit('agent:game:update', payload);
+      emitToPcTarget('agent:game:update', payload, payload.targetPcId || payload.pcId);
     });
 
     authSocket.on('agent:game:status', (status: any) => {
       io?.to('staff').emit('maintenance:game:status', status);
-      io?.emit('maintenance:game:status', status);
     });
 
     // Remote App & File Downloader Relays
@@ -284,119 +283,87 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       const targets = Array.isArray(payload.targetPcIds) ? payload.targetPcIds : [payload.targetPcId || 'all'];
       if (targets.includes('all') || targets.includes('fleet')) {
         io?.to('fleet').emit('agent:download:run', { ...payload, targetPcId: 'all' });
-        io?.emit('agent:download:run', { ...payload, targetPcId: 'all' });
       } else {
         targets.forEach((tid: string) => {
-          const t = tid.toLowerCase();
-          io?.to(`pc:${t}`).emit('agent:download:run', { ...payload, targetPcId: t });
-          // Also alias fallback
-          if (!t.startsWith('pc-')) {
-            io?.to(`pc:pc-${t}`).emit('agent:download:run', { ...payload, targetPcId: t });
-          }
+          emitToPcTarget('agent:download:run', { ...payload, targetPcId: tid }, tid);
         });
       }
     });
 
     authSocket.on('agent:download:progress', (progress: any) => {
       io?.to('staff').emit('maintenance:download:progress', progress);
-      io?.emit('maintenance:download:progress', progress);
     });
 
     authSocket.on('agent:download:res', (result: any) => {
       io?.to('staff').emit('maintenance:download:res', result);
-      io?.emit('maintenance:download:res', result);
     });
 
     authSocket.on('maintenance:power:run', (payload: any) => {
-      const target = (payload.targetPcId || 'fleet').toLowerCase();
-      const room = target === 'all' || target === 'fleet' ? 'fleet' : `pc:${target}`;
-      io?.to(room).emit('agent:power:run', payload);
-      io?.emit('agent:power:run', payload);
+      emitToPcTarget('agent:power:run', payload, payload.targetPcId || payload.pcId);
     });
 
     // Remote File Manager Relays
     authSocket.on('maintenance:fs:list:req', (payload: any) => {
       if (payload.pcId) {
-        const targetId = payload.pcId.toLowerCase();
-        io?.to(`pc:${targetId}`).emit('agent:fs:list:req', payload);
-        io?.emit('agent:fs:list:req', payload);
+        emitToPcTarget('agent:fs:list:req', payload, payload.pcId);
       }
     });
 
     authSocket.on('agent:fs:list:res', (payload: any) => {
       io?.to('staff').emit('maintenance:fs:list:res', payload);
-      io?.emit('maintenance:fs:list:res', payload);
     });
 
     authSocket.on('maintenance:fs:delete:req', (payload: any) => {
       if (payload.pcId) {
-        const targetId = payload.pcId.toLowerCase();
-        io?.to(`pc:${targetId}`).emit('agent:fs:delete:req', payload);
-        io?.emit('agent:fs:delete:req', payload);
+        emitToPcTarget('agent:fs:delete:req', payload, payload.pcId);
       }
     });
 
     authSocket.on('agent:fs:delete:res', (payload: any) => {
       io?.to('staff').emit('maintenance:fs:delete:res', payload);
-      io?.emit('maintenance:fs:delete:res', payload);
     });
 
     // Remote Process Manager Relays
     authSocket.on('maintenance:process:list:req', (payload: any) => {
       if (payload.pcId) {
-        const targetId = payload.pcId.toLowerCase();
-        io?.to(`pc:${targetId}`).emit('agent:process:list:req', payload);
-        io?.emit('agent:process:list:req', payload);
+        emitToPcTarget('agent:process:list:req', payload, payload.pcId);
       }
     });
 
     authSocket.on('agent:process:list:res', (payload: any) => {
       io?.to('staff').emit('maintenance:process:list:res', payload);
-      io?.emit('maintenance:process:list:res', payload);
     });
 
     authSocket.on('maintenance:process:kill:req', (payload: any) => {
       if (payload.pcId) {
-        const targetId = payload.pcId.toLowerCase();
-        io?.to(`pc:${targetId}`).emit('agent:process:kill:req', payload);
-        io?.emit('agent:process:kill:req', payload);
+        emitToPcTarget('agent:process:kill:req', payload, payload.pcId);
       }
     });
 
     authSocket.on('agent:process:kill:res', (payload: any) => {
       io?.to('staff').emit('maintenance:process:kill:res', payload);
-      io?.emit('maintenance:process:kill:res', payload);
     });
 
-    // Remote Screen Capture Relays
+    // Remote Screen Capture Relays - Targeted STRICTLY to requested PC
     authSocket.on('maintenance:screen:req', (payload: any) => {
       if (payload.pcId) {
-        const targetId = payload.pcId.toLowerCase();
-        io?.to(`pc:${targetId}`).emit('agent:screen:req', payload);
-        io?.emit('agent:screen:req', payload);
+        emitToPcTarget('agent:screen:req', payload, payload.pcId);
       }
     });
 
     authSocket.on('agent:screen:res', (payload: any) => {
       io?.to('staff').emit('maintenance:screen:res', payload);
-      io?.emit('maintenance:screen:res', payload);
     });
 
-    // Remote Desktop Input & Mouse/Keyboard Control Relays
+    // Remote Desktop Input & Mouse/Keyboard Control Relays - Targeted STRICTLY to requested PC
     authSocket.on('maintenance:remote-input:req', (payload: any) => {
-      if (payload.pcId) {
-        const targetId = payload.pcId.toLowerCase();
-        io?.to(`pc:${targetId}`).emit('agent:remote-input:req', payload);
-        if (!targetId.startsWith('pc-')) {
-          io?.to(`pc:pc-${targetId}`).emit('agent:remote-input:req', payload);
-        }
-        io?.emit('agent:remote-input:req', payload);
+      if (payload.pcId || payload.targetPcId) {
+        emitToPcTarget('agent:remote-input:req', payload, payload.pcId || payload.targetPcId);
       }
     });
 
     authSocket.on('agent:remote-input:res', (payload: any) => {
       io?.to('staff').emit('maintenance:remote-input:res', payload);
-      io?.emit('maintenance:remote-input:res', payload);
     });
 
     // Active Session Lease Renewal Heartbeat

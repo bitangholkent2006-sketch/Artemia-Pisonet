@@ -795,7 +795,7 @@ class StationMaintenanceAgent {
 
         this.socket?.emit('agent:screen:res', {
           reqId: payload.reqId,
-          pcId: payload.pcId || this.pcId,
+          pcId: payload.pcId || this.dbPcId || this.pcId,
           imageData: base64,
           base64Image: base64,
           timestamp: new Date().toISOString(),
@@ -863,7 +863,8 @@ class StationMaintenanceAgent {
         }
         this.socket?.emit('agent:remote-input:res', {
           reqId: payload.reqId,
-          pcId: this.pcId,
+          pcId: payload.pcId || payload.targetPcId || this.dbPcId || this.pcId,
+          targetPcId: payload.pcId || payload.targetPcId,
           ...res,
           timestamp: new Date().toISOString()
         });

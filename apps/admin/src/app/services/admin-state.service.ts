@@ -691,11 +691,16 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:screen:res', (data: any) => {
-        const matchReq = !!(data.reqId && data.reqId === reqId);
         const dId = (data.pcId || '').toLowerCase();
         const pId = pcId.toLowerCase();
-        const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId;
-        if (matchReq || matchId) {
+        const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId ||
+                        (pId === 'pc-02' && (dId === 'artemiapisonet' || dId.includes('artemia'))) ||
+                        (pId.includes('artemia') && (dId === 'pc-02' || dId.includes('artemia'))) ||
+                        (pId === 'pc-01' && (dId === 'kent' || dId.includes('kent'))) ||
+                        (pId.includes('kent') && (dId === 'pc-01' || dId.includes('kent')));
+
+        // Strictly verify that this screenshot response belongs to the target PC
+        if (matchId && (data.reqId === reqId || data.imageData || data.base64Image)) {
           clearTimeout(timer);
           cleanup();
           resolve(data.imageData || data.base64Image || null);
@@ -723,11 +728,15 @@ export class AdminStateService {
       }, 3000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:remote-input:res', (data: any) => {
-        const matchReq = !!(data.reqId && data.reqId === reqId);
         const dId = (data.pcId || '').toLowerCase();
         const pId = payload.pcId.toLowerCase();
-        const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId;
-        if (matchReq || matchId) {
+        const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId ||
+                        (pId === 'pc-02' && (dId === 'artemiapisonet' || dId.includes('artemia'))) ||
+                        (pId.includes('artemia') && (dId === 'pc-02' || dId.includes('artemia'))) ||
+                        (pId === 'pc-01' && (dId === 'kent' || dId.includes('kent'))) ||
+                        (pId.includes('kent') && (dId === 'pc-01' || dId.includes('kent')));
+
+        if (data.reqId === reqId || matchId) {
           clearTimeout(timer);
           cleanup();
           resolve({ success: data.success ?? true, error: data.error });

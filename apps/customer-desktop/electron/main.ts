@@ -733,21 +733,58 @@ ipcMain.handle('maintenance:kill-process', async (_event, pid?: number, name?: s
   });
 });
 
-// 8. Capture Screen (Instant Desktop Screenshot)
+// 8. Capture Screen (Instant Desktop Screenshot with Strict Timeout & GDI Fallback)
 ipcMain.handle('maintenance:capture-screen', async () => {
   try {
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: 1280, height: 720 }
-    });
-    if (sources.length > 0 && sources[0].thumbnail) {
-      const base64Image = sources[0].thumbnail.toDataURL();
-      return { base64Image };
+    // 1. Fast Chromium desktopCapturer with strict 1500ms timeout to prevent hanging on AMD Radeon or headless displays
+    const capturerPromise = (async () => {
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: 1280, height: 720 }
+      });
+      if (sources.length > 0 && sources[0].thumbnail) {
+        return sources[0].thumbnail.toDataURL();
+      }
+      return '';
+    })();
+
+    const timeoutPromise = new Promise<string>((resolve) => setTimeout(() => resolve(''), 1500));
+    const base64 = await Promise.race([capturerPromise, timeoutPromise]);
+    if (base64 && base64.length > 500) {
+      return { base64Image: base64 };
     }
-    return { base64Image: '', error: 'No screen capture source available.' };
   } catch (err: any) {
-    return { base64Image: '', error: err?.message || 'Screenshot failed.' };
+    console.warn('[ScreenCapture] desktopCapturer skipped, falling back to GDI:', err?.message);
   }
+
+  // 2. Resilient Fallback: PowerShell GDI Screen Capture directly to %TEMP% JPEG
+  try {
+    const tempFile = path.join(os.tmpdir(), `artemia_screen_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.jpg`);
+    const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $w = 1152; $h = [int][Math]::Round($b.Height * $w / $b.Width); $bmp = New-Object System.Drawing.Bitmap $w, $h; $g = [System.Drawing.Graphics]::FromImage($bmp); $orig = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $go = [System.Drawing.Graphics]::FromImage($orig); $go.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $g.DrawImage($orig, 0, 0, $w, $h); $bmp.Save('${tempFile.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Jpeg); $go.Dispose(); $orig.Dispose(); $g.Dispose(); $bmp.Dispose();`;
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+
+    const fileBase64 = await new Promise<string>((resolve) => {
+      exec(`powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`, { timeout: 4500 }, () => {
+        if (fs.existsSync(tempFile)) {
+          try {
+            const buf = fs.readFileSync(tempFile);
+            fs.unlinkSync(tempFile);
+            resolve(`data:image/jpeg;base64,${buf.toString('base64')}`);
+            return;
+          } catch {}
+        }
+        resolve('');
+      });
+    });
+
+    if (fileBase64) {
+      return { base64Image: fileBase64 };
+    }
+  } catch (err: any) {
+    console.error('[ScreenCapture] GDI Fallback failed:', err);
+  }
+
+  return { base64Image: '', error: 'Screen capture currently unavailable on station.' };
 });
 
 // 8.1 Remote Desktop Input Simulator (Mouse clicks, double-clicks, right-clicks, typing, shortcuts)

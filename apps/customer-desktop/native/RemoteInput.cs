@@ -1,4 +1,8 @@
 using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -51,12 +55,59 @@ namespace ArtemiaRemoteInput {
             }
         }
 
+        static ImageCodecInfo GetEncoder(ImageFormat format) {
+            ImageCodecInfo[] codecs = ImageCodecInfo.GetImageDecoders();
+            foreach (ImageCodecInfo codec in codecs) {
+                if (codec.FormatID == format.Guid) {
+                    return codec;
+                }
+            }
+            return null;
+        }
+
+        static void CaptureScreen() {
+            try {
+                Rectangle bounds = Screen.PrimaryScreen.Bounds;
+                int targetWidth = 1280;
+                int targetHeight = (int)Math.Round((double)bounds.Height * targetWidth / bounds.Width);
+
+                using (Bitmap fullBmp = new Bitmap(bounds.Width, bounds.Height)) {
+                    using (Graphics gFull = Graphics.FromImage(fullBmp)) {
+                        gFull.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+                    }
+
+                    using (Bitmap thumb = new Bitmap(targetWidth, targetHeight)) {
+                        using (Graphics gThumb = Graphics.FromImage(thumb)) {
+                            gThumb.InterpolationMode = InterpolationMode.Bilinear;
+                            gThumb.DrawImage(fullBmp, 0, 0, targetWidth, targetHeight);
+                        }
+
+                        using (MemoryStream ms = new MemoryStream()) {
+                            ImageCodecInfo encoder = GetEncoder(ImageFormat.Jpeg);
+                            EncoderParameters encParams = new EncoderParameters(1);
+                            encParams.Param[0] = new EncoderParameter(Encoder.Quality, 65L);
+                            thumb.Save(ms, encoder, encParams);
+                            byte[] bytes = ms.ToArray();
+                            Console.Write("data:image/jpeg;base64," + Convert.ToBase64String(bytes));
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                Console.Error.WriteLine("Capture error: " + ex.Message);
+            }
+        }
+
         [STAThread]
         static void Main(string[] args) {
             if (args.Length == 0) return;
             string cmd = args[0].ToLower();
 
             try {
+                if (cmd == "capture" || cmd == "screenshot") {
+                    CaptureScreen();
+                    return;
+                }
+
                 if (cmd == "click" || cmd == "dclick" || cmd == "rclick" || cmd == "move" || cmd == "down" || cmd == "up") {
                     if (args.Length >= 3) {
                         int x = int.Parse(args[1]);
