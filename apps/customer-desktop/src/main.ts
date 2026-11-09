@@ -96,6 +96,12 @@ class StationMaintenanceAgent {
     return false;
   }
 
+  // High-Frequency Real-Time Screen Stream State
+  private isScreenStreaming = false;
+  private screenStreamTimer: any = null;
+  private isScreenStreamInFlight = false;
+  private lastAdminStreamPing = 0;
+
   private telemetry = {
     cpuPercent: 14,
     ramPercent: 42,
@@ -270,6 +276,71 @@ class StationMaintenanceAgent {
     ctx.fillText(`🖥️ Artemia Fleet Live Monitor • ${this.pcName} (${this.specs}) • CPU: ${this.telemetry.cpuPercent}% | RAM: ${this.telemetry.ramPercent}% | Live Feed`, 16, 22);
 
     return canvas.toDataURL('image/png');
+  }
+
+  public startContinuousScreenStream(intervalMs: number = 200, width: number = 960, height: number = 540, quality: number = 50) {
+    this.isScreenStreaming = true;
+    this.lastAdminStreamPing = Date.now();
+    if (this.screenStreamTimer) {
+      clearTimeout(this.screenStreamTimer);
+      this.screenStreamTimer = null;
+    }
+
+    const safeInterval = Math.max(80, Math.min(2000, intervalMs || 200));
+
+    const loop = async () => {
+      if (!this.isScreenStreaming) return;
+
+      // Watchdog: If Admin hasn't sent a ping for 12 seconds, automatically stop streaming to conserve CPU & bandwidth
+      if (Date.now() - this.lastAdminStreamPing > 12000) {
+        this.stopContinuousScreenStream();
+        this.logMessage('[ScreenStream] Inactive admin watchdog timeout (12s). Stream auto-stopped.');
+        return;
+      }
+
+      if (!this.isScreenStreamInFlight) {
+        this.isScreenStreamInFlight = true;
+        try {
+          let base64 = '';
+          if (desktopWindow.pisonetDesktop) {
+            const res = await desktopWindow.pisonetDesktop.captureScreen({
+              width,
+              height,
+              quality,
+              skipFallback: true
+            });
+            base64 = res.base64Image;
+          } else {
+            base64 = this.generateLiveScreenCapture();
+          }
+
+          if (base64 && this.isScreenStreaming && this.socket?.connected) {
+            this.socket.emit('agent:screen:stream-frame', {
+              pcId: this.dbPcId || this.pcId,
+              frame: base64,
+              timestamp: Date.now()
+            });
+          }
+        } catch {
+        } finally {
+          this.isScreenStreamInFlight = false;
+        }
+      }
+
+      if (this.isScreenStreaming) {
+        this.screenStreamTimer = setTimeout(loop, safeInterval);
+      }
+    };
+
+    loop();
+  }
+
+  public stopContinuousScreenStream() {
+    this.isScreenStreaming = false;
+    if (this.screenStreamTimer) {
+      clearTimeout(this.screenStreamTimer);
+      this.screenStreamTimer = null;
+    }
   }
 
   constructor() {
@@ -887,6 +958,22 @@ class StationMaintenanceAgent {
           timestamp: new Date().toISOString(),
           error: err
         });
+      });
+
+      // 8.1 Ultra-Fast Continuous Push Screen Stream Relays (AnyDesk-style)
+      this.socket.on('agent:stream:start', (payload: { pcId?: string; targetPcId?: string; intervalMs?: number; width?: number; height?: number; quality?: number }) => {
+        if (!this.matchesThisStation(payload.pcId || payload.targetPcId)) return;
+        this.startContinuousScreenStream(payload.intervalMs, payload.width, payload.height, payload.quality);
+      });
+
+      this.socket.on('agent:stream:stop', (payload: { pcId?: string; targetPcId?: string }) => {
+        if (!this.matchesThisStation(payload.pcId || payload.targetPcId)) return;
+        this.stopContinuousScreenStream();
+      });
+
+      this.socket.on('agent:stream:ping', (payload: { pcId?: string; targetPcId?: string }) => {
+        if (!this.matchesThisStation(payload.pcId || payload.targetPcId)) return;
+        this.lastAdminStreamPing = Date.now();
       });
 
       // 9. Remote App & File Downloader Relay

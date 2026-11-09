@@ -34,7 +34,7 @@ export interface PisonetDesktopApi {
   deletePath: (targetPath: string) => Promise<{ success: boolean; error?: string }>;
   listProcesses: () => Promise<{ processes: any[]; error?: string }>;
   killProcess: (pid?: number, name?: string) => Promise<{ success: boolean; error?: string }>;
-  captureScreen: () => Promise<{ base64Image: string; error?: string }>;
+  captureScreen: (options?: { width?: number; height?: number; quality?: number; skipFallback?: boolean }) => Promise<{ base64Image: string; error?: string }>;
   getDiskDrives: () => Promise<{ drives: any[] }>;
   getHardwareHealth: () => Promise<{ cpuModel: string; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string }>;
   downloadFile: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
@@ -68,7 +68,7 @@ const api: PisonetDesktopApi = {
   deletePath: (targetPath) => ipcRenderer.invoke('maintenance:delete-path', targetPath),
   listProcesses: () => ipcRenderer.invoke('maintenance:list-processes'),
   killProcess: (pid, name) => ipcRenderer.invoke('maintenance:kill-process', pid, name),
-  captureScreen: () => ipcRenderer.invoke('maintenance:capture-screen'),
+  captureScreen: (options?: any) => ipcRenderer.invoke('maintenance:capture-screen', options),
   getDiskDrives: () => ipcRenderer.invoke('maintenance:get-disk-drives'),
   getHardwareHealth: () => ipcRenderer.invoke('maintenance:get-hardware-health'),
   downloadFile: (payload) => ipcRenderer.invoke('maintenance:download-file', payload),

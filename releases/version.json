@@ -1,7 +1,7 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-09T12:40:00.000Z",
+  "releaseDate": "2026-11-09T13:08:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Multi-PC isolation, ultra-smooth 35KB JPEG screen capture, mobile touch parity, and OTA auto-updater"
+  "changelog": "AnyDesk-style continuous push screen streaming (150-250ms), zero-hang watchdog, long-press right click on mobile, and remote scroll"
 }

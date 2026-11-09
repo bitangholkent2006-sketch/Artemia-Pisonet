@@ -707,6 +707,22 @@ export class AdminStateService {
     });
   }
 
+  public startScreenStream(pcId: string, intervalMs: number = 200, width: number = 960, height: number = 540, quality: number = 50) {
+    this.apiClient.emitSocket('maintenance:stream:start', { pcId, targetPcId: pcId, intervalMs, width, height, quality });
+  }
+
+  public stopScreenStream(pcId: string) {
+    this.apiClient.emitSocket('maintenance:stream:stop', { pcId, targetPcId: pcId });
+  }
+
+  public pingScreenStream(pcId: string) {
+    this.apiClient.emitSocket('maintenance:stream:ping', { pcId, targetPcId: pcId });
+  }
+
+  public onScreenStreamFrame(callback: (data: { pcId: string; frame: string; timestamp?: number }) => void): () => void {
+    return this.apiClient.onSocketEvent('maintenance:screen:stream-frame', callback);
+  }
+
   public sendRemoteInput(payload: {
     pcId: string;
     type: 'click' | 'dclick' | 'rclick' | 'move' | 'down' | 'up' | 'scroll' | 'key' | 'text';

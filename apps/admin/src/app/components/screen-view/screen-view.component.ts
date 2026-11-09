@@ -54,13 +54,13 @@ export interface ClickRipple {
 
           <!-- Refresh Rate / Auto-Streaming Selector -->
           <div class="stream-rate-select">
-            <span class="rate-label">Stream:</span>
+            <span class="rate-label">Live Stream:</span>
             <select [(ngModel)]="streamIntervalMs" (change)="onStreamRateChange()">
-              <option [value]="0">Manual Only</option>
-              <option [value]="400">🚀 Ultra Smooth (400ms)</option>
-              <option [value]="800">⚡ Smooth (800ms)</option>
-              <option [value]="1500">Normal (1.5s)</option>
-              <option [value]="3000">Eco (3.0s)</option>
+              <option [value]="150">⚡ Turbo Extreme (150ms / ~7 FPS)</option>
+              <option [value]="250">🚀 Real-Time Smooth (250ms / 4 FPS)</option>
+              <option [value]="500">⚡ Balanced (500ms / 2 FPS)</option>
+              <option [value]="1000">Normal (1.0s)</option>
+              <option [value]="0">Manual (Click Capture)</option>
             </select>
           </div>
 
@@ -148,6 +148,12 @@ export interface ClickRipple {
             >
               ✌️ Double Click
             </button>
+            <button type="button" class="tool-btn" (click)="sendScroll(120)">
+              📜 Scroll Up
+            </button>
+            <button type="button" class="tool-btn" (click)="sendScroll(-120)">
+              📜 Scroll Down
+            </button>
           </div>
 
           <div class="toolbar-group key-group">
@@ -156,9 +162,12 @@ export interface ClickRipple {
             <button type="button" class="tool-btn key-btn" (click)="sendKey('alttab')">📑 Alt+Tab</button>
             <button type="button" class="tool-btn key-btn" (click)="sendKey('enter')">⏎ Enter</button>
             <button type="button" class="tool-btn key-btn" (click)="sendKey('backspace')">⌫ Back</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('space')">␣ Space</button>
             <button type="button" class="tool-btn key-btn" (click)="sendKey('esc')">⎋ Esc</button>
             <button type="button" class="tool-btn key-btn" (click)="sendKey('taskmgr')">⚡ TaskMgr</button>
             <button type="button" class="tool-btn key-btn warn" (click)="sendKey('altf4')">❌ Alt+F4</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('^c')">📋 Copy</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('^v')">📥 Paste</button>
             <button
               type="button"
               class="tool-btn"
@@ -176,10 +185,16 @@ export interface ClickRipple {
               class="mobile-text-input"
               [(ngModel)]="mobileTextInput"
               (keydown.enter)="sendMobileText()"
-              placeholder="I-type diri ang pulong, password, o command..."
+              placeholder="I-type diri sa cellphone (e.g. password, chat, text)..."
             />
             <button type="button" class="btn btn-primary btn-sm" (click)="sendMobileText()">
               Send ➔
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" (click)="sendKey('enter')">
+              ⏎ Enter
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" (click)="sendKey('backspace')">
+              ⌫
             </button>
           </div>
         </div>
@@ -210,6 +225,8 @@ export interface ClickRipple {
               class="live-screen-image"
               alt="Live Screen Stream"
               draggable="false"
+              loading="eager"
+              decoding="sync"
               (click)="onScreenClick($event)"
               (dblclick)="onScreenDblClick($event)"
               (contextmenu)="onScreenContextMenu($event)"
@@ -810,8 +827,13 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   state: any = { pcs: [] };
   private sub!: Subscription;
   private streamTimer: any = null;
+  private streamPingTimer: any = null;
+  private streamSub?: () => void;
   private quickCaptureTimer: any = null;
+  private longPressTimer: any = null;
   private inFlightCapture = false;
+  private lastTouchTime = 0;
+  private lastTapTime = 0;
 
   selectedPcId: string = '';
   screenImages: { [pcId: string]: string } = {};
@@ -830,7 +852,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   // Remote Desktop Control state
   isControlEnabled = false;
   isFullscreen = false;
-  streamIntervalMs: number = 800; // 800ms smooth auto-stream
+  streamIntervalMs: number = 250; // 250ms ultra-smooth low-latency push stream (~4 FPS)
   lastActionMessage: string | null = null;
   clickRipples: ClickRipple[] = [];
   private rippleCounter = 0;
@@ -863,6 +885,17 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.scheduleQuickCapture(300);
   }
 
+  sendScroll(delta: number) {
+    if (!this.selectedPc) return;
+    const dir = delta > 0 ? 'Up' : 'Down';
+    this.lastActionMessage = `📜 Scroll ${dir}`;
+    this.adminState.sendRemoteInput({
+      pcId: this.selectedPc.id,
+      type: 'scroll',
+      delta
+    });
+  }
+
   // Touch Event Handling for Mobile / Cellphone
   private touchStartX = 0;
   private touchStartY = 0;
@@ -872,12 +905,49 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     const touch = event.touches[0];
     this.touchStartX = touch.clientX;
     this.touchStartY = touch.clientY;
+
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = null;
+    }
+
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+
+    // Long-press detection: hold finger for 500ms triggers Right-Click automatically on mobile
+    this.longPressTimer = setTimeout(() => {
+      this.longPressTimer = null;
+      this.lastTouchTime = Date.now();
+      this.addRipple(x, y);
+      this.lastActionMessage = `🔘 Right-click (Long-press) at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate(50); } catch {}
+      }
+      this.adminState.sendRemoteInput({
+        pcId: this.selectedPc!.id,
+        type: 'rclick',
+        xPercent,
+        yPercent
+      });
+      this.scheduleQuickCapture(250);
+    }, 500);
   }
 
   onTouchEnd(event: TouchEvent) {
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = null;
+    }
     if (!this.isControlEnabled || !this.selectedPc) return;
     const touch = event.changedTouches[0];
     if (!touch) return;
+
+    // If long-press already triggered right-click within last 200ms, ignore touch release
+    if (Date.now() - this.lastTouchTime < 200) return;
 
     // Filter out scrolling gestures
     const diffX = Math.abs(touch.clientX - this.touchStartX);
@@ -886,6 +956,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
     event.preventDefault();
     event.stopPropagation();
+    this.lastTouchTime = Date.now();
 
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
@@ -896,7 +967,12 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
     this.addRipple(x, y);
 
-    const type = this.activeClickType;
+    // Rapid double tap detection on mobile (< 320ms)
+    const now = Date.now();
+    const isDoubleTap = (now - this.lastTapTime < 320);
+    this.lastTapTime = now;
+
+    const type = isDoubleTap ? 'dclick' : this.activeClickType;
     const typeLabel = type === 'rclick' ? '🔘 Right-click' : type === 'dclick' ? '⚡ Double-click' : '🖱️ Click';
     this.lastActionMessage = `${typeLabel} at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
 
@@ -934,10 +1010,26 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     }
   }
 
+  private handleStreamFrame(data: { pcId: string; frame: string; timestamp?: number }) {
+    if (!data?.frame || !this.selectedPc) return;
+    if (!this.matchesStation(this.selectedPc, data.pcId)) return;
+
+    const targetId = this.selectedPc.id;
+    this.screenImages[targetId] = data.frame;
+    this.screenImages[targetId.toLowerCase()] = data.frame;
+    if (this.selectedPc.name) {
+      this.screenImages[this.selectedPc.name.toLowerCase()] = data.frame;
+    }
+    this.lastCapturedTime = new Date();
+    this.isCapturing = false;
+  }
+
   ngOnInit() {
     if (this.initialPcId) {
       this.selectedPcId = this.initialPcId;
     }
+
+    this.streamSub = this.adminState.onScreenStreamFrame((data) => this.handleStreamFrame(data));
 
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
@@ -948,17 +1040,25 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       }
     });
 
-    if (this.selectedPcId) {
+    if (this.selectedPcId && this.streamIntervalMs > 0) {
+      this.startStreaming();
+    } else if (this.selectedPcId) {
       this.captureCurrentScreen();
     }
   }
 
   ngOnDestroy() {
     this.sub?.unsubscribe();
+    if (this.streamSub) {
+      this.streamSub();
+    }
     this.stopStreaming();
     this.removeGlobalKeyListeners();
     if (this.quickCaptureTimer) {
       clearTimeout(this.quickCaptureTimer);
+    }
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
     }
   }
 
@@ -967,11 +1067,19 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   selectStation(pcId: string) {
+    if (this.selectedPc) {
+      this.adminState.stopScreenStream(this.selectedPc.id);
+    }
     this.selectedPcId = pcId;
     this.inFlightCapture = false;
-    this.isCapturing = true;
+    this.isCapturing = !this.currentScreenImage;
     if (this.quickCaptureTimer) clearTimeout(this.quickCaptureTimer);
-    this.captureCurrentScreen();
+
+    if (this.streamIntervalMs > 0) {
+      this.startStreaming();
+    } else {
+      this.captureCurrentScreen();
+    }
   }
 
   toggleControlMode() {
@@ -979,11 +1087,9 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (this.isControlEnabled) {
       this.lastActionMessage = '🎮 AnyDesk Mode: Mouse & Keyboard Locked to Remote Desktop.';
       this.addGlobalKeyListeners();
-      this.startStreaming();
     } else {
       this.lastActionMessage = null;
       this.removeGlobalKeyListeners();
-      this.stopStreaming();
     }
   }
 
@@ -1023,22 +1129,39 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   startStreaming() {
     this.stopStreaming();
-    if (this.streamIntervalMs > 0) {
-      this.captureCurrentScreen();
-      this.streamTimer = setInterval(() => {
-        this.captureCurrentScreen();
-      }, this.streamIntervalMs);
-    }
+    if (!this.selectedPc || this.streamIntervalMs <= 0) return;
+
+    const targetId = this.selectedPc.id;
+    this.isCapturing = !this.currentScreenImage;
+    this.adminState.startScreenStream(targetId, this.streamIntervalMs, 960, 540, 50);
+
+    // Keepalive ping every 4s to prevent client watchdog timeout
+    this.streamPingTimer = setInterval(() => {
+      if (this.selectedPc && this.streamIntervalMs > 0) {
+        this.adminState.pingScreenStream(this.selectedPc.id);
+      }
+    }, 4000);
   }
 
   stopStreaming() {
+    if (this.streamPingTimer) {
+      clearInterval(this.streamPingTimer);
+      this.streamPingTimer = null;
+    }
     if (this.streamTimer) {
       clearInterval(this.streamTimer);
       this.streamTimer = null;
     }
+    if (this.selectedPc) {
+      this.adminState.stopScreenStream(this.selectedPc.id);
+    }
   }
 
   scheduleQuickCapture(delayMs: number = 250) {
+    if (this.streamIntervalMs > 0) {
+      // Stream is continuously pushing frames, no slow polling needed
+      return;
+    }
     if (this.quickCaptureTimer) clearTimeout(this.quickCaptureTimer);
     this.quickCaptureTimer = setTimeout(() => {
       this.captureCurrentScreen();
@@ -1053,17 +1176,12 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     try {
       const img = await this.adminState.captureScreen(targetId);
       if (img) {
-        // Pre-decode offscreen to eliminate any white flash / layout shift
-        const pre = new Image();
-        pre.onload = () => {
-          this.screenImages[targetId] = img;
-          this.screenImages[targetId.toLowerCase()] = img;
-          if (this.selectedPc?.name) {
-            this.screenImages[this.selectedPc.name.toLowerCase()] = img;
-          }
-          this.lastCapturedTime = new Date();
-        };
-        pre.src = img;
+        this.screenImages[targetId] = img;
+        this.screenImages[targetId.toLowerCase()] = img;
+        if (this.selectedPc?.name) {
+          this.screenImages[this.selectedPc.name.toLowerCase()] = img;
+        }
+        this.lastCapturedTime = new Date();
       }
     } finally {
       this.inFlightCapture = false;
@@ -1073,6 +1191,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   // Mouse Interactivity on Remote Screen
   onScreenClick(event: MouseEvent) {
+    if (Date.now() - this.lastTouchTime < 500) return;
     if (!this.isControlEnabled || !this.selectedPc) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1098,6 +1217,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   onScreenDblClick(event: MouseEvent) {
+    if (Date.now() - this.lastTouchTime < 500) return;
     if (!this.isControlEnabled || !this.selectedPc) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1123,6 +1243,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   onScreenContextMenu(event: MouseEvent) {
+    if (Date.now() - this.lastTouchTime < 500) return;
     if (!this.isControlEnabled || !this.selectedPc) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1270,10 +1391,24 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (!this.selectedPc) return;
     const targetId = this.selectedPc.id;
     this.lastActionMessage = `⌨️ Key: ${keyString}`;
+
+    let normalizedKey = keyString;
+    const lower = keyString.toLowerCase();
+    if (lower === 'enter') normalizedKey = '{ENTER}';
+    else if (lower === 'backspace') normalizedKey = '{BACKSPACE}';
+    else if (lower === 'esc') normalizedKey = '{ESC}';
+    else if (lower === 'tab') normalizedKey = '{TAB}';
+    else if (lower === 'space') normalizedKey = ' ';
+    else if (lower === 'up') normalizedKey = '{UP}';
+    else if (lower === 'down') normalizedKey = '{DOWN}';
+    else if (lower === 'left') normalizedKey = '{LEFT}';
+    else if (lower === 'right') normalizedKey = '{RIGHT}';
+    else if (lower === 'delete') normalizedKey = '{DELETE}';
+
     this.adminState.sendRemoteInput({
       pcId: targetId,
       type: 'key',
-      key: keyString
+      key: normalizedKey
     });
     this.scheduleQuickCapture(300);
   }

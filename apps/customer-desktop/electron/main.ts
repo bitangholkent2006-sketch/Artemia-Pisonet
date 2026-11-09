@@ -842,19 +842,24 @@ ipcMain.handle('maintenance:kill-process', async (_event, pid?: number, name?: s
 });
 
 // 8. Capture Screen (Instant Desktop Screenshot with Strict Timeout & GDI Fallback)
-ipcMain.handle('maintenance:capture-screen', async () => {
+ipcMain.handle('maintenance:capture-screen', async (_event, options?: { width?: number; height?: number; quality?: number; skipFallback?: boolean }) => {
+  const width = Math.min(1920, Math.max(320, options?.width || 960));
+  const height = Math.min(1080, Math.max(180, options?.height || 540));
+  const quality = Math.min(100, Math.max(20, options?.quality || 50));
+  const skipFallback = options?.skipFallback ?? false;
+
   try {
-    // 1. Fast Chromium desktopCapturer with optimized JPEG compression (65% quality)
-    // Produces ~35KB per frame instead of 2.5MB uncompressed PNG, giving 60x faster transmission with ZERO lag
+    // 1. Fast Chromium desktopCapturer with optimized JPEG compression (~20KB per frame)
+    // Produces lightweight frames for zero-lag continuous streaming
     const capturerPromise = (async () => {
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
-        thumbnailSize: { width: 1152, height: 648 }
+        thumbnailSize: { width, height }
       });
       if (sources.length > 0 && sources[0].thumbnail) {
         const thumb = sources[0].thumbnail;
         if (typeof thumb.toJPEG === 'function') {
-          const buf = thumb.toJPEG(65);
+          const buf = thumb.toJPEG(quality);
           return `data:image/jpeg;base64,${buf.toString('base64')}`;
         }
         return thumb.toDataURL();
@@ -862,19 +867,25 @@ ipcMain.handle('maintenance:capture-screen', async () => {
       return '';
     })();
 
-    const timeoutPromise = new Promise<string>((resolve) => setTimeout(() => resolve(''), 1200));
+    const timeoutLimit = skipFallback ? 650 : 1200;
+    const timeoutPromise = new Promise<string>((resolve) => setTimeout(() => resolve(''), timeoutLimit));
     const base64 = await Promise.race([capturerPromise, timeoutPromise]);
     if (base64 && base64.length > 500) {
       return { base64Image: base64 };
     }
   } catch (err: any) {
-    console.warn('[ScreenCapture] desktopCapturer skipped, falling back to GDI:', err?.message);
+    console.warn('[ScreenCapture] desktopCapturer skipped:', err?.message);
   }
 
-  // 2. Resilient Fallback: PowerShell GDI Screen Capture directly to %TEMP% JPEG
+  // If streaming, NEVER run slow PowerShell fallback to protect station responsiveness and prevent freezes
+  if (skipFallback) {
+    return { base64Image: '', error: 'Frame skipped (capturer busy)' };
+  }
+
+  // 2. Resilient Fallback: PowerShell GDI Screen Capture directly to %TEMP% JPEG (manual capture only)
   try {
     const tempFile = path.join(os.tmpdir(), `artemia_screen_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.jpg`);
-    const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $w = 1152; $h = [int][Math]::Round($b.Height * $w / $b.Width); $bmp = New-Object System.Drawing.Bitmap $w, $h; $g = [System.Drawing.Graphics]::FromImage($bmp); $orig = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $go = [System.Drawing.Graphics]::FromImage($orig); $go.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $g.DrawImage($orig, 0, 0, $w, $h); $bmp.Save('${tempFile.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Jpeg); $go.Dispose(); $orig.Dispose(); $g.Dispose(); $bmp.Dispose();`;
+    const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $w = ${width}; $h = [int][Math]::Round($b.Height * $w / $b.Width); $bmp = New-Object System.Drawing.Bitmap $w, $h; $g = [System.Drawing.Graphics]::FromImage($bmp); $orig = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $go = [System.Drawing.Graphics]::FromImage($orig); $go.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $g.DrawImage($orig, 0, 0, $w, $h); $bmp.Save('${tempFile.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Jpeg); $go.Dispose(); $orig.Dispose(); $g.Dispose(); $bmp.Dispose();`;
     const encoded = Buffer.from(script, 'utf16le').toString('base64');
 
     const fileBase64 = await new Promise<string>((resolve) => {
@@ -962,10 +973,17 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
         // Fallback to PowerShell Win32 and SendKeys
         let psCmd = '';
         const kLower = (payload.key || '').toLowerCase();
-        if (type === 'click' || type === 'rclick') {
+        if (type === 'click' || type === 'rclick' || type === 'dclick') {
           const downFlag = type === 'rclick' ? '0x08' : '0x02';
           const upFlag = type === 'rclick' ? '0x10' : '0x04';
-          psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); }'; [M]::SetCursorPos(${targetX}, ${targetY}); [M]::mouse_event(${downFlag}, 0, 0, 0, 0); [M]::mouse_event(${upFlag}, 0, 0, 0, 0);`;
+          if (type === 'dclick') {
+            psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); }'; [M]::SetCursorPos(${targetX}, ${targetY}); [M]::mouse_event(0x02, 0, 0, 0, 0); [M]::mouse_event(0x04, 0, 0, 0, 0); System.Threading.Thread.Sleep(50); [M]::mouse_event(0x02, 0, 0, 0, 0); [M]::mouse_event(0x04, 0, 0, 0, 0);`;
+          } else {
+            psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); }'; [M]::SetCursorPos(${targetX}, ${targetY}); [M]::mouse_event(${downFlag}, 0, 0, 0, 0); [M]::mouse_event(${upFlag}, 0, 0, 0, 0);`;
+          }
+        } else if (type === 'scroll') {
+          const delta = payload.delta || 120;
+          psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); }'; [M]::mouse_event(0x0800, 0, 0, ${delta}, 0);`;
         } else if (type === 'key' && (kLower === 'alttab' || kLower === '%{tab}')) {
           psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void Tab() { keybd_event(0x12,0,0,UIntPtr.Zero); keybd_event(0x09,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x09,0,2,UIntPtr.Zero); keybd_event(0x12,0,2,UIntPtr.Zero); } }'; [K]::Tab();`;
         } else if (type === 'key' && (kLower === 'win' || kLower === 'start' || kLower === '^{esc}')) {

@@ -359,6 +359,29 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.to('staff').emit('maintenance:screen:res', payload);
     });
 
+    // Real-Time Push Streaming Relays (AnyDesk-style continuous video feed)
+    authSocket.on('maintenance:stream:start', (payload: any) => {
+      if (payload.pcId) {
+        emitToPcTarget('agent:stream:start', payload, payload.pcId);
+      }
+    });
+
+    authSocket.on('maintenance:stream:stop', (payload: any) => {
+      if (payload.pcId) {
+        emitToPcTarget('agent:stream:stop', payload, payload.pcId);
+      }
+    });
+
+    authSocket.on('maintenance:stream:ping', (payload: any) => {
+      if (payload.pcId) {
+        emitToPcTarget('agent:stream:ping', payload, payload.pcId);
+      }
+    });
+
+    authSocket.on('agent:screen:stream-frame', (payload: any) => {
+      io?.to('staff').emit('maintenance:screen:stream-frame', payload);
+    });
+
     // OTA Client Update Status Relay
     authSocket.on('agent:client-update:status', (payload: any) => {
       io?.to('staff').emit('maintenance:client-update:status', payload);
