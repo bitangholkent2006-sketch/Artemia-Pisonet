@@ -691,18 +691,18 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:screen:res', (data: any) => {
-        const matchReq = data.reqId && data.reqId === reqId;
+        const matchReq = data.reqId ? (data.reqId === reqId) : true;
         const dId = (data.pcId || '').toLowerCase();
         const pId = pcId.toLowerCase();
         const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId;
-        if (matchReq || matchId) {
+        if (matchReq && matchId) {
           clearTimeout(timer);
           cleanup();
           resolve(data.imageData || data.base64Image || null);
         }
       });
 
-      this.apiClient.emitSocket('maintenance:screen:req', { reqId, pcId });
+      this.apiClient.emitSocket('maintenance:screen:req', { reqId, pcId, targetPcId: pcId });
     });
   }
 
@@ -723,14 +723,18 @@ export class AdminStateService {
       }, 3000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:remote-input:res', (data: any) => {
-        if (data.reqId === reqId || data.pcId?.toLowerCase() === payload.pcId.toLowerCase()) {
+        const matchReq = data.reqId ? (data.reqId === reqId) : true;
+        const dId = (data.pcId || '').toLowerCase();
+        const pId = payload.pcId.toLowerCase();
+        const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId;
+        if (matchReq && matchId) {
           clearTimeout(timer);
           cleanup();
           resolve({ success: data.success ?? true, error: data.error });
         }
       });
 
-      this.apiClient.emitSocket('maintenance:remote-input:req', { reqId, ...payload });
+      this.apiClient.emitSocket('maintenance:remote-input:req', { reqId, targetPcId: payload.pcId, ...payload });
     });
   }
 

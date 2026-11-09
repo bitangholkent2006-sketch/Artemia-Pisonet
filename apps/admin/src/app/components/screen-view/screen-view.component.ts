@@ -25,7 +25,7 @@ export interface ClickRipple {
             <span>Remote Screen & Desktop Control</span>
           </h1>
           <p class="page-subtitle">
-            Tan-awa ug direktang kontrolaha (i-click, i-type, o tudloi) ang desktop sa kustomer gikan sa layo nga walay kinahanglan og AnyDesk o TeamViewer.
+            Tan-awa ug direktang kontrolaha ang desktop sa kustomer — i-click ang apps, pag-type diretso sa keyboard, pag-Alt+Tab, ug kontrolaha ang tibuok PC nga walay kinahanglan og AnyDesk o TeamViewer.
           </p>
         </div>
 
@@ -85,7 +85,7 @@ export interface ClickRipple {
             <span class="pulse-indicator" [ngClass]="{'live': selectedPc.status !== 'offline'}"></span>
             <strong>{{ selectedPc.name }}</strong> • {{ selectedPc.identifier }} ({{ selectedPc.ipAddress }})
             <span class="control-status-badge" *ngIf="isControlEnabled">
-              🖱️ Desktop Access Active (Click & Type enabled)
+              🖱️ Desktop Access Active (Click & Direct Keyboard Enabled)
             </span>
           </div>
           <div class="monitor-meta-right">
@@ -96,16 +96,73 @@ export interface ClickRipple {
           </div>
         </div>
 
-        <!-- Remote Control Helper Banner (Visible when Remote Control is Active) -->
-        <div class="remote-helper-banner" *ngIf="isControlEnabled">
-          <div class="helper-text">
-            💡 <strong>Remote Control Mode:</strong> I-click ang bisan asang parte sa screen aron mapindot ang desktop sa customer. 
-            <strong>Double-click</strong> aron maablihan ang apps. <strong>Right-click</strong> para sa context menu.
+        <!-- Sticky Remote Quick Shortcuts Bar (Direct Desktop Actions) -->
+        <div class="quick-actions-bar" *ngIf="isControlEnabled">
+          <div class="quick-bar-left">
+            <span class="quick-label">⚡ Direct PC Shortcuts:</span>
+            <div class="quick-btn-group">
+              <button type="button" class="quick-action-btn highlight" (click)="sendKey('alttab')" title="Switch Windows (Alt+Tab)">
+                <span class="q-icon">🔀</span>
+                <strong>Alt + Tab</strong>
+              </button>
+              <button type="button" class="quick-action-btn" (click)="sendKey('win')" title="Open Windows Start Menu">
+                <span class="q-icon">🪟</span>
+                <span>Win (Start)</span>
+              </button>
+              <button type="button" class="quick-action-btn" (click)="sendKey('wind')" title="Show Desktop (Win+D)">
+                <span class="q-icon">🖥️</span>
+                <span>Desktop (Win+D)</span>
+              </button>
+              <button type="button" class="quick-action-btn" (click)="sendKey('wine')" title="Open File Explorer (Win+E)">
+                <span class="q-icon">📁</span>
+                <span>Explorer</span>
+              </button>
+              <button type="button" class="quick-action-btn" (click)="sendKey('taskmgr')" title="Open Task Manager">
+                <span class="q-icon">⚙️</span>
+                <span>Task Manager</span>
+              </button>
+              <button type="button" class="quick-action-btn" (click)="sendKey('^v')" title="Paste from Clipboard">
+                <span class="q-icon">📋</span>
+                <span>Paste (Ctrl+V)</span>
+              </button>
+              <button type="button" class="quick-action-btn danger" (click)="sendKey('altf4')" title="Close Active Application (Alt+F4)">
+                <span class="q-icon">✖️</span>
+                <span>Alt + F4</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="quick-bar-right">
+            <div class="nav-btn-group">
+              <button type="button" class="mini-key-btn" (click)="sendKey('{ENTER}')" title="Enter">↩️ Enter</button>
+              <button type="button" class="mini-key-btn" (click)="sendKey('{ESC}')" title="Escape">⎋ Esc</button>
+              <button type="button" class="mini-key-btn" (click)="sendKey('{BACKSPACE}')" title="Backspace">⌫ Backspace</button>
+              <button type="button" class="mini-key-btn" (click)="sendKey('{TAB}')" title="Tab">⇥ Tab</button>
+              <button type="button" class="mini-key-btn" (click)="sendKey('{F5}')" title="Refresh">🔄 F5</button>
+            </div>
           </div>
         </div>
 
-        <!-- Interactive Screen Viewport -->
-        <div class="monitor-viewport" [ngClass]="{'interactive': isControlEnabled}">
+        <!-- Focus & Direct Keyboard Notification Bar -->
+        <div class="keyboard-focus-banner" *ngIf="isControlEnabled" [ngClass]="{'focused': isViewportFocused}">
+          <span class="focus-dot" [ngClass]="{'active': isViewportFocused}"></span>
+          <span *ngIf="isViewportFocused">
+            🟢 <strong>DIRECT KEYBOARD ACTIVE:</strong> Bisan unsa imong i-type sa imong physical keyboard (A-Z, numbers, Enter, Backspace, arrows) modiretso sa customer PC!
+          </span>
+          <span *ngIf="!isViewportFocused">
+            💡 <strong>I-click ang screen sa ubos</strong> aron ma-focus ang imong keyboard para diretso ka makatype sa customer PC desktop.
+          </span>
+        </div>
+
+        <!-- Interactive Screen Viewport with Keyboard Capture -->
+        <div
+          class="monitor-viewport"
+          [ngClass]="{'interactive': isControlEnabled, 'viewport-focused': isViewportFocused}"
+          tabindex="0"
+          (keydown)="onViewportKeyDown($event)"
+          (focus)="isViewportFocused = true"
+          (blur)="isViewportFocused = false"
+        >
           <div *ngIf="isCapturing && !currentScreenImage" class="viewport-placeholder">
             <span class="spinner"></span>
             <div>Connecting to {{ selectedPc.name || 'station' }} display stream...</div>
@@ -137,52 +194,20 @@ export interface ClickRipple {
           </div>
         </div>
 
-        <!-- Remote Keyboard & Action Toolbar -->
+        <!-- Remote Keyboard & Text Sender Toolbar -->
         <div class="remote-control-toolbar" *ngIf="isControlEnabled">
-          <!-- Text Typing Tool -->
           <div class="text-sender-box">
-            <div class="sender-label">⌨️ Type to Remote Active Window:</div>
+            <div class="sender-label">⌨️ Type Text or Paste Long Link/Message to Customer PC:</div>
             <div class="sender-input-row">
               <input
                 type="text"
                 class="sender-input"
                 [(ngModel)]="remoteText"
-                placeholder="Isulod ang text, link, o sugo nga i-type sa customer PC..."
+                placeholder="Isulod ang text, link, o mensahe nga gusto nimo i-type sa customer PC..."
                 (keydown.enter)="sendText()"
               />
               <button class="btn btn-sm btn-action" (click)="sendText()" [disabled]="!remoteText.trim()">
                 <span>📤 Send Text</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Quick Keystroke / Shortcuts Dock -->
-          <div class="shortcuts-dock">
-            <div class="dock-label">⚡ Remote Shortcuts:</div>
-            <div class="dock-buttons">
-              <button type="button" class="dock-btn" (click)="sendKey('^{ESC}')" title="Open Start Menu">
-                🪟 Start
-              </button>
-              <button type="button" class="dock-btn" (click)="sendKey('#e')" title="Open Windows File Explorer">
-                📁 Explorer
-              </button>
-              <button type="button" class="dock-btn" (click)="sendKey('^v')" title="Paste Clipboard">
-                📋 Paste (Ctrl+V)
-              </button>
-              <button type="button" class="dock-btn danger" (click)="sendKey('%{F4}')" title="Close Active Window">
-                ✖️ Alt+F4
-              </button>
-              <button type="button" class="dock-btn" (click)="sendKey('{ENTER}')" title="Press Enter">
-                ↩️ Enter
-              </button>
-              <button type="button" class="dock-btn" (click)="sendKey('{ESC}')" title="Press Escape">
-                ⎋ Esc
-              </button>
-              <button type="button" class="dock-btn" (click)="sendKey('{BACKSPACE}')" title="Backspace">
-                ⌫ Backspace
-              </button>
-              <button type="button" class="dock-btn" (click)="sendKey('{F5}')" title="Refresh Window">
-                🔄 F5
               </button>
             </div>
           </div>
@@ -199,26 +224,25 @@ export interface ClickRipple {
     .page-header-row {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 24px;
+      align-items: center;
+      margin-bottom: 20px;
       flex-wrap: wrap;
       gap: 16px;
     }
     .page-title {
-      font-size: 1.75rem;
-      font-weight: 800;
-      color: #fff;
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #f8fafc;
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       margin: 0 0 6px 0;
-      letter-spacing: -0.02em;
     }
     .page-subtitle {
-      font-size: 0.88rem;
       color: #94a3b8;
+      font-size: 0.9rem;
       margin: 0;
-      max-width: 800px;
+      max-width: 780px;
     }
     .header-actions {
       display: flex;
@@ -226,32 +250,29 @@ export interface ClickRipple {
       gap: 12px;
       flex-wrap: wrap;
     }
-
-    /* Control Mode Button */
     .control-mode-btn {
-      background: #111827;
-      border: 1px solid #334155;
-      color: #cbd5e1;
-      padding: 8px 16px;
-      border-radius: 8px;
-      font-size: 0.85rem;
-      font-weight: 700;
-      cursor: pointer;
-      display: inline-flex;
+      display: flex;
       align-items: center;
       gap: 8px;
+      background: #1e293b;
+      color: #cbd5e1;
+      border: 1px solid #334155;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      cursor: pointer;
       transition: all 0.2s ease;
     }
     .control-mode-btn:hover {
-      background: #1e293b;
-      border-color: #06b6d4;
+      background: #334155;
       color: #fff;
     }
     .control-mode-btn.active {
       background: rgba(16, 185, 129, 0.2);
       border-color: #10b981;
       color: #34d399;
-      box-shadow: 0 0 16px rgba(16, 185, 129, 0.35);
+      box-shadow: 0 0 16px rgba(16, 185, 129, 0.3);
     }
     .btn-dot {
       width: 8px;
@@ -262,43 +283,64 @@ export interface ClickRipple {
     .btn-dot.pulse {
       background: #10b981;
       box-shadow: 0 0 8px #10b981;
-      animation: pulseAnim 1.5s infinite;
+      animation: dotPulse 1.5s infinite;
     }
-    @keyframes pulseAnim {
-      0% { transform: scale(0.95); opacity: 0.7; }
+    @keyframes dotPulse {
+      0% { transform: scale(0.9); opacity: 0.7; }
       50% { transform: scale(1.3); opacity: 1; }
-      100% { transform: scale(0.95); opacity: 0.7; }
+      100% { transform: scale(0.9); opacity: 0.7; }
     }
-
-    /* Stream Rate Select */
     .stream-rate-select {
       display: flex;
       align-items: center;
       gap: 6px;
-      background: #111827;
-      border: 1px solid #1f2937;
+      background: #1e293b;
+      padding: 6px 12px;
       border-radius: 8px;
-      padding: 6px 10px;
-      font-size: 0.8rem;
-    }
-    .rate-label {
+      border: 1px solid #334155;
       color: #94a3b8;
-      font-weight: 600;
+      font-size: 0.82rem;
     }
     .stream-rate-select select {
-      background: #1f2937;
-      border: 1px solid #374151;
+      background: transparent;
+      border: none;
       color: #f8fafc;
-      padding: 4px 8px;
-      border-radius: 6px;
-      font-size: 0.8rem;
+      font-size: 0.82rem;
       outline: none;
+      cursor: pointer;
+    }
+    .stream-rate-select select option {
+      background: #0f172a;
+      color: #fff;
+    }
+    .btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: #3b82f6;
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #2563eb;
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
 
-    /* Station Selector Bar */
+    /* Station Selector Card */
     .station-selector-card {
-      background: #111827;
-      border: 1px solid #1f2937;
+      background: #0f172a;
+      border: 1px solid #1e293b;
       border-radius: 12px;
       padding: 14px 18px;
       margin-bottom: 20px;
@@ -310,87 +352,90 @@ export interface ClickRipple {
     .selector-label {
       font-size: 0.82rem;
       font-weight: 700;
-      color: #94a3b8;
       text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #64748b;
     }
     .station-pills {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       flex-wrap: wrap;
     }
     .station-pill {
-      background: #1f2937;
-      border: 1px solid #374151;
-      border-radius: 8px;
-      padding: 7px 14px;
-      color: #e5e7eb;
-      font-size: 0.82rem;
-      font-weight: 600;
-      cursor: pointer;
       display: flex;
       align-items: center;
       gap: 8px;
+      padding: 7px 14px;
+      border-radius: 9999px;
+      border: 1px solid #334155;
+      background: #1e293b;
+      color: #cbd5e1;
+      font-size: 0.84rem;
+      font-weight: 500;
+      cursor: pointer;
       transition: all 0.2s ease;
     }
     .station-pill:hover {
-      background: #273549;
+      background: #334155;
+      color: #fff;
     }
     .station-pill.active {
-      background: rgba(6, 182, 212, 0.15);
-      border-color: #06b6d4;
-      color: #22d3ee;
+      background: #2563eb;
+      border-color: #60a5fa;
+      color: #fff;
+      box-shadow: 0 0 12px rgba(37, 99, 235, 0.4);
+    }
+    .station-pill.offline {
+      opacity: 0.6;
     }
     .station-pill .dot {
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
+    }
+    .station-pill .dot.available, .station-pill .dot.in-use {
       background: #10b981;
+      box-shadow: 0 0 6px #10b981;
     }
     .station-pill .dot.offline {
-      background: #f43f5e;
+      background: #ef4444;
     }
     .station-pill .ip {
-      color: #64748b;
-      font-size: 0.72rem;
-      font-family: monospace;
+      color: #94a3b8;
+      font-size: 0.74rem;
+    }
+    .station-pill.active .ip {
+      color: #bfdbfe;
     }
 
-    /* Monitor Frame */
+    /* Monitor Card */
     .monitor-card {
-      background: #030712;
-      border: 1px solid #1f2937;
+      background: #0f172a;
+      border: 1px solid #1e293b;
       border-radius: 12px;
       overflow: hidden;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
     }
     .monitor-header {
-      background: #0f172a;
       padding: 12px 20px;
+      background: #131b2e;
       border-bottom: 1px solid #1e293b;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 0.88rem;
+      flex-wrap: wrap;
+      gap: 12px;
     }
     .monitor-station-info {
-      color: #fff;
       display: flex;
       align-items: center;
       gap: 10px;
-    }
-    .control-status-badge {
-      background: rgba(16, 185, 129, 0.2);
-      border: 1px solid #10b981;
-      color: #34d399;
-      font-size: 0.72rem;
-      font-weight: 700;
-      padding: 2px 8px;
-      border-radius: 4px;
-      margin-left: 8px;
+      font-size: 0.9rem;
+      color: #e2e8f0;
     }
     .pulse-indicator {
-      width: 10px;
-      height: 10px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       background: #64748b;
     }
@@ -398,15 +443,28 @@ export interface ClickRipple {
       background: #10b981;
       box-shadow: 0 0 8px #10b981;
     }
+    .control-status-badge {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      margin-left: 6px;
+    }
     .monitor-meta-right {
       display: flex;
       align-items: center;
       gap: 14px;
     }
     .last-action-msg {
-      font-size: 0.75rem;
+      font-size: 0.8rem;
       color: #38bdf8;
-      font-weight: 600;
+      background: rgba(56, 189, 248, 0.1);
+      padding: 3px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(56, 189, 248, 0.2);
     }
     .timestamp-tag {
       color: #94a3b8;
@@ -414,15 +472,128 @@ export interface ClickRipple {
       font-size: 0.78rem;
     }
 
-    /* Helper Banner */
-    .remote-helper-banner {
-      background: rgba(2, 132, 199, 0.15);
-      border-bottom: 1px solid rgba(2, 132, 199, 0.3);
-      padding: 8px 20px;
+    /* Direct Quick Actions Bar */
+    .quick-actions-bar {
+      background: #0c1220;
+      border-bottom: 1px solid #1e293b;
+      padding: 10px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
     }
-    .helper-text {
+    .quick-bar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .quick-label {
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #38bdf8;
+    }
+    .quick-btn-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .quick-action-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .quick-action-btn:hover {
+      background: #334155;
+      border-color: #64748b;
+      transform: translateY(-1px);
+    }
+    .quick-action-btn:active {
+      transform: translateY(0);
+    }
+    .quick-action-btn.highlight {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: #38bdf8;
+      color: #38bdf8;
+    }
+    .quick-action-btn.highlight:hover {
+      background: #38bdf8;
+      color: #04101e;
+    }
+    .quick-action-btn.danger {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: #ef4444;
+      color: #fca5a5;
+    }
+    .quick-action-btn.danger:hover {
+      background: #ef4444;
+      color: #fff;
+    }
+    .quick-bar-right {
+      display: flex;
+      align-items: center;
+    }
+    .nav-btn-group {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .mini-key-btn {
+      background: #131c31;
+      border: 1px solid #283552;
+      color: #cbd5e1;
+      padding: 4px 8px;
+      border-radius: 5px;
+      font-size: 0.76rem;
+      cursor: pointer;
+      font-family: monospace;
+      transition: all 0.15s;
+    }
+    .mini-key-btn:hover {
+      background: #2563eb;
+      color: #fff;
+      border-color: #60a5fa;
+    }
+
+    /* Focus & Notification Banner */
+    .keyboard-focus-banner {
+      background: rgba(15, 23, 42, 0.8);
+      border-bottom: 1px solid #1e293b;
+      padding: 8px 16px;
       font-size: 0.8rem;
-      color: #bae6fd;
+      color: #94a3b8;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+    .keyboard-focus-banner.focused {
+      background: rgba(16, 185, 129, 0.12);
+      border-color: rgba(16, 185, 129, 0.4);
+      color: #a7f3d0;
+    }
+    .focus-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #64748b;
+    }
+    .focus-dot.active {
+      background: #10b981;
+      box-shadow: 0 0 6px #10b981;
     }
 
     /* Viewport */
@@ -431,11 +602,15 @@ export interface ClickRipple {
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #090d16;
+      background: #060911;
       position: relative;
+      outline: none;
     }
     .monitor-viewport.interactive {
       cursor: crosshair;
+    }
+    .monitor-viewport.viewport-focused {
+      box-shadow: inset 0 0 0 2px #38bdf8;
     }
     .viewport-placeholder {
       display: flex;
@@ -449,20 +624,30 @@ export interface ClickRipple {
     .camera-icon {
       font-size: 3rem;
     }
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(56, 189, 248, 0.2);
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
     .screen-wrapper {
       position: relative;
-      width: 100%;
-      display: flex;
-      justify-content: center;
+      display: inline-block;
+      margin: 0 auto;
       user-select: none;
+      line-height: 0;
     }
     .live-screen-image {
-      width: 100%;
+      max-width: 100%;
       height: auto;
       max-height: 780px;
-      object-fit: contain;
       display: block;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
       user-select: none;
       -webkit-user-drag: none;
       pointer-events: auto;
@@ -489,10 +674,7 @@ export interface ClickRipple {
     .remote-control-toolbar {
       background: #090e1a;
       border-top: 1px solid #1e293b;
-      padding: 14px 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
+      padding: 12px 18px;
     }
     .text-sender-box {
       display: flex;
@@ -500,102 +682,34 @@ export interface ClickRipple {
       gap: 6px;
     }
     .sender-label {
-      font-size: 0.78rem;
-      font-weight: 700;
+      font-size: 0.8rem;
+      font-weight: 600;
       color: #94a3b8;
     }
     .sender-input-row {
       display: flex;
-      gap: 8px;
+      gap: 10px;
     }
     .sender-input {
       flex: 1;
-      background: #111827;
-      border: 1px solid #334155;
+      background: #131b2e;
+      border: 1px solid #2b3956;
       border-radius: 8px;
-      padding: 8px 12px;
-      color: #fff;
-      font-size: 0.85rem;
+      padding: 9px 14px;
+      color: #f8fafc;
+      font-size: 0.9rem;
       outline: none;
     }
     .sender-input:focus {
       border-color: #38bdf8;
-    }
-
-    /* Shortcuts Dock */
-    .shortcuts-dock {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-    .dock-label {
-      font-size: 0.78rem;
-      font-weight: 700;
-      color: #94a3b8;
-    }
-    .dock-buttons {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    .dock-btn {
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #cbd5e1;
-      padding: 6px 12px;
-      border-radius: 6px;
-      font-size: 0.78rem;
-      font-weight: 700;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      transition: all 0.2s ease;
-    }
-    .dock-btn:hover {
-      background: #0284c7;
-      border-color: #38bdf8;
-      color: #fff;
-    }
-    .dock-btn.danger:hover {
-      background: #e11d48;
-      border-color: #fb7185;
-      color: #fff;
-    }
-
-    .btn {
-      padding: 8px 16px;
-      border-radius: 8px;
-      font-weight: 700;
-      font-size: 0.85rem;
-      cursor: pointer;
-      border: none;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .btn-sm {
-      padding: 6px 12px;
-      font-size: 0.78rem;
-    }
-    .btn-primary {
-      background: #06b6d4;
-      color: #0f172a;
-    }
-    .btn-primary:hover:not(:disabled) {
-      background: #22d3ee;
+      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
     }
     .btn-action {
-      background: #0284c7;
+      background: #2563eb;
       color: #fff;
     }
     .btn-action:hover:not(:disabled) {
-      background: #0369a1;
-    }
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
+      background: #1d4ed8;
     }
   `]
 })
@@ -605,6 +719,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   state: any = { pcs: [] };
   private sub!: Subscription;
   private streamTimer: any = null;
+  private quickCaptureTimer: any = null;
+  private inFlightCapture = false;
 
   selectedPcId: string = '';
   screenImage: string | null = null;
@@ -622,6 +738,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   // Remote Desktop Control state
   isControlEnabled = false;
+  isViewportFocused = false;
   streamIntervalMs: number = 1200; // Fast stream (1.2s) by default when active
   remoteText: string = '';
   lastActionMessage: string | null = null;
@@ -670,6 +787,9 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   ngOnDestroy() {
     this.sub?.unsubscribe();
     this.stopStreaming();
+    if (this.quickCaptureTimer) {
+      clearTimeout(this.quickCaptureTimer);
+    }
   }
 
   get selectedPc(): PC | undefined {
@@ -718,20 +838,36 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     }
   }
 
+  scheduleQuickCapture(delayMs: number = 300) {
+    if (this.quickCaptureTimer) clearTimeout(this.quickCaptureTimer);
+    this.quickCaptureTimer = setTimeout(() => {
+      this.captureCurrentScreen();
+    }, delayMs);
+  }
+
   async captureCurrentScreen() {
-    if (!this.selectedPc) return;
+    if (!this.selectedPc || this.inFlightCapture) return;
     const targetId = this.selectedPc.id;
+    this.inFlightCapture = true;
     this.isCapturing = true;
     try {
       const img = await this.adminState.captureScreen(targetId);
       if (img) {
-        this.screenImage = img;
-        this.screenImages[targetId] = img;
-        this.screenImages[targetId.toLowerCase()] = img;
-        if (this.selectedPc.name) this.screenImages[this.selectedPc.name.toLowerCase()] = img;
-        this.lastCapturedTime = new Date();
+        // Preload double-buffer to eliminate white/empty DOM flashes
+        const pre = new Image();
+        pre.onload = () => {
+          this.screenImages[targetId] = img;
+          this.screenImages[targetId.toLowerCase()] = img;
+          if (this.selectedPc?.name) {
+            this.screenImages[this.selectedPc.name.toLowerCase()] = img;
+          }
+          this.screenImage = img;
+          this.lastCapturedTime = new Date();
+        };
+        pre.src = img;
       }
     } finally {
+      this.inFlightCapture = false;
       this.isCapturing = false;
     }
   }
@@ -746,8 +882,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    const xPercent = (x / rect.width) * 100;
-    const yPercent = (y / rect.height) * 100;
+    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
 
     this.addRipple(x, y);
     this.lastActionMessage = `🖱️ Click sent at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
@@ -759,8 +895,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       yPercent
     });
 
-    // Quick snapshot after click to show result
-    setTimeout(() => this.captureCurrentScreen(), 350);
+    this.scheduleQuickCapture(300);
   }
 
   onScreenDblClick(event: MouseEvent) {
@@ -772,8 +907,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    const xPercent = (x / rect.width) * 100;
-    const yPercent = (y / rect.height) * 100;
+    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
 
     this.addRipple(x, y);
     this.lastActionMessage = `⚡ Double-click sent at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
@@ -785,7 +920,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       yPercent
     });
 
-    setTimeout(() => this.captureCurrentScreen(), 450);
+    this.scheduleQuickCapture(400);
   }
 
   onScreenContextMenu(event: MouseEvent) {
@@ -797,8 +932,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    const xPercent = (x / rect.width) * 100;
-    const yPercent = (y / rect.height) * 100;
+    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
 
     this.addRipple(x, y);
     this.lastActionMessage = `🔘 Right-click sent at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
@@ -810,7 +945,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       yPercent
     });
 
-    setTimeout(() => this.captureCurrentScreen(), 350);
+    this.scheduleQuickCapture(300);
   }
 
   private addRipple(x: number, y: number) {
@@ -819,6 +954,105 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     setTimeout(() => {
       this.clickRipples = this.clickRipples.filter(r => r.id !== id);
     }, 600);
+  }
+
+  // Direct Physical Keyboard Handler for Viewport
+  onViewportKeyDown(event: KeyboardEvent) {
+    if (!this.isControlEnabled || !this.selectedPc) return;
+
+    // Prevent default scroll/tabbing for navigation keys
+    const preventKeys = ['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+    if (preventKeys.includes(event.key)) {
+      event.preventDefault();
+    }
+
+    // Windows Start Key
+    if (event.key === 'Meta' || event.key === 'OS') {
+      event.preventDefault();
+      this.sendKey('win');
+      return;
+    }
+
+    // Alt+Tab or Ctrl+Tab
+    if ((event.altKey && event.key === 'Tab') || (event.ctrlKey && event.key === 'Tab')) {
+      event.preventDefault();
+      this.sendKey('alttab');
+      return;
+    }
+
+    // Alt+F4
+    if (event.altKey && (event.key === 'F4' || event.code === 'F4')) {
+      event.preventDefault();
+      this.sendKey('altf4');
+      return;
+    }
+
+    // Ctrl Shortcuts
+    if (event.ctrlKey && !event.altKey) {
+      const k = event.key.toLowerCase();
+      if (k === 'v') {
+        event.preventDefault();
+        this.sendKey('^v');
+        return;
+      }
+      if (k === 'c') {
+        event.preventDefault();
+        this.sendKey('^c');
+        return;
+      }
+      if (k === 'a') {
+        event.preventDefault();
+        this.sendKey('^a');
+        return;
+      }
+      if (k === 'z') {
+        event.preventDefault();
+        this.sendKey('^z');
+        return;
+      }
+    }
+
+    // Control and Navigation Keys
+    const keyMap: { [k: string]: string } = {
+      'Enter': '{ENTER}',
+      'Backspace': '{BACKSPACE}',
+      'Escape': '{ESC}',
+      'Tab': '{TAB}',
+      'Delete': '{DELETE}',
+      'ArrowUp': '{UP}',
+      'ArrowDown': '{DOWN}',
+      'ArrowLeft': '{LEFT}',
+      'ArrowRight': '{RIGHT}',
+      'Home': '{HOME}',
+      'End': '{END}',
+      'PageUp': '{PGUP}',
+      'PageDown': '{PGDN}',
+      'F5': '{F5}'
+    };
+
+    if (keyMap[event.key]) {
+      event.preventDefault();
+      this.sendKey(keyMap[event.key]);
+      return;
+    }
+
+    // Direct Character Typing (letters, numbers, space, punctuation)
+    if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      this.sendDirectChar(event.key);
+    }
+  }
+
+  sendDirectChar(char: string) {
+    if (!this.selectedPc) return;
+    const targetId = this.selectedPc.id;
+    this.lastActionMessage = `⌨️ Typed: "${char === ' ' ? 'Space' : char}"`;
+    this.adminState.sendRemoteInput({
+      pcId: targetId,
+      type: 'text',
+      text: char
+    });
+    this.scheduleQuickCapture(350);
   }
 
   // Keyboard and Text tools
@@ -831,7 +1065,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       type: 'key',
       key: keyString
     });
-    setTimeout(() => this.captureCurrentScreen(), 350);
+    this.scheduleQuickCapture(350);
   }
 
   sendText() {
@@ -845,6 +1079,6 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       text: textToSend
     });
     this.remoteText = '';
-    setTimeout(() => this.captureCurrentScreen(), 400);
+    this.scheduleQuickCapture(400);
   }
 }

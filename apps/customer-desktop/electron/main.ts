@@ -775,8 +775,11 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
       }
 
       // Locate RemoteInput.exe helper
+      const appBaseDir = path.dirname(process.execPath);
       const possiblePaths = [
         path.join(process.resourcesPath, 'native', 'RemoteInput.exe'),
+        path.join(appBaseDir, 'resources', 'native', 'RemoteInput.exe'),
+        path.join(appBaseDir, 'native', 'RemoteInput.exe'),
         path.join(__dirname, '../../native/RemoteInput.exe'),
         path.join(__dirname, '../native/RemoteInput.exe'),
         path.join(process.cwd(), 'resources', 'native', 'RemoteInput.exe'),
@@ -805,12 +808,25 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
           }
         });
       } else if (process.platform === 'win32') {
-        // Fallback to PowerShell
+        // Fallback to PowerShell Win32 and SendKeys
         let psCmd = '';
+        const kLower = (payload.key || '').toLowerCase();
         if (type === 'click' || type === 'rclick') {
           const downFlag = type === 'rclick' ? '0x08' : '0x02';
           const upFlag = type === 'rclick' ? '0x10' : '0x04';
           psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); }'; [M]::SetCursorPos(${targetX}, ${targetY}); [M]::mouse_event(${downFlag}, 0, 0, 0, 0); [M]::mouse_event(${upFlag}, 0, 0, 0, 0);`;
+        } else if (type === 'key' && (kLower === 'alttab' || kLower === '%{tab}')) {
+          psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void Tab() { keybd_event(0x12,0,0,UIntPtr.Zero); keybd_event(0x09,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x09,0,2,UIntPtr.Zero); keybd_event(0x12,0,2,UIntPtr.Zero); } }'; [K]::Tab();`;
+        } else if (type === 'key' && (kLower === 'win' || kLower === 'start' || kLower === '^{esc}')) {
+          psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void Win() { keybd_event(0x5B,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x5B,0,2,UIntPtr.Zero); } }'; [K]::Win();`;
+        } else if (type === 'key' && (kLower === 'wind' || kLower === 'desktop' || kLower === '#d')) {
+          psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void WinD() { keybd_event(0x5B,0,0,UIntPtr.Zero); keybd_event(0x44,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x44,0,2,UIntPtr.Zero); keybd_event(0x5B,0,2,UIntPtr.Zero); } }'; [K]::WinD();`;
+        } else if (type === 'key' && (kLower === 'wine' || kLower === 'explorer' || kLower === '#e')) {
+          psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void WinE() { keybd_event(0x5B,0,0,UIntPtr.Zero); keybd_event(0x45,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x45,0,2,UIntPtr.Zero); keybd_event(0x5B,0,2,UIntPtr.Zero); } }'; [K]::WinE();`;
+        } else if (type === 'key' && (kLower === 'altf4' || kLower === '%{f4}')) {
+          psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void AltF4() { keybd_event(0x12,0,0,UIntPtr.Zero); keybd_event(0x73,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x73,0,2,UIntPtr.Zero); keybd_event(0x12,0,2,UIntPtr.Zero); } }'; [K]::AltF4();`;
+        } else if (type === 'key' && (kLower === 'taskmgr' || kLower === '^+{esc}')) {
+          psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void TaskMgr() { keybd_event(0x11,0,0,UIntPtr.Zero); keybd_event(0x10,0,0,UIntPtr.Zero); keybd_event(0x1B,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x1B,0,2,UIntPtr.Zero); keybd_event(0x10,0,2,UIntPtr.Zero); keybd_event(0x11,0,2,UIntPtr.Zero); } }'; [K]::TaskMgr();`;
         } else if (type === 'text' || type === 'key') {
           const send = type === 'text' ? payload.text : payload.key;
           psCmd = `(New-Object -ComObject WScript.Shell).SendKeys('${(send || '').replace(/'/g, "''")}');`;
