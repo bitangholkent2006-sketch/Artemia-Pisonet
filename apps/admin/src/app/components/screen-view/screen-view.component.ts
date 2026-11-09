@@ -121,6 +121,7 @@ export interface ClickRipple {
               [src]="screenImage"
               class="live-screen-image"
               alt="Live Screen Stream"
+              draggable="false"
               (click)="onScreenClick($event)"
               (dblclick)="onScreenDblClick($event)"
               (contextmenu)="onScreenContextMenu($event)"
@@ -462,6 +463,9 @@ export interface ClickRipple {
       object-fit: contain;
       display: block;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      user-select: none;
+      -webkit-user-drag: none;
+      pointer-events: auto;
     }
 
     /* Visual Click Ripple */
@@ -617,10 +621,18 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   constructor(public adminState: AdminStateService) {}
 
+  private matchesStation(p: any, id: string): boolean {
+    if (!p || !id) return false;
+    const a = (p.id || '').toLowerCase();
+    const b = id.toLowerCase();
+    const name = (p.name || '').toLowerCase();
+    const ident = (p.identifier || '').toLowerCase();
+    return a === b || a === `pc-${b}` || `pc-${a}` === b || name === b || ident === b;
+  }
+
   ngOnChanges(changes: SimpleChanges) {
-    if (changes['initialPcId'] && this.initialPcId) {
+    if (changes['initialPcId'] && this.initialPcId && this.initialPcId !== this.selectedPcId) {
       this.selectedPcId = this.initialPcId;
-      this.screenImage = null;
       this.captureCurrentScreen();
     }
   }
@@ -633,7 +645,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
       if (this.state.pcs?.length > 0) {
-        if (!this.selectedPcId || !this.state.pcs.some((p: any) => p.id === this.selectedPcId)) {
+        if (!this.selectedPcId || !this.state.pcs.some((p: any) => this.matchesStation(p, this.selectedPcId))) {
           this.selectedPcId = this.initialPcId || this.state.pcs[0].id;
           this.captureCurrentScreen();
         }
@@ -651,12 +663,12 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   get selectedPc(): PC | undefined {
-    return this.state.pcs?.find((p: PC) => p.id === this.selectedPcId);
+    return this.state.pcs?.find((p: PC) => this.matchesStation(p, this.selectedPcId));
   }
 
   selectStation(pcId: string) {
+    if (this.selectedPcId === pcId) return;
     this.selectedPcId = pcId;
-    this.screenImage = null;
     this.captureCurrentScreen();
   }
 
@@ -713,6 +725,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   // Mouse Interactivity on Remote Screen
   onScreenClick(event: MouseEvent) {
     if (!this.isControlEnabled || !this.selectedPcId) return;
+    event.preventDefault();
+    event.stopPropagation();
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -736,6 +750,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   onScreenDblClick(event: MouseEvent) {
     if (!this.isControlEnabled || !this.selectedPcId) return;
+    event.preventDefault();
+    event.stopPropagation();
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -759,6 +775,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   onScreenContextMenu(event: MouseEvent) {
     if (!this.isControlEnabled || !this.selectedPcId) return;
     event.preventDefault();
+    event.stopPropagation();
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left;
