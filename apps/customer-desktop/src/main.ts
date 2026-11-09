@@ -499,11 +499,12 @@ class StationMaintenanceAgent {
       this.socket.on('connect', () => {
         this.isConnected = true;
         this.updateStatusBadge(true);
+        const activeId = this.dbPcId || this.pcId;
         // Plug-and-play auto-discovery: Registers station without manual admin setup
-        this.socket?.emit('pc:join', { pcId: this.pcId, name: this.pcName, specs: this.specs });
-        this.socket?.emit('pc:auto-discover', { pcId: this.pcId, name: this.pcName, specs: this.specs });
-        this.socket?.emit('pc:heartbeat', { pcId: this.pcId, telemetry: this.telemetry });
-        this.socket?.emit('maintenance:agent:ready', { pcId: this.pcId });
+        this.socket?.emit('pc:join', { pcId: activeId, name: this.pcName, specs: this.specs });
+        this.socket?.emit('pc:auto-discover', { pcId: activeId, name: this.pcName, specs: this.specs });
+        this.socket?.emit('pc:heartbeat', { pcId: activeId, telemetry: this.telemetry });
+        this.socket?.emit('maintenance:agent:ready', { pcId: activeId });
         this.logMessage(`Connected to Artemia Fleet Server (${this.apiBase})`);
         this.checkInitialStatus();
       });
@@ -871,39 +872,52 @@ class StationMaintenanceAgent {
     }
   }
 
+  private async refreshHardwareHealth() {
+    if (desktopWindow.pisonetDesktop?.getDiskDrives) {
+      try {
+        const drivesRes = await desktopWindow.pisonetDesktop.getDiskDrives();
+        if (drivesRes?.drives && Array.isArray(drivesRes.drives)) {
+          this.telemetry.diskUsage = drivesRes.drives;
+          if (drivesRes.drives.length > 0) {
+            const cDrive = drivesRes.drives[0];
+            this.telemetry.diskUsedGb = cDrive.usedGb;
+            this.telemetry.diskTotalGb = cDrive.totalGb;
+          }
+        }
+      } catch {}
+    }
+
+    if (desktopWindow.pisonetDesktop?.getHardwareHealth) {
+      try {
+        const hw = await desktopWindow.pisonetDesktop.getHardwareHealth();
+        if (hw) {
+          this.telemetry.cpuModel = hw.cpuModel || this.telemetry.cpuModel;
+          this.telemetry.ramTotalGb = hw.ramTotalGb || this.telemetry.ramTotalGb;
+          this.telemetry.ramUsedGb = hw.ramUsedGb || this.telemetry.ramUsedGb;
+          this.telemetry.ramPercent = hw.ramPercent || this.telemetry.ramPercent;
+          this.telemetry.gpu = hw.gpu || this.telemetry.gpu;
+          this.telemetry.gpuStatus = hw.gpuStatus || this.telemetry.gpuStatus;
+          this.telemetry.ssdModel = hw.ssdModel || this.telemetry.ssdModel;
+          this.telemetry.ssdStatus = hw.ssdStatus || this.telemetry.ssdStatus;
+        }
+      } catch {}
+    }
+
+    this.updateTelemetryDOM();
+  }
+
   private startTelemetryLoop() {
-    setInterval(async () => {
+    // 1. Initial telemetry inspection
+    this.refreshHardwareHealth();
+
+    // 2. Periodic background telemetry refresh (every 20 seconds, non-blocking)
+    setInterval(() => {
+      this.refreshHardwareHealth();
+    }, 20000);
+
+    // 3. Ultra-reliable, non-blocking heartbeat loop (every 5 seconds)
+    setInterval(() => {
       if (!this.isConnected || !this.socket) return;
-
-      if (desktopWindow.pisonetDesktop?.getDiskDrives) {
-        try {
-          const drivesRes = await desktopWindow.pisonetDesktop.getDiskDrives();
-          if (drivesRes?.drives && Array.isArray(drivesRes.drives)) {
-            this.telemetry.diskUsage = drivesRes.drives;
-            if (drivesRes.drives.length > 0) {
-              const cDrive = drivesRes.drives[0];
-              this.telemetry.diskUsedGb = cDrive.usedGb;
-              this.telemetry.diskTotalGb = cDrive.totalGb;
-            }
-          }
-        } catch {}
-      }
-
-      if (desktopWindow.pisonetDesktop?.getHardwareHealth) {
-        try {
-          const hw = await desktopWindow.pisonetDesktop.getHardwareHealth();
-          if (hw) {
-            this.telemetry.cpuModel = hw.cpuModel || this.telemetry.cpuModel;
-            this.telemetry.ramTotalGb = hw.ramTotalGb || this.telemetry.ramTotalGb;
-            this.telemetry.ramUsedGb = hw.ramUsedGb || this.telemetry.ramUsedGb;
-            this.telemetry.ramPercent = hw.ramPercent || this.telemetry.ramPercent;
-            this.telemetry.gpu = hw.gpu || this.telemetry.gpu;
-            this.telemetry.gpuStatus = hw.gpuStatus || this.telemetry.gpuStatus;
-            this.telemetry.ssdModel = hw.ssdModel || this.telemetry.ssdModel;
-            this.telemetry.ssdStatus = hw.ssdStatus || this.telemetry.ssdStatus;
-          }
-        } catch {}
-      }
 
       const activeId = this.dbPcId || this.pcId;
       const telemetryPayload = {
@@ -922,8 +936,6 @@ class StationMaintenanceAgent {
           diskUsage: this.telemetry.diskUsage
         }
       });
-
-      this.updateTelemetryDOM();
     }, 5000);
   }
 

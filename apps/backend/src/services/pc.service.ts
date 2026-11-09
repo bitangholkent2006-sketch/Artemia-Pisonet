@@ -8,7 +8,7 @@ import { AuditService } from './audit.service';
 
 export class PcService {
   private static watchdogInterval: NodeJS.Timeout | null = null;
-  public static readonly HEARTBEAT_TIMEOUT_MS = 15000; // 15 seconds without heartbeat = offline
+  public static readonly HEARTBEAT_TIMEOUT_MS = 45000; // 45 seconds without heartbeat = offline (stable against network jitter & load)
 
   public static async listPcs(): Promise<DbPC[]> {
     const collections = getCollections();
@@ -341,7 +341,7 @@ export class PcService {
         const { SessionService } = await import('./session.service');
 
         for (const pc of deadPcs) {
-          console.log(`[HeartbeatWatchdog] Station ${pc.name} (${pc.id}) missed heartbeat (>15s). Transitioning to OFFLINE.`);
+          console.log(`[HeartbeatWatchdog] Station ${pc.name} (${pc.id}) missed heartbeat (>45s). Transitioning to OFFLINE.`);
           
           if (pc.activeSessionId) {
             console.log(`[HeartbeatWatchdog] Auto-pausing session ${pc.activeSessionId} on offline station ${pc.name}`);
@@ -362,7 +362,7 @@ export class PcService {
       }
     }, 5000);
 
-    console.log('[HeartbeatWatchdog] Automated station offline detection active (15s threshold, 5s poll).');
+    console.log('[HeartbeatWatchdog] Automated station offline detection active (45s threshold, 5s poll).');
   }
 
   public static stopHeartbeatWatchdog(): void {

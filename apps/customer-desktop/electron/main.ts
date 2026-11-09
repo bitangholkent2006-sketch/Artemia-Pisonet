@@ -885,17 +885,25 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
   });
 });
 
-// 9. Get Disk Drives Usage
+// 9. Get Disk Drives Usage (Cached for 60 seconds to eliminate CPU spikes & process spawning lag)
+let cachedDiskDrives: any[] = [];
+let lastDiskDrivesCheck = 0;
+
 ipcMain.handle('maintenance:get-disk-drives', async () => {
+  const now = Date.now();
+  if (cachedDiskDrives.length > 0 && now - lastDiskDrivesCheck < 60000) {
+    return { drives: cachedDiskDrives };
+  }
+
   return new Promise((resolve) => {
     if (process.platform !== 'win32') {
       resolve({ drives: [] });
       return;
     }
     const ps = `Get-PSDrive -PSProvider FileSystem | Select-Object -Property Root, Free, Used | ConvertTo-Json -Compress`;
-    exec(`powershell.exe -NoProfile -Command "${ps}"`, (err, stdout) => {
-      if (err) {
-        resolve({ drives: [] });
+    exec(`powershell.exe -NoProfile -Command "${ps}"`, { timeout: 3500 }, (err, stdout) => {
+      if (err || !stdout) {
+        resolve({ drives: cachedDiskDrives });
         return;
       }
       try {
@@ -919,9 +927,11 @@ ipcMain.handle('maintenance:get-disk-drives', async () => {
               percentUsed
             };
           });
+        cachedDiskDrives = drives;
+        lastDiskDrivesCheck = now;
         resolve({ drives });
       } catch {
-        resolve({ drives: [] });
+        resolve({ drives: cachedDiskDrives });
       }
     });
   });
