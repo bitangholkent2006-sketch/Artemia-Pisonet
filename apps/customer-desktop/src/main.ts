@@ -102,6 +102,7 @@ class StationMaintenanceAgent {
   private screenStreamTimer: any = null;
   private isScreenStreamInFlight = false;
   private lastAdminStreamPing = 0;
+  private isBoostingFps = false;
 
   private telemetry = {
     cpuPercent: 14,
@@ -1098,15 +1099,19 @@ class StationMaintenanceAgent {
       // 10. Fleet FPS Booster & Game Optimizer Relay
       this.socket.on('agent:fps-boost:run', async (payload: { targetPcId?: string; reqId?: string }) => {
         if (!this.matchesThisStation(payload.targetPcId)) return;
+        if (this.isBoostingFps) return;
+        this.isBoostingFps = true;
         this.logMessage('[FPS Booster] Boost command received. Optimizing RAM, CPU & Gaming Latency...');
         let res: any = { success: true, freedRamMb: 0, powerPlan: 'High Performance', boostedGames: [], tweaksApplied: [] };
 
-        if (desktopWindow.pisonetDesktop?.optimizeFps) {
-          try {
+        try {
+          if (desktopWindow.pisonetDesktop?.optimizeFps) {
             res = await desktopWindow.pisonetDesktop.optimizeFps();
-          } catch (e: any) {
-            res = { success: false, error: e?.message || String(e) };
           }
+        } catch (e: any) {
+          res = { success: false, error: e?.message || String(e) };
+        } finally {
+          setTimeout(() => { this.isBoostingFps = false; }, 4000);
         }
 
         const freedMb = Math.round(res.freedRamMb || 0);

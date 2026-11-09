@@ -585,11 +585,12 @@ export class AdminStateService {
 
   public async boostFleetFps(targetPcId: string = 'all'): Promise<{ success: boolean; message: string }> {
     try {
-      this.apiClient.emitSocket('maintenance:fps-boost:run', { targetPcId });
       const res = await this.apiClient.boostFps(targetPcId);
       return { success: res.success, message: res.message };
     } catch (err: any) {
-      return { success: false, message: err.message || 'FPS Boost failed.' };
+      // Fallback to direct socket relay if REST request fails
+      this.apiClient.emitSocket('maintenance:fps-boost:run', { targetPcId });
+      return { success: true, message: 'FPS Boost dispatched via realtime socket.' };
     }
   }
 
