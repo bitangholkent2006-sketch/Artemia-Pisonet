@@ -43,6 +43,7 @@ export interface PisonetDesktopApi {
   onCleanAutoDone?: (callback: (data: any) => void) => void;
   sendRemoteInput: (payload: { type: string; xPercent?: number; yPercent?: number; x?: number; y?: number; key?: string; text?: string; delta?: number }) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
   applyClientUpdate: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
+  optimizeFps: () => Promise<{ success: boolean; freedRamMb: number; powerPlan: string; boostedGames: string[]; tweaksApplied: string[]; elapsedMs: number; error?: string }>;
 }
 
 const api: PisonetDesktopApi = {
@@ -81,7 +82,8 @@ const api: PisonetDesktopApi = {
     ipcRenderer.on('maintenance:clean:auto-done', (_event, data) => callback(data));
   },
   sendRemoteInput: (payload) => ipcRenderer.invoke('maintenance:remote-input', payload),
-  applyClientUpdate: (downloadUrl: string) => ipcRenderer.invoke('maintenance:apply-client-update', downloadUrl)
+  applyClientUpdate: (downloadUrl: string) => ipcRenderer.invoke('maintenance:apply-client-update', downloadUrl),
+  optimizeFps: () => ipcRenderer.invoke('maintenance:fps-boost')
 };
 
 contextBridge.exposeInMainWorld('pisonetDesktop', api);

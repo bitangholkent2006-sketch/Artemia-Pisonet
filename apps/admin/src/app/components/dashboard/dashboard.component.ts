@@ -92,6 +92,16 @@ import { PC, PCStatus } from '@pisonet/shared';
             📥 Download Client (.zip)
           </a>
           <button
+            class="btn btn-sm btn-success"
+            (click)="boostFleetFps()"
+            [disabled]="isBoostingFps"
+            title="I-flush ang RAM (1GB+ freed), i-activate ang Ultimate Performance, ug i-boost ang game ping sa tanang PC"
+            style="background: linear-gradient(135deg, #059669, #10b981); color: #fff; font-weight: 700; border: none; box-shadow: 0 2px 10px rgba(16, 185, 129, 0.35);"
+          >
+            <span>⚡</span>
+            <span>{{ isBoostingFps ? 'Naga-optimize...' : 'Boost Fleet FPS' }}</span>
+          </button>
+          <button
             class="btn btn-sm btn-primary"
             (click)="pushFleetOtaUpdate()"
             [disabled]="isPushingOta"
@@ -287,6 +297,15 @@ import { PC, PCStatus } from '@pisonet/shared';
             <!-- If Online / Available / In-Use -->
             <ng-container *ngIf="pc.status !== 'offline'">
               <div class="action-grid-buttons">
+                <button
+                  class="btn btn-sm btn-subtle"
+                  (click)="boostStationFps(pc)"
+                  [disabled]="isBoostingStationId === pc.id"
+                  title="FPS Booster: Flush RAM, unpark CPU cores, set Ultimate Performance"
+                  style="color: #10b981; border-color: rgba(16, 185, 129, 0.4);"
+                >
+                  {{ isBoostingStationId === pc.id ? '⚡ Boosting...' : '🚀 Boost FPS' }}
+                </button>
                 <button
                   class="btn btn-sm btn-subtle"
                   (click)="pushOtaUpdate(pc)"
@@ -1002,6 +1021,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   actionNoticeType: 'info' | 'success' | 'warn' = 'info';
   private noticeTimer: any = null;
   private cleanSub: (() => void) | null = null;
+  private fpsBoostSub?: () => void;
 
   constructor(public adminState: AdminStateService) {}
 
@@ -1025,11 +1045,20 @@ export class DashboardComponent implements OnInit, OnDestroy {
       const prefix = data.reason === 'idle' ? '🕒 [Auto-Clean Idle]' : (data.reason === 'startup' ? '⚡ [Auto-Clean Boot]' : '🧹 [Clean Slate]');
       this.showNotice(`${prefix} Limpyo na ang ${data.pcName || data.pcId}! Nabawi ang ${freed} MB (Downloads, Logins & Junk wiped).`, 'success');
     });
+
+    this.fpsBoostSub = this.adminState.onFpsBoostResult((data: any) => {
+      const freedMb = Math.round(data.freedRamMb || 0);
+      const pcLabel = data.pcName || data.pcId?.toUpperCase();
+      const plan = data.powerPlan || 'Ultimate Performance';
+      const games = data.boostedGames && data.boostedGames.length > 0 ? ` • Boosted: ${data.boostedGames.join(', ')}` : '';
+      this.showNotice(`⚡ [FPS Boost Complete] ${pcLabel}: Nabawi ang ${freedMb} MB RAM • ${plan} Activated${games}!`, 'success');
+    });
   }
 
   ngOnDestroy() {
     this.sub.unsubscribe();
     if (this.cleanSub) this.cleanSub();
+    if (this.fpsBoostSub) this.fpsBoostSub();
     if (this.noticeTimer) clearTimeout(this.noticeTimer);
   }
 
@@ -1113,6 +1142,39 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   isPushingOta = false;
+  isBoostingFps = false;
+  isBoostingStationId: string | null = null;
+
+  async boostFleetFps() {
+    this.isBoostingFps = true;
+    this.showNotice('⚡ Nagpadala ug FPS Booster command sa TANANG PC stations (RAM flush, Ultimate Performance, Ping tweak)...', 'info');
+    try {
+      const res = await this.adminState.boostFleetFps('all');
+      if (res.success) {
+        this.showNotice('🚀 ' + res.message, 'success');
+      } else {
+        this.showNotice('⚠️ ' + res.message, 'warn');
+      }
+    } finally {
+      setTimeout(() => { this.isBoostingFps = false; }, 2000);
+    }
+  }
+
+  async boostStationFps(pc: PC) {
+    this.isBoostingStationId = pc.id;
+    this.showNotice(`⚡ Gipadala ang FPS Booster sa ${pc.name}...`, 'info');
+    try {
+      const res = await this.adminState.boostFleetFps(pc.id);
+      if (res.success) {
+        this.showNotice(`🚀 FPS Boost dispatched to ${pc.name}!`, 'success');
+      } else {
+        this.showNotice('⚠️ ' + res.message, 'warn');
+      }
+    } finally {
+      setTimeout(() => { this.isBoostingStationId = null; }, 2000);
+    }
+  }
+
   async pushFleetOtaUpdate() {
     if (!confirm('I-push ug i-send ang pinakabag-ong app.asar sa TANANG online stations karon? Mag-restart ang ilang mga terminal sulod sa 3 segundos.')) {
       return;

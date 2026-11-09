@@ -295,3 +295,38 @@ maintenanceRoutes.post('/push-client-update', requireStaff, async (c) => {
   });
 });
 
+// Fleet FPS Booster & Game Optimizer: Trigger system & RAM optimization
+maintenanceRoutes.post('/boost-fps', requireStaff, async (c) => {
+  const staff = c.get('user');
+  const body = await c.req.json().catch(() => ({}));
+  const { targetPcId = 'all', targetPcIds } = body;
+  const targets = Array.isArray(targetPcIds) && targetPcIds.length > 0 ? targetPcIds : [targetPcId];
+
+  const payload = {
+    reqId: 'fps_' + Date.now(),
+    targetPcId: targets.includes('all') ? 'all' : targets[0],
+    targetPcIds: targets,
+    sender: staff?.fullName || staff?.username || 'Admin',
+    timestamp: new Date().toISOString()
+  };
+
+  if (targets.includes('all') || targets.includes('fleet')) {
+    broadcastRealtimeEvent('agent:fps-boost:run', { ...payload, targetPcId: 'all' }, 'fleet');
+    broadcastRealtimeEvent('agent:fps-boost:run', { ...payload, targetPcId: 'all' });
+  } else {
+    targets.forEach((tid: string) => {
+      const t = tid.toLowerCase();
+      broadcastRealtimeEvent('agent:fps-boost:run', { ...payload, targetPcId: t }, `pc:${t}`);
+      if (!t.startsWith('pc-')) {
+        broadcastRealtimeEvent('agent:fps-boost:run', { ...payload, targetPcId: t }, `pc:pc-${t}`);
+      }
+    });
+  }
+
+  return c.json({
+    success: true,
+    message: `FPS Booster dispatched to ${targets.includes('all') ? 'all online stations' : targets.join(', ')}.`,
+    payload
+  });
+});
+

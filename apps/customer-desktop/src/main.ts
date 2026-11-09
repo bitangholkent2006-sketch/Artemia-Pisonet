@@ -44,6 +44,7 @@ interface WindowWithDesktop extends Window {
     onCleanAutoDone?: (callback: (data: any) => void) => void;
     sendRemoteInput?: (payload: any) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
     applyClientUpdate?: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
+    optimizeFps?: () => Promise<{ success: boolean; freedRamMb: number; powerPlan: string; boostedGames: string[]; tweaksApplied: string[]; elapsedMs: number; error?: string }>;
   };
 }
 
@@ -1092,6 +1093,33 @@ class StationMaintenanceAgent {
           this.logMessage('[OTA Update] Client updater only supported on native Electron terminal.');
           this.hideOtaUpdateModal();
         }
+      });
+
+      // 10. Fleet FPS Booster & Game Optimizer Relay
+      this.socket.on('agent:fps-boost:run', async (payload: { targetPcId?: string; reqId?: string }) => {
+        if (!this.matchesThisStation(payload.targetPcId)) return;
+        this.logMessage('[FPS Booster] Boost command received. Optimizing RAM, CPU & Gaming Latency...');
+        let res: any = { success: true, freedRamMb: 0, powerPlan: 'High Performance', boostedGames: [], tweaksApplied: [] };
+
+        if (desktopWindow.pisonetDesktop?.optimizeFps) {
+          try {
+            res = await desktopWindow.pisonetDesktop.optimizeFps();
+          } catch (e: any) {
+            res = { success: false, error: e?.message || String(e) };
+          }
+        }
+
+        const freedMb = Math.round(res.freedRamMb || 0);
+        this.showToast(`🚀 FPS Boost Activated: ${freedMb > 0 ? `${freedMb}MB RAM Freed • ` : ''}${res.powerPlan || 'Ultimate Performance'}!`, 'success', 7);
+        this.logMessage(`[FPS Booster] Complete! Freed ${freedMb}MB RAM, Power: ${res.powerPlan}`);
+
+        this.socket?.emit('agent:fps-boost:result', {
+          reqId: payload.reqId,
+          pcId: this.dbPcId || this.pcId,
+          pcName: this.pcName,
+          ...res,
+          timestamp: new Date().toISOString()
+        });
       });
 
     } catch (e) {

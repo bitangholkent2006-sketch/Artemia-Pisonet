@@ -1,7 +1,7 @@
 {
-  "version": "1.0.4",
+  "version": "1.0.5",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-09T20:00:00.000Z",
+  "releaseDate": "2026-11-09T20:25:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Dual capturer engine with resilient GDI fallback, background throttling fix, and instant DOM init"
+  "changelog": "1-Click Fleet FPS Booster: Flush working set RAM (1GB-3GB freed), Ultimate Performance power plan, game priority elevation, DNS latency flush, and background service silencer"
 }

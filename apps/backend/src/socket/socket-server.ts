@@ -398,6 +398,15 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.to('staff').emit('maintenance:remote-input:res', payload);
     });
 
+    // Fleet FPS Booster & Game Optimizer Relays
+    authSocket.on('maintenance:fps-boost:run', (payload: any) => {
+      emitToPcTarget('agent:fps-boost:run', payload, payload.targetPcId || payload.pcId);
+    });
+
+    authSocket.on('agent:fps-boost:result', (payload: any) => {
+      io?.to('staff').emit('maintenance:fps-boost:result', payload);
+    });
+
     // Active Session Lease Renewal Heartbeat
     authSocket.on('session:heartbeat', async (data: { sessionId: string }) => {
       if (data?.sessionId) {

@@ -583,6 +583,20 @@ export class AdminStateService {
     }
   }
 
+  public async boostFleetFps(targetPcId: string = 'all'): Promise<{ success: boolean; message: string }> {
+    try {
+      this.apiClient.emitSocket('maintenance:fps-boost:run', { targetPcId });
+      const res = await this.apiClient.boostFps(targetPcId);
+      return { success: res.success, message: res.message };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'FPS Boost failed.' };
+    }
+  }
+
+  public onFpsBoostResult(callback: (data: any) => void): () => void {
+    return this.apiClient.onSocketEvent('maintenance:fps-boost:result', callback);
+  }
+
   public async getClientUpdateInfo() {
     return this.apiClient.getClientUpdateInfo();
   }

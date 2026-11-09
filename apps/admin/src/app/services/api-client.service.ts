@@ -401,6 +401,13 @@ export class ApiClientService {
     });
   }
 
+  public async boostFps(targetPcId: string = 'all') {
+    return this.request<{ success: boolean; message: string; payload?: any }>('/api/v1/maintenance/boost-fps', {
+      method: 'POST',
+      body: JSON.stringify({ targetPcId })
+    });
+  }
+
   public async getClientUpdateInfo() {
     return this.request<{ success: boolean; data: { version: string; sizeBytes: number; lastModified?: string; ready: boolean } }>('/api/v1/maintenance/client-update-info');
   }
