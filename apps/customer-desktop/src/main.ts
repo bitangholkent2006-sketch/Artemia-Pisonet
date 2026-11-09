@@ -310,6 +310,9 @@ class StationMaintenanceAgent {
               skipFallback: true
             });
             base64 = res.base64Image;
+            if (!base64) {
+              this.logMessage(`[ScreenStream loop] captureScreen returned empty! error: ${res?.error}`);
+            }
           } else {
             base64 = this.generateLiveScreenCapture();
           }
@@ -962,7 +965,9 @@ class StationMaintenanceAgent {
 
       // 8.1 Ultra-Fast Continuous Push Screen Stream Relays (AnyDesk-style)
       this.socket.on('agent:stream:start', (payload: { pcId?: string; targetPcId?: string; intervalMs?: number; width?: number; height?: number; quality?: number }) => {
-        if (!this.matchesThisStation(payload.pcId || payload.targetPcId)) return;
+        const matches = this.matchesThisStation(payload.pcId || payload.targetPcId);
+        this.logMessage(`[ScreenStream] agent:stream:start received. matches: ${matches}, target: ${payload.pcId || payload.targetPcId}`);
+        if (!matches) return;
         this.startContinuousScreenStream(payload.intervalMs, payload.width, payload.height, payload.quality);
       });
 
@@ -1165,6 +1170,9 @@ class StationMaintenanceAgent {
 
   private logMessage(msg: string) {
     this.lastUpdateLog = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    try {
+      (desktopWindow.pisonetDesktop as any)?.log?.(msg);
+    } catch {}
     const logEl = document.getElementById('log-box');
     if (logEl) {
       logEl.innerText = this.lastUpdateLog;
@@ -1582,7 +1590,17 @@ class StationMaintenanceAgent {
 
 // Instantiate agent on DOM ready
 if (typeof window !== 'undefined') {
-  window.addEventListener('DOMContentLoaded', () => {
-    new StationMaintenanceAgent();
-  });
+  const startAgent = () => {
+    try {
+      new StationMaintenanceAgent();
+    } catch (e) {
+      console.error('Failed to create StationMaintenanceAgent:', e);
+    }
+  };
+
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', startAgent);
+  } else {
+    startAgent();
+  }
 }

@@ -5,6 +5,16 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { exec, spawn, execFile } from 'child_process';
 
+function logToFile(msg: string) {
+  try {
+    const logDir = path.join(os.homedir(), '.artemia');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, 'electron.log'), `[${new Date().toISOString()}] ${msg}\n`);
+  } catch {}
+}
+
+logToFile('Starting main.ts. PID: ' + process.pid + ', execPath: ' + process.execPath);
+
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
@@ -166,9 +176,20 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
       sandbox: false, // Allow preload full access to ipcRenderer
       preload: path.join(__dirname, 'preload.js')
     }
+  });
+
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
+    logToFile(`[RENDERER L${level}] ${message}`);
+  });
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    logToFile(`[RENDERER FAIL-LOAD] ${errorCode} ${errorDescription} ${validatedURL}`);
+  });
+  mainWindow.webContents.on('did-finish-load', () => {
+    logToFile('[RENDERER FINISH-LOAD]');
   });
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -376,6 +397,11 @@ ipcMain.handle('system:get-info', () => {
     customStationId: identity.customStationId,
     isElectron: true
   };
+});
+
+ipcMain.handle('system:log', (_event, msg: string) => {
+  logToFile(`[CLIENT RENDERER] ${msg}`);
+  return true;
 });
 
 ipcMain.handle('system:save-station-identity', (_event, data: { stationId?: string; name?: string }) => {
@@ -867,7 +893,7 @@ ipcMain.handle('maintenance:capture-screen', async (_event, options?: { width?: 
       return '';
     })();
 
-    const timeoutLimit = skipFallback ? 650 : 1200;
+    const timeoutLimit = skipFallback ? 1500 : 2500;
     const timeoutPromise = new Promise<string>((resolve) => setTimeout(() => resolve(''), timeoutLimit));
     const base64 = await Promise.race([capturerPromise, timeoutPromise]);
     if (base64 && base64.length > 500) {
@@ -877,12 +903,7 @@ ipcMain.handle('maintenance:capture-screen', async (_event, options?: { width?: 
     console.warn('[ScreenCapture] desktopCapturer skipped:', err?.message);
   }
 
-  // If streaming, NEVER run slow PowerShell fallback to protect station responsiveness and prevent freezes
-  if (skipFallback) {
-    return { base64Image: '', error: 'Frame skipped (capturer busy)' };
-  }
-
-  // 2. Resilient Fallback: PowerShell GDI Screen Capture directly to %TEMP% JPEG (manual capture only)
+  // 2. Resilient Fallback: PowerShell GDI Screen Capture directly to %TEMP% JPEG
   try {
     const tempFile = path.join(os.tmpdir(), `artemia_screen_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.jpg`);
     const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $w = ${width}; $h = [int][Math]::Round($b.Height * $w / $b.Width); $bmp = New-Object System.Drawing.Bitmap $w, $h; $g = [System.Drawing.Graphics]::FromImage($bmp); $orig = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $go = [System.Drawing.Graphics]::FromImage($orig); $go.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $g.DrawImage($orig, 0, 0, $w, $h); $bmp.Save('${tempFile.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Jpeg); $go.Dispose(); $orig.Dispose(); $g.Dispose(); $bmp.Dispose();`;
@@ -1291,11 +1312,15 @@ ipcMain.handle('maintenance:apply-client-update', async (_event, downloadUrl: st
 });
 
 // App Startup Lifecycle
+logToFile('Checking requestSingleInstanceLock...');
 const gotLock = app.requestSingleInstanceLock();
+logToFile('requestSingleInstanceLock returned: ' + gotLock);
 if (!gotLock) {
+  logToFile('Another instance is holding lock, calling app.quit()');
   app.quit();
 } else {
   app.on('second-instance', () => {
+    logToFile('second-instance event received');
     if (mainWindow) {
       mainWindow.show();
       mainWindow.focus();
@@ -1303,6 +1328,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
+    logToFile('app.whenReady resolved, initializing UI and background agents...');
     // Automatically register auto-start on Windows so pisonet agent runs on power-on
     setAutoStart(true);
     fetchHardwareInfo();

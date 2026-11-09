@@ -1,7 +1,7 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.4",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-09T13:08:00.000Z",
+  "releaseDate": "2026-11-09T20:00:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "AnyDesk-style continuous push screen streaming (150-250ms), zero-hang watchdog, long-press right click on mobile, and remote scroll"
+  "changelog": "Dual capturer engine with resilient GDI fallback, background throttling fix, and instant DOM init"
 }

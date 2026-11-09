@@ -18,6 +18,7 @@ export interface PisonetDesktopApi {
     isElectron: boolean;
   }>;
   saveStationIdentity?: (data: { stationId?: string; name?: string }) => Promise<boolean>;
+  log?: (msg: string) => Promise<boolean>;
   setAutoStart: (enable: boolean) => Promise<boolean>;
   shutdownPC: (timeoutSeconds?: number) => Promise<boolean>;
   restartPC: () => Promise<boolean>;
@@ -52,6 +53,7 @@ const api: PisonetDesktopApi = {
   close: () => ipcRenderer.invoke('window:close'),
   getSystemInfo: () => ipcRenderer.invoke('system:get-info'),
   saveStationIdentity: (data: { stationId?: string; name?: string }) => ipcRenderer.invoke('system:save-station-identity', data),
+  log: (msg: string) => ipcRenderer.invoke('system:log', msg),
   setAutoStart: (enable: boolean) => ipcRenderer.invoke('system:set-autostart', enable),
   shutdownPC: (timeoutSeconds?: number) => ipcRenderer.invoke('system:shutdown', timeoutSeconds),
   restartPC: () => ipcRenderer.invoke('system:restart'),
