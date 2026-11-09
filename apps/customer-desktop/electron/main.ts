@@ -717,44 +717,38 @@ function performFpsBoost(): Promise<FpsBoostResult> {
       });
     }
 
-    const ps = `
-$sw = [System.Diagnostics.Stopwatch]::StartNew()
+    const scriptPath = path.join(os.tmpdir(), 'artemia_boost.ps1');
+    const ps = `$sw = [System.Diagnostics.Stopwatch]::StartNew()
 $tweaks = @()
 
 # 1. RAM WorkingSet Flush
-Add-Type -TypeDefinition @"
-using System;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-public class FpsMemoryCleaner {
-  [DllImport("psapi.dll")]
-  public static extern int EmptyWorkingSet(IntPtr hwProc);
-  public static long Clean() {
-    long freed = 0;
-    foreach (Process p in Process.GetProcesses()) {
-      try {
-        long before = p.WorkingSet64;
-        if (before > 25000000 && p.Id != Process.GetCurrentProcess().Id) {
-          EmptyWorkingSet(p.Handle);
-          p.Refresh();
-          long diff = before - p.WorkingSet64;
-          if (diff > 0) freed += diff;
-        }
-      } catch {}
-    }
-    return freed;
-  }
-}
-"@ -ErrorAction SilentlyContinue
+try {
+  Add-Type -MemberDefinition @"
+[DllImport("psapi.dll")]
+public static extern int EmptyWorkingSet(IntPtr hwProc);
+"@ -Name 'Win32' -Namespace 'ArtemiaMem' -ErrorAction SilentlyContinue
+} catch {}
 
-$freedBytes = [FpsMemoryCleaner]::Clean()
+$freedBytes = 0
+Get-Process | ForEach-Object {
+  try {
+    $before = $_.WorkingSet64
+    if ($before -gt 25MB -and $_.Id -ne $PID) {
+      [ArtemiaMem.Win32]::EmptyWorkingSet($_.Handle) | Out-Null
+      $_.Refresh()
+      $diff = $before - $_.WorkingSet64
+      if ($diff -gt 0) { $freedBytes += $diff }
+    }
+  } catch {}
+}
+
 $freedMb = [Math]::Round($freedBytes / 1MB, 1)
 $tweaks += "Trimmed Working Set RAM: freed $freedMb MB"
 
 # 2. Power Plan to Ultimate or High Performance
 $powerPlanName = "High Performance"
 try {
-  powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 | Out-Null
+  powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null | Out-Null
   $schemes = powercfg /list
   $ult = $schemes | Select-String "Ultimate"
   if ($ult) {
@@ -787,7 +781,7 @@ if ($boosted.Count -gt 0) {
 
 # 4. Network & Gaming Latency (DNS Cache Flush)
 try {
-  ipconfig /flushdns | Out-Null
+  ipconfig /flushdns 2>$null | Out-Null
   $tweaks += "Flushed DNS cache for lower ping and latency"
 } catch {}
 
@@ -818,14 +812,27 @@ $sw.Stop()
   success = $true
   freedRamMb = $freedMb
   powerPlan = $powerPlanName
-  boostedGames = ($boosted | Select-Object -Unique)
+  boostedGames = @($boosted | Select-Object -Unique)
   tweaksApplied = $tweaks
   elapsedMs = $sw.ElapsedMilliseconds
 } | ConvertTo-Json -Compress
 `;
 
-    const encoded = Buffer.from(ps, 'utf16le').toString('base64');
-    exec(`powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`, { timeout: 12000 }, (err, stdout) => {
+    try {
+      fs.writeFileSync(scriptPath, ps, 'utf8');
+    } catch (e: any) {
+      return resolve({
+        success: false,
+        freedRamMb: 0,
+        powerPlan: 'Default',
+        boostedGames: [],
+        tweaksApplied: [],
+        elapsedMs: 0,
+        error: 'Failed to write boost script: ' + e?.message
+      });
+    }
+
+    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], { timeout: 15000 }, (err, stdout, stderr) => {
       if (err || !stdout) {
         return resolve({
           success: false,
@@ -834,7 +841,7 @@ $sw.Stop()
           boostedGames: [],
           tweaksApplied: [],
           elapsedMs: 0,
-          error: err?.message || 'Failed to execute FPS boost script'
+          error: err?.message || stderr || 'Failed to execute FPS boost script'
         });
       }
       try {
