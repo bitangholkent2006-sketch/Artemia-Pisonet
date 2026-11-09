@@ -84,8 +84,8 @@ import { PC, PCStatus } from '@pisonet/shared';
           <button class="btn btn-sm btn-primary" (click)="bulkWakeOnLan()">
             ⚡ Wake-on-LAN All
           </button>
-          <button class="btn btn-sm btn-warning" (click)="bulkCleanJunk()">
-            🧹 Clean Junk (%TEMP%)
+          <button class="btn btn-sm btn-warning" (click)="bulkCleanJunk()" title="Wipe downloads, browser history/logins, and temp junk across all stations">
+            🧹 Clean Slate (All PCs)
           </button>
           <button class="btn btn-sm btn-secondary" (click)="openBatchCommandModal()">
             💻 Run Fleet Script
@@ -280,7 +280,7 @@ import { PC, PCStatus } from '@pisonet/shared';
                 <button
                   class="btn btn-sm btn-subtle"
                   (click)="cleanStationTemp(pc)"
-                  title="Clean Temporary Files"
+                  title="Clean Slate: Wipe downloads, browser logins/history & temp files"
                 >
                   🧹 Clean
                 </button>
@@ -989,7 +989,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
     this.cleanSub = this.adminState.apiClient.onSocketEvent('maintenance:clean:result', (data: any) => {
       const freed = data.deletedBytes ? (data.deletedBytes / (1024 * 1024)).toFixed(1) : '0';
-      this.showNotice(`✨ Tapos na ang paglimpyo sa ${data.pcName || data.pcId}! Nabawi ang ${freed} MB nga disk space.`, 'success');
+      const prefix = data.reason === 'idle' ? '🕒 [Auto-Clean Idle]' : (data.reason === 'startup' ? '⚡ [Auto-Clean Boot]' : '🧹 [Clean Slate]');
+      this.showNotice(`${prefix} Limpyo na ang ${data.pcName || data.pcId}! Nabawi ang ${freed} MB (Downloads, Logins & Junk wiped).`, 'success');
     });
   }
 
@@ -1075,7 +1076,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async bulkCleanJunk() {
-    this.showNotice('🧹 Gilimpyohan ang temporary junk files sa TANANG PC stations...', 'info');
+    this.showNotice('🧹 Nagpadala ug Clean Slate command (Downloads, Logins, Junk) sa TANANG PC stations...', 'info');
     await this.adminState.cleanTempFiles('all');
   }
 
@@ -1122,7 +1123,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async cleanStationTemp(pc: PC) {
-    this.showNotice(`🧹 Gilimpyohan ang temporary junk files sa ${pc.name}...`, 'info');
+    this.showNotice(`🧹 Gilimpyohan ang Clean Slate (Downloads, Logins, Junk) sa ${pc.name}...`, 'info');
     await this.adminState.cleanTempFiles(pc.id);
   }
 

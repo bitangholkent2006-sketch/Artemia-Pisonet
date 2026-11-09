@@ -30,6 +30,7 @@ interface WindowWithDesktop extends Window {
     getHardwareHealth?: () => Promise<{ cpuModel: string; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string }>;
     downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
     onDownloadProgress?: (callback: (data: any) => void) => void;
+    onCleanAutoDone?: (callback: (data: any) => void) => void;
     sendRemoteInput?: (payload: any) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
   };
 }
@@ -611,12 +612,12 @@ class StationMaintenanceAgent {
         });
       });
 
-      // 2. Storage & %TEMP% Cleaner Relay
+      // 2. Storage & %TEMP% Cleaner Relay (Clean Slate)
       this.socket.on('agent:clean:run', async (payload: { reqId?: string; targetPcId?: string }) => {
         if (!this.matchesThisStation(payload.targetPcId)) {
           return;
         }
-        this.logMessage('Cleaning junk, temporary files, and Recycle Bin...');
+        this.logMessage('Cleaning junk, downloads, browser logins/history, and Recycle Bin (Clean Slate)...');
         let res: { deletedBytes: number; cleanedPaths: string[]; error?: string };
 
         if (desktopWindow.pisonetDesktop) {
@@ -624,13 +625,13 @@ class StationMaintenanceAgent {
         } else {
           res = {
             deletedBytes: 428500000,
-            cleanedPaths: ['C:\\Users\\User\\AppData\\Local\\Temp', 'C:\\Windows\\Temp', 'Recycle Bin']
+            cleanedPaths: ['Downloads Folder', 'Google Chrome (Logins & History)', 'Microsoft Edge (Logins & History)', 'System & User %TEMP%', 'Recycle Bin']
           };
         }
 
         const freedMb = (res.deletedBytes / (1024 * 1024)).toFixed(1);
-        this.logMessage(`Cleanup complete. Freed ${freedMb} MB.`);
-        this.showToast(`🧹 Cleaned Junk: Freed ${freedMb} MB of temp files!`, 'success', 5);
+        this.logMessage(`Clean Slate complete. Freed ${freedMb} MB.`);
+        this.showToast(`🧹 Clean Slate Complete: Freed ${freedMb} MB of downloads & junk!`, 'success', 5);
 
         this.socket?.emit('agent:clean:result', {
           reqId: payload.reqId,
@@ -807,6 +808,22 @@ class StationMaintenanceAgent {
         this.socket?.emit('agent:download:progress', {
           ...progress,
           pcId: this.pcId
+        });
+      });
+
+      // 10. Auto-Clean Slate Relay (Boot / Idle Watchdog)
+      desktopWindow.pisonetDesktop?.onCleanAutoDone?.((res: any) => {
+        const freedMb = res.deletedBytes ? (res.deletedBytes / (1024 * 1024)).toFixed(1) : '0';
+        this.logMessage(`[Auto-Clean Slate] Finished (${res.reason}). Freed ${freedMb} MB.`);
+        this.showToast(`🧹 Auto-Clean Slate (${res.reason}): Freed ${freedMb} MB. Station ready for next player!`, 'success', 5);
+        this.socket?.emit('agent:clean:result', {
+          reqId: `auto-${res.reason}-${Date.now()}`,
+          pcId: this.pcId,
+          pcName: this.pcName,
+          deletedBytes: res.deletedBytes,
+          cleanedPaths: res.cleanedPaths,
+          reason: res.reason,
+          timestamp: new Date().toISOString()
         });
       });
 
@@ -1201,7 +1218,7 @@ class StationMaintenanceAgent {
         </div>
 
         <div class="quick-actions">
-          <button class="btn-action" id="btn-clean-local">🧹 Clean %TEMP% Junk Now</button>
+          <button class="btn-action" id="btn-clean-local">🧹 Clean Slate Now (Wipe Downloads, Logins & Junk)</button>
           <button class="btn-action" id="btn-change-id">⚙️ Change Station PC ID</button>
         </div>
       </div>
@@ -1229,14 +1246,14 @@ class StationMaintenanceAgent {
 
     document.getElementById('btn-clean-local')?.addEventListener('click', async () => {
       if (desktopWindow.pisonetDesktop) {
-        this.logMessage('Running local temp clean...');
+        this.logMessage('Running manual Clean Slate (Downloads, Logins, Junk)...');
         const res = await desktopWindow.pisonetDesktop.cleanTemp();
         const freed = (res.deletedBytes / (1024 * 1024)).toFixed(1);
-        this.logMessage(`Freed ${freed} MB.`);
-        this.showToast(`🧹 Freed ${freed} MB junk files!`, 'success');
+        this.logMessage(`Clean Slate complete. Freed ${freed} MB.`);
+        this.showToast(`🧹 Clean Slate Complete: Freed ${freed} MB!`, 'success');
       } else {
-        this.logMessage('Cleaned simulated browser cache.');
-        this.showToast('🧹 Cleaned simulated browser cache.', 'success');
+        this.logMessage('Cleaned simulated browser cache and downloads.');
+        this.showToast('🧹 Cleaned simulated browser cache and downloads.', 'success');
       }
     });
 

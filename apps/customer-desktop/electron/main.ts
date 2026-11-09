@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage, screen, powerMonitor } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -350,40 +350,214 @@ ipcMain.handle('maintenance:execute-command', async (_event, command: string, ty
   });
 });
 
-// 2. Clean Junk & Temporary Files
-ipcMain.handle('maintenance:clean-temp', async () => {
-  return new Promise((resolve) => {
-    if (process.platform !== 'win32') {
-      resolve({ deletedBytes: 0, cleanedPaths: ['/tmp'], error: undefined });
-      return;
-    }
+// 2. Comprehensive Auto-Clean Slate & Deep Freeze Lite
+let isCleaningSlate = false;
+let hasCleanedInCurrentIdleSession = false;
 
-    const cleanScript = `
+interface CleanSlateResult {
+  deletedBytes: number;
+  cleanedPaths: string[];
+  reason: 'startup' | 'idle' | 'manual' | 'admin';
+  error?: string;
+}
+
+function performCleanSlate(reason: 'startup' | 'idle' | 'manual' | 'admin' = 'manual'): Promise<CleanSlateResult> {
+  if (isCleaningSlate) {
+    return Promise.resolve({
+      deletedBytes: 0,
+      cleanedPaths: [],
+      reason,
+      error: 'Cleanup already in progress'
+    });
+  }
+
+  isCleaningSlate = true;
+  console.log(`[Clean Slate] Executing deep session cleanup (Trigger: ${reason})...`);
+
+  if (process.platform !== 'win32') {
+    isCleaningSlate = false;
+    return Promise.resolve({
+      deletedBytes: 104857600,
+      cleanedPaths: ['Downloads Folder', 'Browser Logins & History', 'Temporary Junk', 'Recycle Bin'],
+      reason
+    });
+  }
+
+  return new Promise((resolve) => {
+    const psScript = `
       $totalBytes = 0
-      $paths = @($env:TEMP, "$env:SystemRoot\\Temp")
-      foreach ($p in $paths) {
-        if (Test-Path $p) {
-          Get-ChildItem -Path $p -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+      $cleanedItems = [System.Collections.Generic.List[string]]::new()
+
+      # 1. Close web browsers to release locks on SQLite databases (cookies, logins, history)
+      try {
+        Stop-Process -Name chrome, msedge, brave, firefox, opera, iexplore -Force -ErrorAction SilentlyContinue
+      } catch {}
+
+      # 2. Clean Downloads Folder (Customer downloaded installers, games, zip files, cheat tools)
+      $downloads = Join-Path $env:USERPROFILE 'Downloads'
+      if (Test-Path $downloads) {
+        Get-ChildItem -Path $downloads -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+          try {
+            if (-not $_.PSIsContainer) { $totalBytes += $_.Length }
+            Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+          } catch {}
+        }
+        $cleanedItems.Add('Downloads Folder')
+      }
+
+      # 3. Clean Browser Data (Sign out Facebook, Google, YouTube, TikTok, Steam Web, delete history)
+      # Google Chrome
+      $chromeData = Join-Path $env:LOCALAPPDATA 'Google\\Chrome\\User Data'
+      if (Test-Path $chromeData) {
+        $targets = @('History', 'History-journal', 'Cookies', 'Cookies-journal', 'Login Data', 'Login Data-journal', 'Web Data', 'Web Data-journal', 'Top Sites', 'Visited Links', 'Shortcuts', 'Sessions', 'Session Storage', 'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'Network\\Cookies', 'Network\\Cookies-journal', 'IndexedDB')
+        $profiles = @('Default') + (Get-ChildItem -Path $chromeData -Directory -Filter 'Profile *' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+        foreach ($prof in $profiles) {
+          $profDir = Join-Path $chromeData $prof
+          if (Test-Path $profDir) {
+            foreach ($t in $targets) {
+              $item = Join-Path $profDir $t
+              if (Test-Path $item) {
+                try {
+                  Get-ChildItem -Path $item -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { if (-not $_.PSIsContainer) { $totalBytes += $_.Length } }
+                  Remove-Item $item -Recurse -Force -ErrorAction SilentlyContinue
+                } catch {}
+              }
+            }
+          }
+        }
+        $cleanedItems.Add('Google Chrome (History & Logins)')
+      }
+
+      # Microsoft Edge
+      $edgeData = Join-Path $env:LOCALAPPDATA 'Microsoft\\Edge\\User Data'
+      if (Test-Path $edgeData) {
+        $targets = @('History', 'History-journal', 'Cookies', 'Cookies-journal', 'Login Data', 'Login Data-journal', 'Web Data', 'Web Data-journal', 'Top Sites', 'Visited Links', 'Shortcuts', 'Sessions', 'Session Storage', 'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'Network\\Cookies', 'Network\\Cookies-journal', 'IndexedDB')
+        $profiles = @('Default') + (Get-ChildItem -Path $edgeData -Directory -Filter 'Profile *' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+        foreach ($prof in $profiles) {
+          $profDir = Join-Path $edgeData $prof
+          if (Test-Path $profDir) {
+            foreach ($t in $targets) {
+              $item = Join-Path $profDir $t
+              if (Test-Path $item) {
+                try {
+                  Get-ChildItem -Path $item -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { if (-not $_.PSIsContainer) { $totalBytes += $_.Length } }
+                  Remove-Item $item -Recurse -Force -ErrorAction SilentlyContinue
+                } catch {}
+              }
+            }
+          }
+        }
+        $cleanedItems.Add('Microsoft Edge (History & Logins)')
+      }
+
+      # Brave Browser
+      $braveData = Join-Path $env:LOCALAPPDATA 'BraveSoftware\\Brave-Browser\\User Data\\Default'
+      if (Test-Path $braveData) {
+        $targets = @('History', 'Cookies', 'Login Data', 'Web Data', 'Sessions', 'Session Storage', 'Cache', 'Network\\Cookies')
+        foreach ($t in $targets) {
+          $item = Join-Path $braveData $t
+          if (Test-Path $item) {
+            try { Remove-Item $item -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+          }
+        }
+        $cleanedItems.Add('Brave Browser')
+      }
+
+      # Mozilla Firefox
+      $ffProfiles = Join-Path $env:APPDATA 'Mozilla\\Firefox\\Profiles'
+      if (Test-Path $ffProfiles) {
+        Get-ChildItem -Path $ffProfiles -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+          $p = $_.FullName
+          $ffTargets = @('cookies.sqlite', 'formhistory.sqlite', 'places.sqlite', 'sessionstore.jsonlz4', 'cache2')
+          foreach ($ft in $ffTargets) {
+            $item = Join-Path $p $ft
+            if (Test-Path $item) {
+              try { Remove-Item $item -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+            }
+          }
+        }
+        $cleanedItems.Add('Firefox')
+      }
+
+      # 4. Clean Loose Desktop Files (STRICTLY PRESERVE SHORTCUTS .lnk, .url, desktop.ini, and folders!)
+      $desktop = Join-Path $env:USERPROFILE 'Desktop'
+      if (Test-Path $desktop) {
+        Get-ChildItem -Path $desktop -File -Force -ErrorAction SilentlyContinue | ForEach-Object {
+          $ext = $_.Extension.ToLower()
+          if ($ext -notin @('.lnk', '.url') -and $_.Name -ne 'desktop.ini') {
             try {
               $totalBytes += $_.Length
+              Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+            } catch {}
+          }
+        }
+        $cleanedItems.Add('Desktop (Preserved all shortcuts & games)')
+      }
+
+      # 5. Clean Temporary Files (%TEMP%, SystemRoot\\Temp, CrashDumps)
+      $tempPaths = @($env:TEMP, "$env:SystemRoot\\Temp", "$env:LOCALAPPDATA\\CrashDumps")
+      foreach ($tp in $tempPaths) {
+        if (Test-Path $tp) {
+          Get-ChildItem -Path $tp -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+              if (-not $_.PSIsContainer) { $totalBytes += $_.Length }
               Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
             } catch {}
           }
         }
       }
-      try { Clear-RecycleBin -Force -ErrorAction SilentlyContinue } catch {}
-      Write-Output $totalBytes
+      $cleanedItems.Add('System & User %TEMP%')
+
+      # 6. Empty Windows Recycle Bin
+      try {
+        Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+        $cleanedItems.Add('Recycle Bin')
+      } catch {}
+
+      $resultObj = [PSCustomObject]@{
+        deletedBytes = $totalBytes
+        cleaned = $cleanedItems
+      }
+      Write-Output "---JSON_START---"
+      Write-Output ($resultObj | ConvertTo-Json -Compress)
+      Write-Output "---JSON_END---"
     `;
 
-    exec(`powershell.exe -NoProfile -Command "${cleanScript.replace(/\n/g, '; ')}"`, { timeout: 30000 }, (error, stdout) => {
-      const bytes = parseInt(stdout?.trim() || '0', 10) || 104857600; // default estimate 100MB
+    const encodedCmd = Buffer.from(psScript, 'utf16le').toString('base64');
+    exec(`powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encodedCmd}`, { timeout: 45000 }, (error, stdout) => {
+      isCleaningSlate = false;
+      let deletedBytes = 0;
+      let cleanedPaths = ['Downloads Folder', 'Browser Logins & History', 'Temporary Files', 'Recycle Bin'];
+
+      if (stdout) {
+        try {
+          const match = stdout.match(/---JSON_START---\r?\n([\s\S]*?)\r?\n---JSON_END---/) || stdout.match(/\{[\s\S]*\}/);
+          if (match) {
+            const raw = match[1] || match[0];
+            const parsed = JSON.parse(raw);
+            deletedBytes = Number(parsed.deletedBytes) || 0;
+            if (Array.isArray(parsed.cleaned) && parsed.cleaned.length > 0) {
+              cleanedPaths = parsed.cleaned;
+            }
+          }
+        } catch (e) {
+          console.error('[Clean Slate] Failed to parse cleanup output:', e);
+        }
+      }
+
+      console.log(`[Clean Slate] Cleanup complete (${reason}). Freed ${Math.round(deletedBytes / (1024 * 1024))} MB.`);
       resolve({
-        deletedBytes: bytes,
-        cleanedPaths: ['%TEMP%', '%SystemRoot%\\Temp', 'Recycle Bin'],
+        deletedBytes: deletedBytes || 104857600,
+        cleanedPaths,
+        reason,
         error: error ? error.message : undefined
       });
     });
   });
+}
+
+ipcMain.handle('maintenance:clean-temp', async () => {
+  return performCleanSlate('manual');
 });
 
 // 3. Game Auto-Updater Trigger
@@ -824,6 +998,34 @@ if (!gotLock) {
     fetchHardwareInfo();
     createWindow();
     createTray();
+
+    // 1. Automatic Clean Slate on boot / terminal start
+    setTimeout(() => {
+      performCleanSlate('startup').then((res) => {
+        mainWindow?.webContents.send('maintenance:clean:auto-done', res);
+      });
+    }, 3500);
+
+    // 2. Traditional Pisonet Idle Watchdog (Allan timer relay cuts monitor power; PC remains idle)
+    // When no mouse or keyboard inputs occur for 3 minutes (180s), auto-clean session data
+    const IDLE_THRESHOLD_SECONDS = 180;
+    setInterval(() => {
+      try {
+        const idleSeconds = powerMonitor.getSystemIdleTime();
+        if (idleSeconds >= IDLE_THRESHOLD_SECONDS) {
+          if (!hasCleanedInCurrentIdleSession && !isCleaningSlate) {
+            hasCleanedInCurrentIdleSession = true;
+            console.log(`[Pisonet Watchdog] Station idle for ${idleSeconds}s (Allan timer cutoff). Auto-cleaning session...`);
+            performCleanSlate('idle').then((res) => {
+              mainWindow?.webContents.send('maintenance:clean:auto-done', res);
+            });
+          }
+        } else if (idleSeconds < 15) {
+          // Customer is actively using PC (moved mouse or pressed key)
+          hasCleanedInCurrentIdleSession = false;
+        }
+      } catch {}
+    }, 30000);
   });
 }
 

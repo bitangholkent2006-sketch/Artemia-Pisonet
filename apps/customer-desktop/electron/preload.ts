@@ -28,6 +28,7 @@ export interface PisonetDesktopApi {
   getHardwareHealth: () => Promise<{ cpuModel: string; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string }>;
   downloadFile: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
   onDownloadProgress: (callback: (data: any) => void) => void;
+  onCleanAutoDone?: (callback: (data: any) => void) => void;
   sendRemoteInput: (payload: { type: string; xPercent?: number; yPercent?: number; x?: number; y?: number; key?: string; text?: string; delta?: number }) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
 }
 
@@ -60,6 +61,9 @@ const api: PisonetDesktopApi = {
   downloadFile: (payload) => ipcRenderer.invoke('maintenance:download-file', payload),
   onDownloadProgress: (callback) => {
     ipcRenderer.on('maintenance:download:progress', (_event, data) => callback(data));
+  },
+  onCleanAutoDone: (callback) => {
+    ipcRenderer.on('maintenance:clean:auto-done', (_event, data) => callback(data));
   },
   sendRemoteInput: (payload) => ipcRenderer.invoke('maintenance:remote-input', payload)
 };
