@@ -57,9 +57,10 @@ export interface ClickRipple {
             <span class="rate-label">Stream:</span>
             <select [(ngModel)]="streamIntervalMs" (change)="onStreamRateChange()">
               <option [value]="0">Manual Only</option>
-              <option [value]="1000">⚡ Fast (1.0s)</option>
-              <option [value]="2000">Normal (2.0s)</option>
-              <option [value]="4000">Slow (4.0s)</option>
+              <option [value]="400">🚀 Ultra Smooth (400ms)</option>
+              <option [value]="800">⚡ Smooth (800ms)</option>
+              <option [value]="1500">Normal (1.5s)</option>
+              <option [value]="3000">Eco (3.0s)</option>
             </select>
           </div>
 
@@ -96,7 +97,7 @@ export interface ClickRipple {
             <span class="pulse-indicator live"></span>
             <span class="banner-title">🟢 ANYDESK REMOTE CONTROL ACTIVE</span>
             <span class="banner-desc">
-              Ang imong mouse ug keyboard <strong>naka-lock na sa {{ selectedPc.name }}</strong>. Bisan unsa imong i-tuplok (Tab, Alt+Tab, Enter, Backspace, A-Z) modiretso sa customer PC nga walay glitch.
+              Naka-lock ang controls sa <strong>{{ selectedPc.name }}</strong>. Pwede ka mag-tap sa screen sa cellphone o mag-mouse ug keyboard sa PC.
             </span>
             <span class="banner-exit-hint">(Pindota ang <strong>Shift + Esc</strong> aron ma-unlock)</span>
           </div>
@@ -116,6 +117,70 @@ export interface ClickRipple {
             <span class="timestamp-tag" *ngIf="lastCapturedTime">
               Live: {{ lastCapturedTime | date:'mediumTime' }}
             </span>
+          </div>
+        </div>
+
+        <!-- Mobile & Desktop Quick Remote Action Toolbar -->
+        <div class="remote-action-toolbar" *ngIf="isControlEnabled">
+          <div class="toolbar-group">
+            <span class="group-label">Click Mode:</span>
+            <button
+              type="button"
+              class="tool-btn"
+              [ngClass]="{'active': activeClickType === 'click'}"
+              (click)="setClickType('click')"
+            >
+              👆 Left Click
+            </button>
+            <button
+              type="button"
+              class="tool-btn"
+              [ngClass]="{'active': activeClickType === 'rclick'}"
+              (click)="setClickType('rclick')"
+            >
+              🖱️ Right Click
+            </button>
+            <button
+              type="button"
+              class="tool-btn"
+              [ngClass]="{'active': activeClickType === 'dclick'}"
+              (click)="setClickType('dclick')"
+            >
+              ✌️ Double Click
+            </button>
+          </div>
+
+          <div class="toolbar-group key-group">
+            <span class="group-label">Quick Keys:</span>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('win')">🪟 Start</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('alttab')">📑 Alt+Tab</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('enter')">⏎ Enter</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('backspace')">⌫ Back</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('esc')">⎋ Esc</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('taskmgr')">⚡ TaskMgr</button>
+            <button type="button" class="tool-btn key-btn warn" (click)="sendKey('altf4')">❌ Alt+F4</button>
+            <button
+              type="button"
+              class="tool-btn"
+              [ngClass]="{'active': showTextBar}"
+              (click)="toggleTextBar()"
+            >
+              ⌨️ Mobile Keyboard
+            </button>
+          </div>
+
+          <!-- Mobile Virtual Keyboard Input Strip -->
+          <div class="mobile-text-strip" *ngIf="showTextBar">
+            <input
+              type="text"
+              class="mobile-text-input"
+              [(ngModel)]="mobileTextInput"
+              (keydown.enter)="sendMobileText()"
+              placeholder="I-type diri ang pulong, password, o command..."
+            />
+            <button type="button" class="btn btn-primary btn-sm" (click)="sendMobileText()">
+              Send ➔
+            </button>
           </div>
         </div>
 
@@ -148,6 +213,8 @@ export interface ClickRipple {
               (click)="onScreenClick($event)"
               (dblclick)="onScreenDblClick($event)"
               (contextmenu)="onScreenContextMenu($event)"
+              (touchstart)="onTouchStart($event)"
+              (touchend)="onTouchEnd($event)"
             />
 
             <!-- Visual Click Ripple Markers -->
@@ -567,6 +634,173 @@ export interface ClickRipple {
       0% { transform: translate(-50%, -50%) scale(0.3); opacity: 1; }
       100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
     }
+
+    /* Mobile & Desktop Quick Remote Action Toolbar */
+    .remote-action-toolbar {
+      background: #111827;
+      border-bottom: 1px solid #1f2937;
+      padding: 10px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .group-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: #64748b;
+      margin-right: 4px;
+    }
+    .tool-btn {
+      background: #1f2937;
+      color: #cbd5e1;
+      border: 1px solid #374151;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      user-select: none;
+      touch-action: manipulation;
+    }
+    .tool-btn:hover {
+      background: #374151;
+      color: #fff;
+    }
+    .tool-btn.active {
+      background: #0284c7;
+      color: #fff;
+      border-color: #38bdf8;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+    }
+    .key-btn {
+      background: #0f172a;
+      border-color: #334155;
+      padding: 5px 10px;
+      font-size: 0.78rem;
+      font-family: monospace;
+    }
+    .key-btn:hover {
+      background: #1e293b;
+      color: #38bdf8;
+    }
+    .key-btn.warn:hover {
+      background: #ef4444;
+      color: #fff;
+    }
+    .mobile-text-strip {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      margin-top: 6px;
+      padding: 6px;
+      background: #0b1120;
+      border-radius: 8px;
+      border: 1px solid #1e293b;
+    }
+    .mobile-text-input {
+      flex: 1;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 8px 12px;
+      color: #fff;
+      font-size: 0.88rem;
+      outline: none;
+    }
+    .mobile-text-input:focus {
+      border-color: #38bdf8;
+    }
+
+    /* Mobile Phone Responsive Adjustments */
+    @media (max-width: 768px) {
+      .screen-view-container {
+        padding: 8px;
+      }
+      .page-header-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .page-title {
+        font-size: 1.25rem;
+      }
+      .page-subtitle {
+        font-size: 0.8rem;
+      }
+      .header-actions {
+        width: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .control-mode-btn {
+        flex: 1 1 100%;
+        justify-content: center;
+        padding: 10px;
+        font-size: 0.85rem;
+      }
+      .stream-rate-select {
+        flex: 1;
+        justify-content: space-between;
+      }
+      .station-selector-card {
+        padding: 8px 10px;
+        margin-bottom: 10px;
+      }
+      .station-pills {
+        display: flex;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 6px;
+        gap: 8px;
+      }
+      .station-pill {
+        flex-shrink: 0;
+        padding: 6px 12px;
+        font-size: 0.8rem;
+      }
+      .remote-action-toolbar {
+        padding: 8px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .toolbar-group {
+        width: 100%;
+        justify-content: flex-start;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 4px;
+      }
+      .toolbar-group .tool-btn {
+        flex-shrink: 0;
+        padding: 6px 10px;
+        font-size: 0.78rem;
+      }
+      .monitor-viewport {
+        min-height: 220px;
+        touch-action: none;
+      }
+      .live-screen-image {
+        touch-action: none;
+      }
+    }
   `]
 })
 export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
@@ -596,10 +830,89 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   // Remote Desktop Control state
   isControlEnabled = false;
   isFullscreen = false;
-  streamIntervalMs: number = 1000; // 1s auto stream
+  streamIntervalMs: number = 800; // 800ms smooth auto-stream
   lastActionMessage: string | null = null;
   clickRipples: ClickRipple[] = [];
   private rippleCounter = 0;
+
+  // Touch & Mobile Input State
+  activeClickType: 'click' | 'rclick' | 'dclick' = 'click';
+  mobileTextInput: string = '';
+  showTextBar = false;
+
+  setClickType(type: 'click' | 'rclick' | 'dclick') {
+    this.activeClickType = type;
+    const label = type === 'rclick' ? 'Right-Click' : type === 'dclick' ? 'Double-Click' : 'Left-Click';
+    this.lastActionMessage = `Touch mode: ${label}`;
+  }
+
+  toggleTextBar() {
+    this.showTextBar = !this.showTextBar;
+  }
+
+  sendMobileText() {
+    if (!this.mobileTextInput || !this.selectedPc) return;
+    const txt = this.mobileTextInput;
+    this.mobileTextInput = '';
+    this.lastActionMessage = `⌨️ Sent text: "${txt}"`;
+    this.adminState.sendRemoteInput({
+      pcId: this.selectedPc.id,
+      type: 'text',
+      text: txt
+    });
+    this.scheduleQuickCapture(300);
+  }
+
+  // Touch Event Handling for Mobile / Cellphone
+  private touchStartX = 0;
+  private touchStartY = 0;
+
+  onTouchStart(event: TouchEvent) {
+    if (!this.isControlEnabled || !this.selectedPc || event.touches.length === 0) return;
+    const touch = event.touches[0];
+    this.touchStartX = touch.clientX;
+    this.touchStartY = touch.clientY;
+  }
+
+  onTouchEnd(event: TouchEvent) {
+    if (!this.isControlEnabled || !this.selectedPc) return;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+
+    // Filter out scrolling gestures
+    const diffX = Math.abs(touch.clientX - this.touchStartX);
+    const diffY = Math.abs(touch.clientY - this.touchStartY);
+    if (diffX > 15 || diffY > 15) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+
+    this.addRipple(x, y);
+
+    const type = this.activeClickType;
+    const typeLabel = type === 'rclick' ? '🔘 Right-click' : type === 'dclick' ? '⚡ Double-click' : '🖱️ Click';
+    this.lastActionMessage = `${typeLabel} at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+
+    this.adminState.sendRemoteInput({
+      pcId: this.selectedPc.id,
+      type,
+      xPercent,
+      yPercent
+    });
+
+    if (this.activeClickType !== 'click') {
+      this.activeClickType = 'click';
+    }
+
+    this.scheduleQuickCapture(250);
+  }
 
   // Bound window capture listener to intercept physical keys
   private boundWindowKeyDown = (e: KeyboardEvent) => this.onGlobalWindowKeyDown(e);
