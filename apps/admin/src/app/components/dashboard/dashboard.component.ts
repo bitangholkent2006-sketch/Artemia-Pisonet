@@ -309,15 +309,10 @@ import { PC, PCStatus } from '@pisonet/shared';
             </ng-container>
 
             <!-- If Offline -->
-            <ng-container *ngIf="pc.status === 'offline'">
-              <button
-                class="btn btn-sm btn-success"
-                style="flex: 1; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: var(--accent-emerald); font-weight: 700;"
-                (click)="toggleOnline(pc)"
-              >
-                🔌 Set Online
-              </button>
-            </ng-container>
+            <div *ngIf="pc.status === 'offline'" class="offline-station-banner">
+              <span class="offline-dot"></span>
+              <span>🛑 Station Offline (Naka-off ang PC)</span>
+            </div>
           </div>
         </div>
       </div>
@@ -795,6 +790,28 @@ import { PC, PCStatus } from '@pisonet/shared';
       background: #e11d48;
       color: #fff;
     }
+    .offline-station-banner {
+      width: 100%;
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px dashed rgba(239, 68, 68, 0.35);
+      border-radius: 6px;
+      padding: 7px 10px;
+      color: #f87171;
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .offline-station-banner .offline-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #ef4444;
+      display: inline-block;
+    }
     .btn {
       padding: 8px 14px;
       border-radius: 6px;
@@ -1088,14 +1105,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.showNotice(nextStatus === 'locked' ? `🔒 Gi-LOCK ang ${pc.name} alang sa maintenance.` : `🔓 Na-UNLOCK ang ${pc.name}. Normal desktop restored.`, 'info');
     await this.adminState.togglePcStatus(pc.id, nextStatus);
     await this.adminState.executePowerAction(pc.id, nextStatus === 'locked' ? 'lock' : 'unlock');
-  }
-
-  async toggleOnline(pc: PC) {
-    const nextStatus: PCStatus = pc.status === 'offline' ? 'available' : 'offline';
-    pc.status = nextStatus;
-    pc.connectionState = nextStatus === 'available' ? 'connected' : 'disconnected';
-    this.showNotice(`🔌 Giusab ang status sa ${pc.name} ngadto sa ${nextStatus.toUpperCase()}.`, 'info');
-    await this.adminState.togglePcStatus(pc.id, nextStatus);
   }
 
   async cleanStationTemp(pc: PC) {

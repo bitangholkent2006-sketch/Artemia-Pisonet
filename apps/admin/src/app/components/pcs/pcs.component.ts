@@ -112,13 +112,6 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
                     Edit
                   </button>
                   <button
-                    class="btn btn-sm"
-                    [ngClass]="pc.status === 'offline' ? 'btn-success' : 'btn-secondary'"
-                    (click)="toggleOnlineOffline(pc)"
-                  >
-                    {{ pc.status === 'offline' ? 'Online' : 'Offline' }}
-                  </button>
-                  <button
                     class="btn btn-sm btn-danger"
                     style="padding:4px 8px; font-size:0.75rem;"
                     (click)="handleDeletePc(pc)"
@@ -331,12 +324,5 @@ export class PcsComponent implements OnInit, OnDestroy {
       specs: this.editSpecs
     });
     this.editPc = null;
-  }
-
-  async toggleOnlineOffline(pc: PC) {
-    const next: PCStatus = pc.status === 'offline' ? 'available' : 'offline';
-    pc.status = next;
-    pc.connectionState = next === 'available' ? 'connected' : 'disconnected';
-    await this.adminState.togglePcStatus(pc.id, next);
   }
 }
