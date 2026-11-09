@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, Input, OnChanges, SimpleChanges } from '@angular/core';
+import { Component, OnInit, OnDestroy, Input, OnChanges, SimpleChanges, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
@@ -16,21 +16,21 @@ export interface ClickRipple {
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <div class="screen-view-container">
-      <!-- Page Header -->
-      <div class="page-header-row">
+    <div class="screen-view-container" [ngClass]="{'fullscreen-mode': isFullscreen}">
+      <!-- Page Header (Hidden in Fullscreen Mode) -->
+      <div class="page-header-row" *ngIf="!isFullscreen">
         <div>
           <h1 class="page-title">
-            <span class="icon">👁️</span>
-            <span>Remote Screen & Desktop Control</span>
+            <span class="icon">🖥️</span>
+            <span>Remote Screen & AnyDesk Desktop Control</span>
           </h1>
           <p class="page-subtitle">
-            Tan-awa ug direktang kontrolaha ang desktop sa kustomer — i-click ang apps, pag-type diretso sa keyboard, pag-Alt+Tab, ug kontrolaha ang tibuok PC nga walay kinahanglan og AnyDesk o TeamViewer.
+            Direktang kontrol sa customer PC gamit ang imong kaugalingong mouse ug physical keyboard — parehas gyud sa AnyDesk.
           </p>
         </div>
 
         <div class="header-actions">
-          <!-- Remote Control Mode Switch -->
+          <!-- AnyDesk Remote Control Mode Switch -->
           <button
             type="button"
             class="control-mode-btn"
@@ -38,7 +38,18 @@ export interface ClickRipple {
             (click)="toggleControlMode()"
           >
             <span class="btn-dot" [ngClass]="{'pulse': isControlEnabled}"></span>
-            <span>🎮 {{ isControlEnabled ? 'Remote Control: ACTIVE' : 'Enable Remote Control' }}</span>
+            <span>🎮 {{ isControlEnabled ? 'AnyDesk Control: LOCKED & ACTIVE' : 'Enable Remote Control' }}</span>
+          </button>
+
+          <!-- Fullscreen Toggle Button -->
+          <button
+            type="button"
+            class="btn btn-secondary"
+            (click)="toggleFullscreen()"
+            title="Maximize to full screen (AnyDesk Experience)"
+          >
+            <span>⛶</span>
+            <span>{{ isFullscreen ? 'Exit Fullscreen' : 'Fullscreen View' }}</span>
           </button>
 
           <!-- Refresh Rate / Auto-Streaming Selector -->
@@ -46,21 +57,21 @@ export interface ClickRipple {
             <span class="rate-label">Stream:</span>
             <select [(ngModel)]="streamIntervalMs" (change)="onStreamRateChange()">
               <option [value]="0">Manual Only</option>
-              <option [value]="1200">⚡ Fast (1.2s)</option>
-              <option [value]="2500">Normal (2.5s)</option>
-              <option [value]="5000">Slow (5.0s)</option>
+              <option [value]="1000">⚡ Fast (1.0s)</option>
+              <option [value]="2000">Normal (2.0s)</option>
+              <option [value]="4000">Slow (4.0s)</option>
             </select>
           </div>
 
           <button class="btn btn-primary" (click)="captureCurrentScreen()" [disabled]="isCapturing">
             <span>📸</span>
-            <span>{{ isCapturing ? 'Capturing...' : 'Capture Now' }}</span>
+            <span>{{ isCapturing ? 'Connecting...' : 'Capture' }}</span>
           </button>
         </div>
       </div>
 
-      <!-- Station Selector Bar -->
-      <div class="station-selector-card">
+      <!-- Station Selector Bar (Hidden in Fullscreen Mode) -->
+      <div class="station-selector-card" *ngIf="!isFullscreen">
         <div class="selector-label">Target Station:</div>
         <div class="station-pills">
           <button
@@ -78,101 +89,56 @@ export interface ClickRipple {
       </div>
 
       <!-- Main Desktop Monitor & Interactive Viewport -->
-      <div class="monitor-card" *ngIf="selectedPc">
-        <!-- Monitor Header -->
-        <div class="monitor-header">
+      <div class="monitor-card" *ngIf="selectedPc" [ngClass]="{'fullscreen-card': isFullscreen}">
+        <!-- AnyDesk Active Lock Notification Banner -->
+        <div class="anydesk-active-banner" *ngIf="isControlEnabled">
+          <div class="banner-content">
+            <span class="pulse-indicator live"></span>
+            <span class="banner-title">🟢 ANYDESK REMOTE CONTROL ACTIVE</span>
+            <span class="banner-desc">
+              Ang imong mouse ug keyboard <strong>naka-lock na sa {{ selectedPc.name }}</strong>. Bisan unsa imong i-tuplok (Tab, Alt+Tab, Enter, Backspace, A-Z) modiretso sa customer PC nga walay glitch.
+            </span>
+            <span class="banner-exit-hint">(Pindota ang <strong>Shift + Esc</strong> aron ma-unlock)</span>
+          </div>
+          <button type="button" class="btn-unlock-chip" (click)="toggleControlMode()">
+            🔓 Unlock Controls
+          </button>
+        </div>
+
+        <!-- Monitor Header (Compact in standard mode, floating chip in fullscreen) -->
+        <div class="monitor-header" *ngIf="!isFullscreen">
           <div class="monitor-station-info">
             <span class="pulse-indicator" [ngClass]="{'live': selectedPc.status !== 'offline'}"></span>
             <strong>{{ selectedPc.name }}</strong> • {{ selectedPc.identifier }} ({{ selectedPc.ipAddress }})
-            <span class="control-status-badge" *ngIf="isControlEnabled">
-              🖱️ Desktop Access Active (Click & Direct Keyboard Enabled)
-            </span>
           </div>
           <div class="monitor-meta-right">
             <span class="last-action-msg" *ngIf="lastActionMessage">{{ lastActionMessage }}</span>
             <span class="timestamp-tag" *ngIf="lastCapturedTime">
-              Captured: {{ lastCapturedTime | date:'mediumTime' }}
+              Live: {{ lastCapturedTime | date:'mediumTime' }}
             </span>
           </div>
         </div>
 
-        <!-- Sticky Remote Quick Shortcuts Bar (Direct Desktop Actions) -->
-        <div class="quick-actions-bar" *ngIf="isControlEnabled">
-          <div class="quick-bar-left">
-            <span class="quick-label">⚡ Direct PC Shortcuts:</span>
-            <div class="quick-btn-group">
-              <button type="button" class="quick-action-btn highlight" (click)="sendKey('alttab')" title="Switch Windows (Alt+Tab)">
-                <span class="q-icon">🔀</span>
-                <strong>Alt + Tab</strong>
-              </button>
-              <button type="button" class="quick-action-btn" (click)="sendKey('win')" title="Open Windows Start Menu">
-                <span class="q-icon">🪟</span>
-                <span>Win (Start)</span>
-              </button>
-              <button type="button" class="quick-action-btn" (click)="sendKey('wind')" title="Show Desktop (Win+D)">
-                <span class="q-icon">🖥️</span>
-                <span>Desktop (Win+D)</span>
-              </button>
-              <button type="button" class="quick-action-btn" (click)="sendKey('wine')" title="Open File Explorer (Win+E)">
-                <span class="q-icon">📁</span>
-                <span>Explorer</span>
-              </button>
-              <button type="button" class="quick-action-btn" (click)="sendKey('taskmgr')" title="Open Task Manager">
-                <span class="q-icon">⚙️</span>
-                <span>Task Manager</span>
-              </button>
-              <button type="button" class="quick-action-btn" (click)="sendKey('^v')" title="Paste from Clipboard">
-                <span class="q-icon">📋</span>
-                <span>Paste (Ctrl+V)</span>
-              </button>
-              <button type="button" class="quick-action-btn danger" (click)="sendKey('altf4')" title="Close Active Application (Alt+F4)">
-                <span class="q-icon">✖️</span>
-                <span>Alt + F4</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="quick-bar-right">
-            <div class="nav-btn-group">
-              <button type="button" class="mini-key-btn" (click)="sendKey('{ENTER}')" title="Enter">↩️ Enter</button>
-              <button type="button" class="mini-key-btn" (click)="sendKey('{ESC}')" title="Escape">⎋ Esc</button>
-              <button type="button" class="mini-key-btn" (click)="sendKey('{BACKSPACE}')" title="Backspace">⌫ Backspace</button>
-              <button type="button" class="mini-key-btn" (click)="sendKey('{TAB}')" title="Tab">⇥ Tab</button>
-              <button type="button" class="mini-key-btn" (click)="sendKey('{F5}')" title="Refresh">🔄 F5</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Focus & Direct Keyboard Notification Bar -->
-        <div class="keyboard-focus-banner" *ngIf="isControlEnabled" [ngClass]="{'focused': isViewportFocused}">
-          <span class="focus-dot" [ngClass]="{'active': isViewportFocused}"></span>
-          <span *ngIf="isViewportFocused">
-            🟢 <strong>DIRECT KEYBOARD ACTIVE:</strong> Bisan unsa imong i-type sa imong physical keyboard (A-Z, numbers, Enter, Backspace, arrows) modiretso sa customer PC!
-          </span>
-          <span *ngIf="!isViewportFocused">
-            💡 <strong>I-click ang screen sa ubos</strong> aron ma-focus ang imong keyboard para diretso ka makatype sa customer PC desktop.
-          </span>
-        </div>
-
-        <!-- Interactive Screen Viewport with Keyboard Capture -->
+        <!-- Interactive Screen Viewport -->
         <div
+          #viewportElem
           class="monitor-viewport"
-          [ngClass]="{'interactive': isControlEnabled, 'viewport-focused': isViewportFocused}"
-          tabindex="0"
-          (keydown)="onViewportKeyDown($event)"
-          (focus)="isViewportFocused = true"
-          (blur)="isViewportFocused = false"
+          [ngClass]="{'interactive': isControlEnabled, 'fullscreen-viewport': isFullscreen}"
         >
+          <!-- Loading State for this specific PC -->
           <div *ngIf="isCapturing && !currentScreenImage" class="viewport-placeholder">
             <span class="spinner"></span>
-            <div>Connecting to {{ selectedPc.name || 'station' }} display stream...</div>
+            <div>Nag-connect sa live screen sa <strong>{{ selectedPc.name }}</strong>...</div>
           </div>
 
+          <!-- Offline / Empty State -->
           <div *ngIf="!isCapturing && !currentScreenImage" class="viewport-placeholder">
             <span class="camera-icon">🖥️</span>
-            <div>Walay live snapshot sa {{ selectedPc.name || 'station' }}. I-click ang "Capture Now" aron makita ang live desktop.</div>
+            <div>Walay snapshot sa {{ selectedPc.name }}. Pindota ang "Capture" aron makuha ang screen.</div>
+            <button class="btn btn-primary" (click)="captureCurrentScreen()">I-load ang Screen Karon</button>
           </div>
 
+          <!-- Live Remote Screen Display -->
           <div class="screen-wrapper" *ngIf="currentScreenImage">
             <img
               [src]="currentScreenImage"
@@ -193,25 +159,6 @@ export interface ClickRipple {
             ></div>
           </div>
         </div>
-
-        <!-- Remote Keyboard & Text Sender Toolbar -->
-        <div class="remote-control-toolbar" *ngIf="isControlEnabled">
-          <div class="text-sender-box">
-            <div class="sender-label">⌨️ Type Text or Paste Long Link/Message to Customer PC:</div>
-            <div class="sender-input-row">
-              <input
-                type="text"
-                class="sender-input"
-                [(ngModel)]="remoteText"
-                placeholder="Isulod ang text, link, o mensahe nga gusto nimo i-type sa customer PC..."
-                (keydown.enter)="sendText()"
-              />
-              <button class="btn btn-sm btn-action" (click)="sendText()" [disabled]="!remoteText.trim()">
-                <span>📤 Send Text</span>
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   `,
@@ -220,6 +167,19 @@ export interface ClickRipple {
       padding: 24px;
       max-width: 1400px;
       margin: 0 auto;
+      transition: all 0.2s ease;
+    }
+    .screen-view-container.fullscreen-mode {
+      padding: 0;
+      max-width: 100vw;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #000;
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 99999;
     }
     .page-header-row {
       display: flex;
@@ -269,10 +229,10 @@ export interface ClickRipple {
       color: #fff;
     }
     .control-mode-btn.active {
-      background: rgba(16, 185, 129, 0.2);
+      background: rgba(16, 185, 129, 0.25);
       border-color: #10b981;
       color: #34d399;
-      box-shadow: 0 0 16px rgba(16, 185, 129, 0.3);
+      box-shadow: 0 0 16px rgba(16, 185, 129, 0.4);
     }
     .btn-dot {
       width: 8px;
@@ -331,6 +291,15 @@ export interface ClickRipple {
     }
     .btn-primary:hover:not(:disabled) {
       background: #2563eb;
+    }
+    .btn-secondary {
+      background: #1e293b;
+      color: #cbd5e1;
+      border: 1px solid #334155;
+    }
+    .btn-secondary:hover {
+      background: #334155;
+      color: #fff;
     }
     .btn:disabled {
       opacity: 0.5;
@@ -408,16 +377,71 @@ export interface ClickRipple {
       color: #bfdbfe;
     }
 
+    /* AnyDesk Notification Banner */
+    .anydesk-active-banner {
+      background: rgba(16, 185, 129, 0.18);
+      border-bottom: 2px solid #10b981;
+      padding: 10px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .banner-content {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.86rem;
+      color: #d1fae5;
+      flex-wrap: wrap;
+    }
+    .banner-title {
+      font-weight: 700;
+      color: #34d399;
+      letter-spacing: 0.04em;
+    }
+    .banner-desc {
+      color: #a7f3d0;
+    }
+    .banner-exit-hint {
+      color: #6ee7b7;
+      font-family: monospace;
+      font-size: 0.8rem;
+    }
+    .btn-unlock-chip {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #fca5a5;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-unlock-chip:hover {
+      background: #ef4444;
+      color: #fff;
+    }
+
     /* Monitor Card */
     .monitor-card {
       background: #0f172a;
       border: 1px solid #1e293b;
       border-radius: 12px;
       overflow: hidden;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+    .monitor-card.fullscreen-card {
+      border: none;
+      border-radius: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
     .monitor-header {
-      padding: 12px 20px;
+      padding: 10px 20px;
       background: #131b2e;
       border-bottom: 1px solid #1e293b;
       display: flex;
@@ -430,7 +454,7 @@ export interface ClickRipple {
       display: flex;
       align-items: center;
       gap: 10px;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       color: #e2e8f0;
     }
     .pulse-indicator {
@@ -442,16 +466,6 @@ export interface ClickRipple {
     .pulse-indicator.live {
       background: #10b981;
       box-shadow: 0 0 8px #10b981;
-    }
-    .control-status-badge {
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid rgba(16, 185, 129, 0.3);
-      color: #34d399;
-      font-size: 0.78rem;
-      font-weight: 600;
-      padding: 3px 8px;
-      border-radius: 6px;
-      margin-left: 6px;
     }
     .monitor-meta-right {
       display: flex;
@@ -472,161 +486,39 @@ export interface ClickRipple {
       font-size: 0.78rem;
     }
 
-    /* Direct Quick Actions Bar */
-    .quick-actions-bar {
-      background: #0c1220;
-      border-bottom: 1px solid #1e293b;
-      padding: 10px 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-    .quick-bar-left {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .quick-label {
-      font-size: 0.76rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #38bdf8;
-    }
-    .quick-btn-group {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    .quick-action-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: #1e293b;
-      color: #e2e8f0;
-      border: 1px solid #334155;
-      padding: 6px 12px;
-      border-radius: 6px;
-      font-size: 0.82rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    .quick-action-btn:hover {
-      background: #334155;
-      border-color: #64748b;
-      transform: translateY(-1px);
-    }
-    .quick-action-btn:active {
-      transform: translateY(0);
-    }
-    .quick-action-btn.highlight {
-      background: rgba(56, 189, 248, 0.15);
-      border-color: #38bdf8;
-      color: #38bdf8;
-    }
-    .quick-action-btn.highlight:hover {
-      background: #38bdf8;
-      color: #04101e;
-    }
-    .quick-action-btn.danger {
-      background: rgba(239, 68, 68, 0.15);
-      border-color: #ef4444;
-      color: #fca5a5;
-    }
-    .quick-action-btn.danger:hover {
-      background: #ef4444;
-      color: #fff;
-    }
-    .quick-bar-right {
-      display: flex;
-      align-items: center;
-    }
-    .nav-btn-group {
-      display: flex;
-      gap: 4px;
-      flex-wrap: wrap;
-    }
-    .mini-key-btn {
-      background: #131c31;
-      border: 1px solid #283552;
-      color: #cbd5e1;
-      padding: 4px 8px;
-      border-radius: 5px;
-      font-size: 0.76rem;
-      cursor: pointer;
-      font-family: monospace;
-      transition: all 0.15s;
-    }
-    .mini-key-btn:hover {
-      background: #2563eb;
-      color: #fff;
-      border-color: #60a5fa;
-    }
-
-    /* Focus & Notification Banner */
-    .keyboard-focus-banner {
-      background: rgba(15, 23, 42, 0.8);
-      border-bottom: 1px solid #1e293b;
-      padding: 8px 16px;
-      font-size: 0.8rem;
-      color: #94a3b8;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      transition: all 0.2s ease;
-    }
-    .keyboard-focus-banner.focused {
-      background: rgba(16, 185, 129, 0.12);
-      border-color: rgba(16, 185, 129, 0.4);
-      color: #a7f3d0;
-    }
-    .focus-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #64748b;
-    }
-    .focus-dot.active {
-      background: #10b981;
-      box-shadow: 0 0 6px #10b981;
-    }
-
     /* Viewport */
     .monitor-viewport {
-      min-height: 480px;
+      min-height: 520px;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #060911;
+      background: #000;
       position: relative;
       outline: none;
     }
+    .monitor-viewport.fullscreen-viewport {
+      flex: 1;
+      height: calc(100vh - 42px);
+      min-height: 100vh;
+    }
     .monitor-viewport.interactive {
       cursor: crosshair;
-    }
-    .monitor-viewport.viewport-focused {
-      box-shadow: inset 0 0 0 2px #38bdf8;
     }
     .viewport-placeholder {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
       color: #64748b;
-      font-size: 0.9rem;
+      font-size: 0.95rem;
       padding: 60px 20px;
     }
     .camera-icon {
-      font-size: 3rem;
+      font-size: 3.5rem;
     }
     .spinner {
-      width: 32px;
-      height: 32px;
+      width: 36px;
+      height: 36px;
       border: 3px solid rgba(56, 189, 248, 0.2);
       border-top-color: #38bdf8;
       border-radius: 50%;
@@ -645,12 +537,18 @@ export interface ClickRipple {
     .live-screen-image {
       max-width: 100%;
       height: auto;
-      max-height: 780px;
+      max-height: 800px;
       display: block;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.7);
       user-select: none;
       -webkit-user-drag: none;
       pointer-events: auto;
+    }
+    .fullscreen-viewport .live-screen-image {
+      max-height: 100vh;
+      width: auto;
+      height: 100vh;
+      object-fit: contain;
     }
 
     /* Visual Click Ripple */
@@ -659,7 +557,7 @@ export interface ClickRipple {
       width: 24px;
       height: 24px;
       border-radius: 50%;
-      background: rgba(56, 189, 248, 0.4);
+      background: rgba(56, 189, 248, 0.5);
       border: 2px solid #38bdf8;
       transform: translate(-50%, -50%);
       pointer-events: none;
@@ -669,52 +567,11 @@ export interface ClickRipple {
       0% { transform: translate(-50%, -50%) scale(0.3); opacity: 1; }
       100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
     }
-
-    /* Remote Control Toolbar */
-    .remote-control-toolbar {
-      background: #090e1a;
-      border-top: 1px solid #1e293b;
-      padding: 12px 18px;
-    }
-    .text-sender-box {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .sender-label {
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: #94a3b8;
-    }
-    .sender-input-row {
-      display: flex;
-      gap: 10px;
-    }
-    .sender-input {
-      flex: 1;
-      background: #131b2e;
-      border: 1px solid #2b3956;
-      border-radius: 8px;
-      padding: 9px 14px;
-      color: #f8fafc;
-      font-size: 0.9rem;
-      outline: none;
-    }
-    .sender-input:focus {
-      border-color: #38bdf8;
-      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
-    }
-    .btn-action {
-      background: #2563eb;
-      color: #fff;
-    }
-    .btn-action:hover:not(:disabled) {
-      background: #1d4ed8;
-    }
   `]
 })
 export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   @Input() initialPcId?: string;
+  @ViewChild('viewportElem') viewportElem?: ElementRef<HTMLElement>;
 
   state: any = { pcs: [] };
   private sub!: Subscription;
@@ -723,27 +580,29 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   private inFlightCapture = false;
 
   selectedPcId: string = '';
-  screenImage: string | null = null;
   screenImages: { [pcId: string]: string } = {};
   lastCapturedTime: Date | null = null;
   isCapturing = false;
 
   get currentScreenImage(): string | null {
     if (!this.selectedPc) return null;
-    return this.screenImages[this.selectedPc.id] ||
-           this.screenImages[this.selectedPc.id.toLowerCase()] ||
+    const targetId = this.selectedPc.id;
+    return this.screenImages[targetId] ||
+           this.screenImages[targetId.toLowerCase()] ||
            (this.selectedPc.name ? this.screenImages[this.selectedPc.name.toLowerCase()] : null) ||
-           this.screenImage;
+           null;
   }
 
   // Remote Desktop Control state
   isControlEnabled = false;
-  isViewportFocused = false;
-  streamIntervalMs: number = 1200; // Fast stream (1.2s) by default when active
-  remoteText: string = '';
+  isFullscreen = false;
+  streamIntervalMs: number = 1000; // 1s auto stream
   lastActionMessage: string | null = null;
   clickRipples: ClickRipple[] = [];
   private rippleCounter = 0;
+
+  // Bound window capture listener to intercept physical keys
+  private boundWindowKeyDown = (e: KeyboardEvent) => this.onGlobalWindowKeyDown(e);
 
   constructor(public adminState: AdminStateService) {}
 
@@ -758,9 +617,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   ngOnChanges(changes: SimpleChanges) {
     if (changes['initialPcId'] && this.initialPcId && this.initialPcId !== this.selectedPcId) {
-      this.selectedPcId = this.initialPcId;
-      this.isCapturing = false;
-      this.captureCurrentScreen();
+      this.selectStation(this.initialPcId);
     }
   }
 
@@ -773,8 +630,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       this.state = s;
       if (this.state.pcs?.length > 0) {
         if (!this.selectedPcId || !this.state.pcs.some((p: any) => this.matchesStation(p, this.selectedPcId))) {
-          this.selectedPcId = this.initialPcId || this.state.pcs[0].id;
-          this.captureCurrentScreen();
+          this.selectStation(this.initialPcId || this.state.pcs[0].id);
         }
       }
     });
@@ -787,6 +643,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   ngOnDestroy() {
     this.sub?.unsubscribe();
     this.stopStreaming();
+    this.removeGlobalKeyListeners();
     if (this.quickCaptureTimer) {
       clearTimeout(this.quickCaptureTimer);
     }
@@ -798,19 +655,49 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   selectStation(pcId: string) {
     this.selectedPcId = pcId;
-    this.isCapturing = false;
+    this.inFlightCapture = false;
+    this.isCapturing = true;
+    if (this.quickCaptureTimer) clearTimeout(this.quickCaptureTimer);
     this.captureCurrentScreen();
   }
 
   toggleControlMode() {
     this.isControlEnabled = !this.isControlEnabled;
     if (this.isControlEnabled) {
-      this.lastActionMessage = '🎮 Remote Desktop Control Active. Click anywhere on screen to control.';
+      this.lastActionMessage = '🎮 AnyDesk Mode: Mouse & Keyboard Locked to Remote Desktop.';
+      this.addGlobalKeyListeners();
       this.startStreaming();
     } else {
       this.lastActionMessage = null;
+      this.removeGlobalKeyListeners();
       this.stopStreaming();
     }
+  }
+
+  toggleFullscreen() {
+    this.isFullscreen = !this.isFullscreen;
+    if (this.isFullscreen) {
+      try {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } catch {}
+      if (!this.isControlEnabled) {
+        this.toggleControlMode();
+      }
+    } else {
+      try {
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+      } catch {}
+    }
+  }
+
+  private addGlobalKeyListeners() {
+    window.addEventListener('keydown', this.boundWindowKeyDown, { capture: true });
+  }
+
+  private removeGlobalKeyListeners() {
+    window.removeEventListener('keydown', this.boundWindowKeyDown, { capture: true });
   }
 
   onStreamRateChange() {
@@ -838,7 +725,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     }
   }
 
-  scheduleQuickCapture(delayMs: number = 300) {
+  scheduleQuickCapture(delayMs: number = 250) {
     if (this.quickCaptureTimer) clearTimeout(this.quickCaptureTimer);
     this.quickCaptureTimer = setTimeout(() => {
       this.captureCurrentScreen();
@@ -853,7 +740,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     try {
       const img = await this.adminState.captureScreen(targetId);
       if (img) {
-        // Preload double-buffer to eliminate white/empty DOM flashes
+        // Pre-decode offscreen to eliminate any white flash / layout shift
         const pre = new Image();
         pre.onload = () => {
           this.screenImages[targetId] = img;
@@ -861,7 +748,6 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
           if (this.selectedPc?.name) {
             this.screenImages[this.selectedPc.name.toLowerCase()] = img;
           }
-          this.screenImage = img;
           this.lastCapturedTime = new Date();
         };
         pre.src = img;
@@ -895,7 +781,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       yPercent
     });
 
-    this.scheduleQuickCapture(300);
+    this.scheduleQuickCapture(250);
   }
 
   onScreenDblClick(event: MouseEvent) {
@@ -920,7 +806,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       yPercent
     });
 
-    this.scheduleQuickCapture(400);
+    this.scheduleQuickCapture(350);
   }
 
   onScreenContextMenu(event: MouseEvent) {
@@ -945,7 +831,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       yPercent
     });
 
-    this.scheduleQuickCapture(300);
+    this.scheduleQuickCapture(250);
   }
 
   private addRipple(x: number, y: number) {
@@ -953,92 +839,104 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.clickRipples.push({ id, x, y });
     setTimeout(() => {
       this.clickRipples = this.clickRipples.filter(r => r.id !== id);
-    }, 600);
+    }, 500);
   }
 
-  // Direct Physical Keyboard Handler for Viewport
-  onViewportKeyDown(event: KeyboardEvent) {
+  // AnyDesk-Style Global Window Keyboard Capture (Capture Phase)
+  private onGlobalWindowKeyDown(event: KeyboardEvent) {
     if (!this.isControlEnabled || !this.selectedPc) return;
 
-    // Prevent default scroll/tabbing for navigation keys
-    const preventKeys = ['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
-    if (preventKeys.includes(event.key)) {
+    // Safety escape hotkey: Shift + Esc unlocks controls
+    if (event.shiftKey && event.key === 'Escape') {
       event.preventDefault();
-    }
-
-    // Windows Start Key
-    if (event.key === 'Meta' || event.key === 'OS') {
-      event.preventDefault();
-      this.sendKey('win');
+      event.stopPropagation();
+      this.toggleControlMode();
       return;
     }
 
-    // Alt+Tab or Ctrl+Tab
+    // STRICT LOCK: Stop browser from tabbing through buttons, scrolling, or switching pages!
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    // Alt+Tab or Ctrl+Tab -> Native Win32 Window Switcher
     if ((event.altKey && event.key === 'Tab') || (event.ctrlKey && event.key === 'Tab')) {
-      event.preventDefault();
       this.sendKey('alttab');
+      return;
+    }
+
+    // Tab Key
+    if (event.key === 'Tab') {
+      this.sendKey('tab');
+      return;
+    }
+
+    // Enter Key
+    if (event.key === 'Enter') {
+      this.sendKey('enter');
+      return;
+    }
+
+    // Backspace Key
+    if (event.key === 'Backspace') {
+      this.sendKey('backspace');
+      return;
+    }
+
+    // Escape Key
+    if (event.key === 'Escape') {
+      this.sendKey('esc');
+      return;
+    }
+
+    // Space Key
+    if (event.key === ' ' || event.code === 'Space') {
+      this.sendKey('space');
+      return;
+    }
+
+    // Arrow Keys
+    if (event.key === 'ArrowUp') { this.sendKey('up'); return; }
+    if (event.key === 'ArrowDown') { this.sendKey('down'); return; }
+    if (event.key === 'ArrowLeft') { this.sendKey('left'); return; }
+    if (event.key === 'ArrowRight') { this.sendKey('right'); return; }
+
+    // Delete Key
+    if (event.key === 'Delete') { this.sendKey('delete'); return; }
+
+    // Windows Start Key
+    if (event.key === 'Meta' || event.key === 'OS') {
+      this.sendKey('win');
       return;
     }
 
     // Alt+F4
     if (event.altKey && (event.key === 'F4' || event.code === 'F4')) {
-      event.preventDefault();
       this.sendKey('altf4');
       return;
     }
 
-    // Ctrl Shortcuts
+    // Standard Ctrl Shortcuts
     if (event.ctrlKey && !event.altKey) {
       const k = event.key.toLowerCase();
-      if (k === 'v') {
-        event.preventDefault();
-        this.sendKey('^v');
-        return;
-      }
-      if (k === 'c') {
-        event.preventDefault();
-        this.sendKey('^c');
-        return;
-      }
-      if (k === 'a') {
-        event.preventDefault();
-        this.sendKey('^a');
-        return;
-      }
-      if (k === 'z') {
-        event.preventDefault();
-        this.sendKey('^z');
+      if (k === 'v') { this.sendKey('^v'); return; }
+      if (k === 'c') { this.sendKey('^c'); return; }
+      if (k === 'a') { this.sendKey('^a'); return; }
+      if (k === 'z') { this.sendKey('^z'); return; }
+      if (event.shiftKey && (k === 'escape' || event.key === 'Escape')) {
+        this.sendKey('taskmgr');
         return;
       }
     }
 
-    // Control and Navigation Keys
-    const keyMap: { [k: string]: string } = {
-      'Enter': '{ENTER}',
-      'Backspace': '{BACKSPACE}',
-      'Escape': '{ESC}',
-      'Tab': '{TAB}',
-      'Delete': '{DELETE}',
-      'ArrowUp': '{UP}',
-      'ArrowDown': '{DOWN}',
-      'ArrowLeft': '{LEFT}',
-      'ArrowRight': '{RIGHT}',
-      'Home': '{HOME}',
-      'End': '{END}',
-      'PageUp': '{PGUP}',
-      'PageDown': '{PGDN}',
-      'F5': '{F5}'
-    };
-
-    if (keyMap[event.key]) {
-      event.preventDefault();
-      this.sendKey(keyMap[event.key]);
+    // F-Keys
+    if (/^F[1-9]|F1[0-2]$/.test(event.key)) {
+      this.sendKey(`{${event.key}}`);
       return;
     }
 
-    // Direct Character Typing (letters, numbers, space, punctuation)
+    // Direct Character Typing (letters, numbers, symbols)
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
-      event.preventDefault();
       this.sendDirectChar(event.key);
     }
   }
@@ -1046,39 +944,24 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   sendDirectChar(char: string) {
     if (!this.selectedPc) return;
     const targetId = this.selectedPc.id;
-    this.lastActionMessage = `⌨️ Typed: "${char === ' ' ? 'Space' : char}"`;
+    this.lastActionMessage = `⌨️ Typed: "${char}"`;
     this.adminState.sendRemoteInput({
       pcId: targetId,
       type: 'text',
       text: char
     });
-    this.scheduleQuickCapture(350);
+    this.scheduleQuickCapture(300);
   }
 
-  // Keyboard and Text tools
   sendKey(keyString: string) {
     if (!this.selectedPc) return;
     const targetId = this.selectedPc.id;
-    this.lastActionMessage = `⌨️ Sent Key: ${keyString}`;
+    this.lastActionMessage = `⌨️ Key: ${keyString}`;
     this.adminState.sendRemoteInput({
       pcId: targetId,
       type: 'key',
       key: keyString
     });
-    this.scheduleQuickCapture(350);
-  }
-
-  sendText() {
-    if (!this.selectedPc || !this.remoteText.trim()) return;
-    const targetId = this.selectedPc.id;
-    const textToSend = this.remoteText.trim();
-    this.lastActionMessage = `⌨️ Typed text: "${textToSend}"`;
-    this.adminState.sendRemoteInput({
-      pcId: targetId,
-      type: 'text',
-      text: textToSend
-    });
-    this.remoteText = '';
-    this.scheduleQuickCapture(400);
+    this.scheduleQuickCapture(300);
   }
 }

@@ -691,11 +691,11 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:screen:res', (data: any) => {
-        const matchReq = data.reqId ? (data.reqId === reqId) : true;
+        const matchReq = !!(data.reqId && data.reqId === reqId);
         const dId = (data.pcId || '').toLowerCase();
         const pId = pcId.toLowerCase();
         const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId;
-        if (matchReq && matchId) {
+        if (matchReq || matchId) {
           clearTimeout(timer);
           cleanup();
           resolve(data.imageData || data.base64Image || null);
@@ -723,11 +723,11 @@ export class AdminStateService {
       }, 3000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:remote-input:res', (data: any) => {
-        const matchReq = data.reqId ? (data.reqId === reqId) : true;
+        const matchReq = !!(data.reqId && data.reqId === reqId);
         const dId = (data.pcId || '').toLowerCase();
         const pId = payload.pcId.toLowerCase();
         const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId;
-        if (matchReq && matchId) {
+        if (matchReq || matchId) {
           clearTimeout(timer);
           cleanup();
           resolve({ success: data.success ?? true, error: data.error });
