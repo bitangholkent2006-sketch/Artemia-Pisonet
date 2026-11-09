@@ -2,14 +2,19 @@ const io = require('socket.io-client');
 const socket = io('https://artemia-pisonet-backend.onrender.com', { transports: ['websocket'] });
 
 const ps = `
-$url = "https://raw.githubusercontent.com/bitangholkent2006-sketch/Artemia-Pisonet/artemia-pisonet/releases/app.asar"
-$targetDir = Join-Path $env:USERPROFILE "Downloads\\Artemia-Customer-Terminal-PC"
+$proc = Get-Process -Name "Artemia Customer Terminal" -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($proc -and $proc.Path) {
+  $targetDir = Split-Path $proc.Path
+} else {
+  $targetDir = Join-Path $env:USERPROFILE "Downloads\\Artemia-Customer-Terminal-PC"
+}
 $targetAsar = Join-Path $targetDir "resources\\app.asar"
 $tempAsar = Join-Path $env:TEMP "app_v105.asar"
 
-Write-Output "Downloading v1.0.5 from GitHub..."
+Write-Output "Target dir: $targetDir"
+Write-Output "Downloading latest app.asar from GitHub..."
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-Invoke-WebRequest -Uri $url -OutFile $tempAsar -UseBasicParsing
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/bitangholkent2006-sketch/Artemia-Pisonet/artemia-pisonet/releases/app.asar" -OutFile $tempAsar -UseBasicParsing
 
 $len = (Get-Item $tempAsar).Length
 Write-Output "Downloaded size: $len bytes"
@@ -20,7 +25,7 @@ if ($len -gt 150000) {
 @echo off
 timeout /t 1 /nobreak >nul
 taskkill /F /IM "Artemia Customer Terminal.exe" >nul 2>&1
-timeout /t 1 /nobreak >nul
+timeout /t 2 /nobreak >nul
 copy /Y "$tempAsar" "$targetAsar"
 timeout /t 1 /nobreak >nul
 start "" "$targetDir\\Artemia Customer Terminal.exe"
