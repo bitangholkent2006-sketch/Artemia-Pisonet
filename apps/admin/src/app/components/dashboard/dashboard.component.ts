@@ -91,6 +91,16 @@ import { PC, PCStatus } from '@pisonet/shared';
           >
             📥 Download Client (.zip)
           </a>
+          <button
+            class="btn btn-sm btn-primary"
+            (click)="pushFleetOtaUpdate()"
+            [disabled]="isPushingOta"
+            title="I-send ug i-apply ang pinakabag-ong app.asar sa tanang online stations diritso"
+            style="background: linear-gradient(135deg, #0284c7, #38bdf8); color: #fff; font-weight: 700; border: none; box-shadow: 0 2px 10px rgba(56, 189, 248, 0.35);"
+          >
+            <span>🚀</span>
+            <span>{{ isPushingOta ? 'Naga-send...' : 'Push Update (app.asar sa Tanan)' }}</span>
+          </button>
           <button class="btn btn-sm btn-warning" (click)="bulkCleanJunk()" title="Wipe downloads, browser history/logins, and temp junk across all stations">
             🧹 Clean Slate (All PCs)
           </button>
@@ -277,6 +287,14 @@ import { PC, PCStatus } from '@pisonet/shared';
             <!-- If Online / Available / In-Use -->
             <ng-container *ngIf="pc.status !== 'offline'">
               <div class="action-grid-buttons">
+                <button
+                  class="btn btn-sm btn-subtle"
+                  (click)="pushOtaUpdate(pc)"
+                  title="I-send ang pinakabag-ong app.asar sa kini nga station"
+                  style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);"
+                >
+                  ⚡ Update
+                </button>
                 <button
                   class="btn btn-sm btn-subtle"
                   (click)="toggleLock(pc)"
@@ -1091,6 +1109,38 @@ export class DashboardComponent implements OnInit, OnDestroy {
     if (confirm(`Sigurado ka nga gusto nimo i-${action.toUpperCase()} ang TANANG PC stations?`)) {
       this.showNotice(`⚡ Command '${action.toUpperCase()}' gipadala sa tanang stations.`, 'warn');
       await this.adminState.executePowerAction('all', action);
+    }
+  }
+
+  isPushingOta = false;
+  async pushFleetOtaUpdate() {
+    if (!confirm('I-push ug i-send ang pinakabag-ong app.asar sa TANANG online stations karon? Mag-restart ang ilang mga terminal sulod sa 3 segundos.')) {
+      return;
+    }
+    this.isPushingOta = true;
+    this.showNotice('🚀 Gipadala ang pinakabag-ong app.asar sa tanang online stations! Mag-restart ang ilang mga terminal...', 'info');
+    try {
+      const res = await this.adminState.pushClientUpdate('all');
+      if (res.success) {
+        this.showNotice('✅ ' + res.message, 'success');
+      } else {
+        this.showNotice('⚠️ ' + res.message, 'warn');
+      }
+    } finally {
+      this.isPushingOta = false;
+    }
+  }
+
+  async pushOtaUpdate(pc: PC) {
+    if (!confirm(`I-push ang pinakabag-ong app.asar sa ${pc.name}? Mag-restart ang application sa station.`)) {
+      return;
+    }
+    this.showNotice(`🚀 Gipadala ang pinakabag-ong app.asar sa ${pc.name}...`, 'info');
+    const res = await this.adminState.pushClientUpdate(pc.id);
+    if (res.success) {
+      this.showNotice(`✅ Nagsugod na ang pag-update sa ${pc.name}!`, 'success');
+    } else {
+      this.showNotice(`⚠️ ${res.message}`, 'warn');
     }
   }
 

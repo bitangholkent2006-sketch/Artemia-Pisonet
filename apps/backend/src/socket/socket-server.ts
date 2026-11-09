@@ -359,6 +359,11 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.to('staff').emit('maintenance:screen:res', payload);
     });
 
+    // OTA Client Update Status Relay
+    authSocket.on('agent:client-update:status', (payload: any) => {
+      io?.to('staff').emit('maintenance:client-update:status', payload);
+    });
+
     // Remote Desktop Input & Mouse/Keyboard Control Relays - Targeted STRICTLY to requested PC
     authSocket.on('maintenance:remote-input:req', (payload: any) => {
       if (payload.pcId || payload.targetPcId) {

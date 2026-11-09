@@ -198,3 +198,100 @@ maintenanceRoutes.post('/power', requireStaff, async (c) => {
   });
 });
 
+// OTA Client Updater: Get current release metadata
+maintenanceRoutes.get('/client-update-info', requireStaff, async (c) => {
+  const fs = await import('fs');
+  const path = await import('path');
+  const possiblePaths = [
+    path.resolve(process.cwd(), 'releases/app.asar'),
+    path.resolve(__dirname, '../../releases/app.asar'),
+    path.resolve(__dirname, '../../../releases/app.asar'),
+    path.resolve(process.cwd(), 'dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar'),
+    path.resolve(__dirname, '../../dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar')
+  ];
+  const asarPath = possiblePaths.find((p) => fs.existsSync(p));
+  const sizeBytes = asarPath ? fs.statSync(asarPath).size : 0;
+  const modified = asarPath ? fs.statSync(asarPath).mtime.toISOString() : null;
+
+  let version = '1.0.2';
+  const versionFile = path.resolve(process.cwd(), 'releases/version.json');
+  if (fs.existsSync(versionFile)) {
+    try {
+      version = JSON.parse(fs.readFileSync(versionFile, 'utf8')).version || version;
+    } catch {}
+  }
+
+  return c.json({
+    success: true,
+    data: {
+      version,
+      sizeBytes,
+      lastModified: modified,
+      ready: !!asarPath
+    }
+  });
+});
+
+// OTA Client Updater: Dispatch instant app.asar push update to stations
+maintenanceRoutes.post('/push-client-update', requireStaff, async (c) => {
+  const staff = c.get('user');
+  const body = await c.req.json().catch(() => ({}));
+  const { targetPcId = 'all', targetPcIds } = body;
+
+  const fs = await import('fs');
+  const path = await import('path');
+  const possiblePaths = [
+    path.resolve(process.cwd(), 'releases/app.asar'),
+    path.resolve(__dirname, '../../releases/app.asar'),
+    path.resolve(__dirname, '../../../releases/app.asar'),
+    path.resolve(process.cwd(), 'dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar'),
+    path.resolve(__dirname, '../../dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar')
+  ];
+  const asarPath = possiblePaths.find((p) => fs.existsSync(p));
+  const sizeBytes = asarPath ? fs.statSync(asarPath).size : 176772;
+
+  let version = '1.0.2';
+  const versionFile = path.resolve(process.cwd(), 'releases/version.json');
+  if (fs.existsSync(versionFile)) {
+    try {
+      version = JSON.parse(fs.readFileSync(versionFile, 'utf8')).version || version;
+    } catch {}
+  }
+
+  const host = c.req.header('host') || 'artemia-pisonet-backend.onrender.com';
+  const protocol = host.includes('localhost') ? 'http' : 'https';
+  const downloadUrl = `${protocol}://${host}/download/client/app.asar`;
+
+  const targets = Array.isArray(targetPcIds) && targetPcIds.length > 0 ? targetPcIds : [targetPcId];
+
+  const payload = {
+    reqId: 'ota_' + Date.now(),
+    targetPcId: targets.includes('all') ? 'all' : targets[0],
+    targetPcIds: targets,
+    version,
+    sizeBytes,
+    downloadUrl,
+    sender: staff?.fullName || staff?.username || 'Admin',
+    timestamp: new Date().toISOString()
+  };
+
+  if (targets.includes('all') || targets.includes('fleet')) {
+    broadcastRealtimeEvent('agent:client-update:run', { ...payload, targetPcId: 'all' }, 'fleet');
+    broadcastRealtimeEvent('agent:client-update:run', { ...payload, targetPcId: 'all' });
+  } else {
+    targets.forEach((tid: string) => {
+      const t = tid.toLowerCase();
+      broadcastRealtimeEvent('agent:client-update:run', { ...payload, targetPcId: t }, `pc:${t}`);
+      if (!t.startsWith('pc-')) {
+        broadcastRealtimeEvent('agent:client-update:run', { ...payload, targetPcId: t }, `pc:pc-${t}`);
+      }
+    });
+  }
+
+  return c.json({
+    success: true,
+    message: `OTA Update push dispatched to ${targets.includes('all') ? 'all online stations' : targets.join(', ')}. Stations will download new app.asar and restart.`,
+    payload
+  });
+});
+

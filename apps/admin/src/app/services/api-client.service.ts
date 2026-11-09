@@ -394,6 +394,17 @@ export class ApiClientService {
     });
   }
 
+  public async pushClientUpdate(targetPcId: string = 'all') {
+    return this.request<{ success: boolean; message: string; payload?: any }>('/api/v1/maintenance/push-client-update', {
+      method: 'POST',
+      body: JSON.stringify({ targetPcId })
+    });
+  }
+
+  public async getClientUpdateInfo() {
+    return this.request<{ success: boolean; data: { version: string; sizeBytes: number; lastModified?: string; ready: boolean } }>('/api/v1/maintenance/client-update-info');
+  }
+
   public async wipeAllPcs() {
     return this.request<{ success: boolean; message: string; deletedCount: number }>('/api/v1/pcs/wipe-all', {
       method: 'DELETE'

@@ -43,6 +43,7 @@ interface WindowWithDesktop extends Window {
     onDownloadProgress?: (callback: (data: any) => void) => void;
     onCleanAutoDone?: (callback: (data: any) => void) => void;
     sendRemoteInput?: (payload: any) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
+    applyClientUpdate?: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
   };
 }
 
@@ -528,6 +529,18 @@ class StationMaintenanceAgent {
     }
   }
 
+  public showOtaUpdateModal(version: string) {
+    const modal = document.getElementById('ota-modal');
+    const verEl = document.getElementById('ota-version-badge');
+    if (verEl) verEl.innerText = `v${version}`;
+    if (modal) modal.classList.add('visible');
+  }
+
+  public hideOtaUpdateModal() {
+    const modal = document.getElementById('ota-modal');
+    if (modal) modal.classList.remove('visible');
+  }
+
   private initSocket() {
     try {
       this.socket = io(this.apiBase, {
@@ -943,6 +956,52 @@ class StationMaintenanceAgent {
         });
       });
 
+      // 11. Over-The-Air (OTA) Instant Client Updater (Pushes updated app.asar and restarts)
+      this.socket.on('agent:client-update:run', async (payload: { targetPcId?: string; pcId?: string; downloadUrl: string; version?: string; sender?: string }) => {
+        const target = payload.targetPcId || payload.pcId;
+        if (!this.matchesThisStation(target)) return;
+
+        this.logMessage(`[OTA Update] Received update request from ${payload.sender || 'Admin'}. Starting auto-update...`);
+        this.showToast('🚀 Naga-update ang Artemia Terminal gikan sa server...', 'info', 10);
+
+        this.showOtaUpdateModal(payload.version || '1.0.2');
+
+        this.socket?.emit('agent:client-update:status', {
+          pcId: this.dbPcId || this.pcId,
+          status: 'downloading',
+          percent: 50,
+          timestamp: new Date().toISOString()
+        });
+
+        const fullDownloadUrl = payload.downloadUrl.startsWith('http')
+          ? payload.downloadUrl
+          : `${this.apiBase}${payload.downloadUrl.startsWith('/') ? '' : '/'}${payload.downloadUrl}`;
+
+        if (desktopWindow.pisonetDesktop?.applyClientUpdate) {
+          const res = await desktopWindow.pisonetDesktop.applyClientUpdate(fullDownloadUrl);
+          if (!res.success) {
+            this.logMessage(`[OTA Update] Error applying update: ${res.error}`);
+            this.showToast(`Update Failed: ${res.error}`, 'warn', 6);
+            this.hideOtaUpdateModal();
+            this.socket?.emit('agent:client-update:status', {
+              pcId: this.dbPcId || this.pcId,
+              status: 'failed',
+              error: res.error,
+              timestamp: new Date().toISOString()
+            });
+          } else {
+            this.socket?.emit('agent:client-update:status', {
+              pcId: this.dbPcId || this.pcId,
+              status: 'restarting',
+              timestamp: new Date().toISOString()
+            });
+          }
+        } else {
+          this.logMessage('[OTA Update] Client updater only supported on native Electron terminal.');
+          this.hideOtaUpdateModal();
+        }
+      });
+
     } catch (e) {
       console.warn('Socket connection error:', e);
     }
@@ -1207,6 +1266,66 @@ class StationMaintenanceAgent {
         .toast-notification.warn { border-color: #f59e0b; color: #fbbf24; }
         .toast-notification.info { border-color: #06b6d4; color: #38bdf8; }
 
+        /* FULL SCREEN OTA UPDATE OVERLAY */
+        .ota-overlay {
+          position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 100004;
+          background: rgba(3, 7, 18, 0.95); backdrop-filter: blur(16px);
+          display: none; align-items: center; justify-content: center; padding: 32px;
+          animation: fadeIn 0.3s ease-out;
+        }
+        .ota-overlay.visible { display: flex; }
+        .ota-modal-card {
+          background: linear-gradient(145deg, #090d16 0%, #111827 50%, #1e1b4b 100%);
+          border: 2px solid #06b6d4;
+          box-shadow: 0 0 60px rgba(6, 182, 212, 0.4), 0 25px 50px -12px rgba(0, 0, 0, 0.9);
+          border-radius: 24px; padding: 44px 48px; max-width: 680px; width: 92%;
+          text-align: center;
+        }
+        .ota-icon-spin {
+          font-size: 3.5rem; display: inline-block; animation: spin 2s linear infinite; margin-bottom: 20px;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .ota-badge {
+          display: inline-flex; align-items: center; gap: 8px;
+          background: rgba(6, 182, 212, 0.15); border: 1px solid rgba(6, 182, 212, 0.4);
+          color: #38bdf8; padding: 6px 18px; border-radius: 9999px;
+          font-size: 0.85rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 20px;
+        }
+        .ota-pulse-dot {
+          width: 8px; height: 8px; border-radius: 50%; background: #06b6d4;
+          box-shadow: 0 0 10px #06b6d4; animation: pulseGlow 1.5s infinite;
+        }
+        .ota-ver-pill {
+          background: #0284c7; color: #fff; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; margin-left: 6px;
+        }
+        .ota-title {
+          font-size: 1.8rem; font-weight: 800; color: #fff; margin-bottom: 14px;
+        }
+        .ota-desc {
+          font-size: 1rem; color: #94a3b8; line-height: 1.6; margin-bottom: 26px;
+        }
+        .ota-desc strong { color: #38bdf8; }
+        .ota-progress-box {
+          background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 9999px; padding: 4px; overflow: hidden; margin-bottom: 20px;
+        }
+        .ota-progress-bar {
+          height: 10px; border-radius: 9999px; background: rgba(255, 255, 255, 0.05); overflow: hidden;
+        }
+        .ota-progress-fill {
+          height: 100%; border-radius: 9999px;
+          background: linear-gradient(90deg, #06b6d4, #3b82f6, #8b5cf6);
+          animation: indeterminateProgress 1.8s infinite linear;
+        }
+        @keyframes indeterminateProgress {
+          0% { transform: translateX(-100%) scaleX(0.4); }
+          50% { transform: translateX(50%) scaleX(0.8); }
+          100% { transform: translateX(200%) scaleX(0.4); }
+        }
+        .ota-footer-note {
+          font-size: 0.82rem; color: #64748b; font-weight: 600;
+        }
+
         @keyframes pulseGlow {
           0%, 100% { transform: scale(1); box-shadow: 0 0 30px rgba(245, 158, 11, 0.35); }
           50% { transform: scale(1.05); box-shadow: 0 0 50px rgba(245, 158, 11, 0.6); }
@@ -1215,6 +1334,29 @@ class StationMaintenanceAgent {
           from { opacity: 0; } to { opacity: 1; }
         }
       </style>
+
+      <!-- FULL SCREEN OTA UPDATE OVERLAY -->
+      <div id="ota-modal" class="ota-overlay">
+        <div class="ota-modal-card">
+          <div class="ota-icon-spin">🔄</div>
+          <div class="ota-badge">
+            <span class="ota-pulse-dot"></span>
+            <span>OVER-THE-AIR CLIENT UPDATE</span>
+            <span id="ota-version-badge" class="ota-ver-pill">v1.0.2</span>
+          </div>
+          <h2 class="ota-title">Naga-update ang Artemia Terminal</h2>
+          <p class="ota-desc">
+            Awtomatikong gi-download ug gi-apply ang pinakabag-ong <strong>app.asar</strong> gikan sa fleet server.
+            Ang application mag-restart sa pipila ka segundo...
+          </p>
+          <div class="ota-progress-box">
+            <div class="ota-progress-bar">
+              <div class="ota-progress-fill"></div>
+            </div>
+          </div>
+          <div class="ota-footer-note">Palihog ayaw i-shut down o hilabti ang computer samtang naga-update.</div>
+        </div>
+      </div>
 
       <!-- FULL SCREEN ANNOUNCEMENT OVERLAY -->
       <div id="announcement-overlay" class="announcement-overlay">

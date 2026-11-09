@@ -574,6 +574,19 @@ export class AdminStateService {
     }
   }
 
+  public async pushClientUpdate(targetPcId: string = 'all'): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await this.apiClient.pushClientUpdate(targetPcId);
+      return { success: res.success, message: res.message };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Push update failed.' };
+    }
+  }
+
+  public async getClientUpdateInfo() {
+    return this.apiClient.getClientUpdateInfo();
+  }
+
   public async executePowerAction(targetPcId: string = 'all', action: 'restart' | 'shutdown' | 'sleep' | 'lock' | 'unlock'): Promise<{ success: boolean; message: string }> {
     try {
       const res = await this.apiClient.executePowerAction(targetPcId, action);

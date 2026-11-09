@@ -34,7 +34,7 @@ export interface StationDownloadState {
   imports: [CommonModule, FormsModule],
   template: `
     <div class="updater-container">
-      <!-- Page Navigation Tabs (Downloader vs Game Auto-Updater) -->
+      <!-- Page Navigation Tabs (Downloader vs Game Auto-Updater vs Client OTA Updater) -->
       <div class="mode-tabs-bar">
         <button
           class="mode-tab-btn"
@@ -53,6 +53,15 @@ export interface StationDownloadState {
           <span class="tab-icon">🚀</span>
           <span>Game Auto-Updater & LAN Sync</span>
           <span class="tab-pill">Steam / Epic / Robocopy</span>
+        </button>
+        <button
+          class="mode-tab-btn"
+          [ngClass]="{'active': activeMode === 'client-ota'}"
+          (click)="activeMode = 'client-ota'"
+        >
+          <span class="tab-icon">⚡</span>
+          <span>Fleet Client OTA Updater</span>
+          <span class="tab-pill">Push app.asar</span>
         </button>
       </div>
 
@@ -391,6 +400,105 @@ export interface StationDownloadState {
                   </div>
                 </div>
               </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- 3. FLEET CLIENT OTA UPDATER (PUSH app.asar) VIEW -->
+      <!-- ========================================================================= -->
+      <div *ngIf="activeMode === 'client-ota'">
+        <!-- Page Header -->
+        <div class="page-header-row">
+          <div>
+            <h1 class="page-title">
+              <span class="icon">⚡</span>
+              <span>Fleet Client OTA Updater</span>
+            </h1>
+            <p class="page-subtitle">
+              Awtomatikong i-send ug i-apply ang pinakabag-ong <strong>app.asar</strong> sa tanang customer terminals sa pisonet nga walay flash drive o manual setup.
+            </p>
+          </div>
+
+          <div class="header-actions">
+            <button
+              class="btn btn-primary"
+              [disabled]="isPushingOta"
+              (click)="pushFleetClientUpdate()"
+              style="background: linear-gradient(135deg, #0284c7, #38bdf8);"
+            >
+              <span>🚀</span>
+              <span>{{ isPushingOta ? 'Gipadala...' : 'I-push ang Update sa Tanang Online Stations' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Release Info Banner -->
+        <div class="ota-release-card">
+          <div class="ota-release-header">
+            <div class="ota-release-badge">
+              <span class="pulse-dot"></span>
+              <span>LATEST CLIENT RELEASE READY ON SERVER</span>
+            </div>
+            <span class="ota-ver">v1.0.2</span>
+          </div>
+          <div class="ota-release-details">
+            <div class="ota-detail-item">
+              <span class="label">Package File:</span>
+              <span class="val">releases/app.asar</span>
+            </div>
+            <div class="ota-detail-item">
+              <span class="label">Package Size:</span>
+              <span class="val">~176.7 KB (Ultra-light OTA)</span>
+            </div>
+            <div class="ota-detail-item">
+              <span class="label">Delivery Method:</span>
+              <span class="val">Instant WebSocket Push + Detached Self-Replacement (.bat)</span>
+            </div>
+          </div>
+          <div class="ota-release-note">
+            💡 Pag-click sa "I-push ang Update", ang matag online customer PC awtomatikong mag-download sa bag-ong asar, i-close ang terminal, i-overwrite ang <code>resources/app.asar</code>, ug mag-relaunch sulod sa 3 segundos.
+          </div>
+        </div>
+
+        <!-- Station Fleet OTA Control Cards -->
+        <div class="setup-grid" style="margin-top: 24px;">
+          <div class="card" style="grid-column: 1 / -1;">
+            <div class="card-header">
+              <h3 class="card-title">🖥️ Status sa mga Station (Fleet Client Update)</h3>
+              <button class="btn btn-sm btn-subtle" (click)="refreshPcs()">🔄 I-refresh</button>
+            </div>
+
+            <div class="ota-stations-table">
+              <div *ngFor="let pc of pcs" class="ota-station-row">
+                <div class="ota-st-info">
+                  <span class="ota-st-dot" [ngClass]="{'online': pc.status !== 'offline', 'offline': pc.status === 'offline'}"></span>
+                  <div class="ota-st-names">
+                    <strong class="ota-st-name">{{ pc.name }}</strong>
+                    <span class="ota-st-sub">ID: {{ pc.id }} • {{ pc.ipAddress || '127.0.0.1' }} • Specs: {{ pc.specs || 'Client PC' }}</span>
+                  </div>
+                </div>
+
+                <div class="ota-st-status">
+                  <span class="badge" [ngClass]="{'badge-success': pc.status === 'available', 'badge-primary': pc.status === 'in-use', 'badge-warning': pc.status === 'locked', 'badge-danger': pc.status === 'offline'}">
+                    {{ pc.status | uppercase }}
+                  </span>
+                  <span *ngIf="stationOtaStatus[pc.id]" class="ota-live-tag">
+                    {{ stationOtaStatus[pc.id] }}
+                  </span>
+                </div>
+
+                <div class="ota-st-action">
+                  <button
+                    class="btn btn-sm btn-primary"
+                    [disabled]="pc.status === 'offline' || isPushingOta"
+                    (click)="pushSingleClientUpdate(pc)"
+                  >
+                    <span>⚡ I-update Karon</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1070,6 +1178,145 @@ export interface StationDownloadState {
       opacity: 0.5;
       cursor: not-allowed;
     }
+
+    /* OTA Client Updater Styles */
+    .ota-release-card {
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 27, 75, 0.6) 100%);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 14px;
+      padding: 24px;
+      margin-top: 16px;
+    }
+    .ota-release-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .ota-release-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(6, 182, 212, 0.15);
+      border: 1px solid rgba(6, 182, 212, 0.4);
+      color: #38bdf8;
+      padding: 4px 12px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #06b6d4;
+      box-shadow: 0 0 8px #06b6d4;
+    }
+    .ota-ver {
+      font-size: 1.1rem;
+      font-weight: 800;
+      color: #fff;
+      background: #0284c7;
+      padding: 4px 12px;
+      border-radius: 8px;
+    }
+    .ota-release-details {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .ota-detail-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .ota-detail-item .label {
+      font-size: 0.78rem;
+      color: #64748b;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .ota-detail-item .val {
+      font-size: 0.92rem;
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+    .ota-release-note {
+      font-size: 0.85rem;
+      color: #94a3b8;
+      line-height: 1.5;
+      background: rgba(0, 0, 0, 0.25);
+      padding: 10px 14px;
+      border-radius: 8px;
+    }
+    .ota-stations-table {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .ota-station-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      padding: 14px 18px;
+      gap: 16px;
+    }
+    .ota-st-info {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex: 1;
+    }
+    .ota-st-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .ota-st-dot.online {
+      background: #10b981;
+      box-shadow: 0 0 8px #10b981;
+    }
+    .ota-st-dot.offline {
+      background: #ef4444;
+    }
+    .ota-st-names {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .ota-st-name {
+      font-size: 1rem;
+      color: #fff;
+    }
+    .ota-st-sub {
+      font-size: 0.78rem;
+      color: #64748b;
+    }
+    .ota-st-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .ota-live-tag {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    .ota-st-action {
+      display: flex;
+      align-items: center;
+    }
   `]
 })
 export class GameUpdaterComponent implements OnInit, OnDestroy {
@@ -1080,8 +1327,11 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
   private socketSub: (() => void) | null = null;
   private dlProgSub: (() => void) | null = null;
   private dlResSub: (() => void) | null = null;
+  private otaStatusSub: (() => void) | null = null;
 
-  activeMode: 'downloader' | 'games' = 'downloader';
+  activeMode: 'downloader' | 'games' | 'client-ota' = 'downloader';
+  isPushingOta = false;
+  stationOtaStatus: { [pcId: string]: string } = {};
 
   // --- Downloader State ---
   targetMode: 'all' | 'selected' = 'all';
@@ -1177,7 +1427,11 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
   isDispatching = false;
 
   statusNotice: string | null = null;
-  noticeType: 'success' | 'error' = 'success';
+  noticeType: 'success' | 'error' | 'info' | 'warn' = 'success';
+
+  get pcs(): PC[] {
+    return this.state.pcs || [];
+  }
 
   consoleLogs: Array<{ timestamp: Date; pcName: string; message: string; type: 'info' | 'success' | 'error' }> = [];
 
@@ -1284,6 +1538,32 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
         type: data.status === 'completed' ? 'success' : data.status === 'failed' ? 'error' : 'info'
       });
     });
+
+    // 4. Listen for Live OTA Client Update Status
+    this.otaStatusSub = this.adminState.apiClient.onSocketEvent('maintenance:client-update:status', (data: any) => {
+      if (!data?.pcId) return;
+      const pc = this.state.pcs?.find((p: PC) => p.id === data.pcId || p.identifier === data.pcId);
+      const name = pc ? pc.name : data.pcId;
+
+      let tag = 'Updating...';
+      if (data.status === 'downloading') {
+        tag = `Downloading (${data.percent || 50}%)`;
+      } else if (data.status === 'restarting') {
+        tag = 'Restarting app... 🔄';
+      } else if (data.status === 'failed') {
+        tag = `Failed ❌ (${data.error || 'Err'})`;
+      } else if (data.status === 'done') {
+        tag = 'Updated 🟢';
+      }
+      this.stationOtaStatus[data.pcId] = tag;
+
+      this.consoleLogs.unshift({
+        timestamp: new Date(),
+        pcName: name,
+        message: `[OTA Update] Station ${name}: ${tag}`,
+        type: data.status === 'failed' ? 'error' : 'info'
+      });
+    });
   }
 
   ngOnDestroy() {
@@ -1291,6 +1571,52 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
     if (this.socketSub) this.socketSub();
     if (this.dlProgSub) this.dlProgSub();
     if (this.dlResSub) this.dlResSub();
+    if (this.otaStatusSub) this.otaStatusSub();
+  }
+
+  async pushFleetClientUpdate() {
+    if (!confirm('I-push ang pinakabag-ong app.asar sa TANANG online stations karon? Mag-download ug mag-restart ang mga client.')) {
+      return;
+    }
+    this.isPushingOta = true;
+    this.statusNotice = '🚀 Gipadala ang OTA Client Update sa tanang online stations...';
+    this.noticeType = 'info';
+
+    try {
+      const res = await this.adminState.pushClientUpdate('all');
+      if (res.success) {
+        this.statusNotice = '✅ ' + res.message;
+        this.noticeType = 'success';
+      } else {
+        this.statusNotice = '⚠️ ' + res.message;
+        this.noticeType = 'warn';
+      }
+    } finally {
+      this.isPushingOta = false;
+    }
+  }
+
+  async pushSingleClientUpdate(pc: PC) {
+    if (!confirm(`I-push ang pinakabag-ong app.asar sa ${pc.name}? Mag-restart ang terminal.`)) {
+      return;
+    }
+    this.statusNotice = `🚀 Gipadala ang OTA Client Update sa ${pc.name}...`;
+    this.noticeType = 'info';
+    this.stationOtaStatus[pc.id] = 'Updating...';
+
+    const res = await this.adminState.pushClientUpdate(pc.id);
+    if (res.success) {
+      this.statusNotice = `✅ Nagsugod na ang pag-update sa ${pc.name}!`;
+      this.noticeType = 'success';
+    } else {
+      this.statusNotice = `⚠️ ${res.message}`;
+      this.noticeType = 'warn';
+      delete this.stationOtaStatus[pc.id];
+    }
+  }
+
+  refreshPcs() {
+    this.adminState.syncFromBackend();
   }
 
   get areAllSelected(): boolean {

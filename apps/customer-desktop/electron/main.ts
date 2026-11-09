@@ -1157,6 +1157,121 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
   });
 });
 
+// 12. OTA Client Updater: Download app.asar, write detached updater batch script, and restart
+async function applyClientUpdate(downloadUrl: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    let targetAsar = '';
+    if (process.resourcesPath) {
+      targetAsar = path.join(process.resourcesPath, 'app.asar');
+    }
+    if (!targetAsar || !fs.existsSync(targetAsar)) {
+      const exeDir = path.dirname(process.execPath);
+      const candidate1 = path.join(exeDir, 'resources', 'app.asar');
+      const candidate2 = path.join(process.cwd(), 'resources', 'app.asar');
+      const candidate3 = path.join(app.getAppPath(), '..', 'app.asar');
+      if (fs.existsSync(candidate1)) targetAsar = candidate1;
+      else if (fs.existsSync(candidate2)) targetAsar = candidate2;
+      else if (fs.existsSync(candidate3)) targetAsar = candidate3;
+      else targetAsar = path.join(process.resourcesPath || exeDir, 'resources', 'app.asar');
+    }
+
+    const updateDir = path.join(app.getPath('userData'), 'update');
+    if (!fs.existsSync(updateDir)) {
+      fs.mkdirSync(updateDir, { recursive: true });
+    }
+    const tempAsar = path.join(updateDir, 'app.asar.new');
+
+    console.log(`[OTA Updater] Starting OTA client update from: ${downloadUrl}`);
+    console.log(`[OTA Updater] Target app.asar path: ${targetAsar}`);
+
+    // Download file
+    const downloadPromise = (url: string): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        const httpModule = url.startsWith('https:') ? require('https') : require('http');
+        const req = httpModule.get(url, (res: any) => {
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            return downloadPromise(res.headers.location).then(resolve).catch(reject);
+          }
+          if (res.statusCode !== 200) {
+            return reject(new Error(`Download failed with HTTP ${res.statusCode}`));
+          }
+          const fileStream = fs.createWriteStream(tempAsar);
+          res.pipe(fileStream);
+          fileStream.on('finish', () => {
+            fileStream.close();
+            resolve();
+          });
+          fileStream.on('error', (err: any) => {
+            fs.unlink(tempAsar, () => {});
+            reject(err);
+          });
+        });
+        req.on('error', (err: any) => {
+          fs.unlink(tempAsar, () => {});
+          reject(err);
+        });
+      });
+    };
+
+    await downloadPromise(downloadUrl);
+
+    const stats = fs.statSync(tempAsar);
+    if (stats.size < 10000) {
+      throw new Error(`Downloaded app.asar is too small (${stats.size} bytes). Update aborted.`);
+    }
+
+    console.log(`[OTA Updater] Download complete (${stats.size} bytes). Preparing updater batch script...`);
+
+    const batchScriptPath = path.join(updateDir, 'apply_ota_update.bat');
+    const exePath = process.execPath;
+
+    const batchScript = `@echo off
+chcp 65001 >nul
+title Artemia Fleet Client Updater
+echo ========================================================
+echo  Artemia Fleet Client: Nag-apply sa pinakabag-ong update...
+echo ========================================================
+timeout /t 2 /nobreak >nul
+
+:retry_copy
+copy /y "${tempAsar}" "${targetAsar}" >nul 2>&1
+if errorlevel 1 (
+  timeout /t 1 /nobreak >nul
+  goto retry_copy
+)
+
+del /f /q "${tempAsar}" >nul 2>&1
+start "" "${exePath}"
+del /f /q "%~f0" >nul 2>&1
+exit
+`;
+
+    fs.writeFileSync(batchScriptPath, batchScript, 'utf8');
+
+    // Spawn detached updater batch script
+    const child = spawn('cmd.exe', ['/c', batchScriptPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false
+    });
+    child.unref();
+
+    console.log('[OTA Updater] Detached updater batch spawned. Exiting Electron...');
+    setTimeout(() => {
+      app.exit(0);
+    }, 600);
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('[OTA Updater] Error applying client update:', err);
+    return { success: false, error: err.message || String(err) };
+  }
+}
+
+ipcMain.handle('maintenance:apply-client-update', async (_event, downloadUrl: string) => {
+  return applyClientUpdate(downloadUrl);
+});
+
 // App Startup Lifecycle
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {

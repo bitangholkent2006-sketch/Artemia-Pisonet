@@ -41,6 +41,7 @@ export interface PisonetDesktopApi {
   onDownloadProgress: (callback: (data: any) => void) => void;
   onCleanAutoDone?: (callback: (data: any) => void) => void;
   sendRemoteInput: (payload: { type: string; xPercent?: number; yPercent?: number; x?: number; y?: number; key?: string; text?: string; delta?: number }) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
+  applyClientUpdate: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 const api: PisonetDesktopApi = {
@@ -77,7 +78,8 @@ const api: PisonetDesktopApi = {
   onCleanAutoDone: (callback) => {
     ipcRenderer.on('maintenance:clean:auto-done', (_event, data) => callback(data));
   },
-  sendRemoteInput: (payload) => ipcRenderer.invoke('maintenance:remote-input', payload)
+  sendRemoteInput: (payload) => ipcRenderer.invoke('maintenance:remote-input', payload),
+  applyClientUpdate: (downloadUrl: string) => ipcRenderer.invoke('maintenance:apply-client-update', downloadUrl)
 };
 
 contextBridge.exposeInMainWorld('pisonetDesktop', api);
