@@ -119,14 +119,6 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
                     {{ pc.status === 'offline' ? 'Online' : 'Offline' }}
                   </button>
                   <button
-                    *ngIf="pc.status === 'offline'"
-                    class="btn btn-sm btn-primary"
-                    [disabled]="pc.isPendingWake"
-                    (click)="handleWakeOnLan(pc)"
-                  >
-                    {{ pc.isPendingWake ? 'Pinging...' : '⚡ Send WOL' }}
-                  </button>
-                  <button
                     class="btn btn-sm btn-danger"
                     style="padding:4px 8px; font-size:0.75rem;"
                     (click)="handleDeletePc(pc)"
@@ -346,18 +338,5 @@ export class PcsComponent implements OnInit, OnDestroy {
     pc.status = next;
     pc.connectionState = next === 'available' ? 'connected' : 'disconnected';
     await this.adminState.togglePcStatus(pc.id, next);
-  }
-
-  async handleWakeOnLan(pc: PC) {
-    (pc as any).isPendingWake = true;
-    try {
-      await this.adminState.simulateWakeOnLan(pc.id);
-    } finally {
-      setTimeout(() => {
-        (pc as any).isPendingWake = false;
-        pc.status = 'available';
-        pc.connectionState = 'connected';
-      }, 1000);
-    }
   }
 }

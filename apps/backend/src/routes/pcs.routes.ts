@@ -141,29 +141,6 @@ pcRoutes.post('/verify-device', async (c) => {
   return c.json({ success: true, data: safePc });
 });
 
-// Trigger Wake-on-LAN (wakes station and sets status to available)
-pcRoutes.post('/:id/wol', requireStaff, async (c) => {
-  const staff = c.get('user');
-  const staffId = staff?.id || 'staff';
-  const id = c.req.param('id');
-  if (!id) {
-    return c.json({ success: false, message: 'PC station ID required' }, 400);
-  }
-  const pc = await PcService.getPcById(id);
-  if (!pc) {
-    return c.json({ success: false, message: 'PC station not found' }, 404);
-  }
-
-  // Wake station up: transition to available with fresh heartbeat and connected state
-  const updated = await PcService.togglePcStatus(id, 'available', staffId);
-
-  return c.json({
-    success: true,
-    message: `Wake-on-LAN packet broadcasted for ${pc.name} (${pc.macAddress}). Station is now online and available.`,
-    data: updated ? { id: updated.id, name: updated.name, status: updated.status } : null
-  });
-});
-
 // Send Announcement to All Terminals or Targeted PC (Staff or Admin)
 pcRoutes.post('/message', requireStaff, async (c) => {
   const staff = c.get('user');

@@ -11,6 +11,7 @@ import { connectToDatabase, disconnectDatabase, getCollections, isDatabaseConnec
 import { initSocketServer } from './socket/socket-server';
 import { SessionService } from './services/session.service';
 import { DailyReportEmailService } from './services/email-report.service';
+import { PcService } from './services/pc.service';
 
 // Route imports
 import { healthRoutes } from './routes/health.routes';
@@ -236,9 +237,10 @@ async function bootstrap() {
     console.warn('[Recovery] Warning during downtime recovery audit:', err);
   }
 
-  // 3. Start authoritative session expiration worker & Daily Email Scheduler
+  // 3. Start authoritative session expiration worker, station heartbeat watchdog & Daily Email Scheduler
   SessionService.startExpirationWorker();
   console.log('[SessionWorker] Drift-free expiration worker active.');
+  PcService.startHeartbeatWatchdog();
   DailyReportEmailService.startDailyScheduler();
 
   // 4. Start HTTP Server and bind to host & port
@@ -266,6 +268,7 @@ async function bootstrap() {
   const shutdown = async (signal: string) => {
     console.log(`[Shutdown] Received ${signal}. Starting graceful shutdown...`);
     SessionService.stopExpirationWorker();
+    PcService.stopHeartbeatWatchdog();
     DailyReportEmailService.stopDailyScheduler();
 
     server.close(async () => {

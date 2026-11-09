@@ -373,13 +373,11 @@ class StationMaintenanceAgent {
     const powerOverlay = document.getElementById('power-overlay');
     const powerTitle = document.getElementById('power-title');
     const powerSub = document.getElementById('power-sub');
-    const powerBtn = document.getElementById('power-btn-wake');
 
     if (powerOverlay && powerTitle && powerSub) {
       powerOverlay.classList.add('visible');
       powerTitle.innerText = '🔄 SYSTEM RESTART INITIATED';
       powerSub.innerText = 'Ang computer mag-reboot sa pipila ka segundo alang sa system maintenance...';
-      if (powerBtn) powerBtn.style.display = 'none';
     }
 
     this.playChime();
@@ -406,13 +404,11 @@ class StationMaintenanceAgent {
     const powerOverlay = document.getElementById('power-overlay');
     const powerTitle = document.getElementById('power-title');
     const powerSub = document.getElementById('power-sub');
-    const powerBtn = document.getElementById('power-btn-wake');
 
     if (powerOverlay && powerTitle && powerSub) {
       powerOverlay.classList.add('visible');
       powerTitle.innerText = '🛑 STATION POWERED OFF';
       powerSub.innerText = 'Ang kini nga computer gi-shutdown na sa operator.';
-      if (powerBtn) powerBtn.style.display = 'inline-flex';
     }
 
     if (desktopWindow.pisonetDesktop?.shutdownPC) {
@@ -1166,9 +1162,6 @@ class StationMaintenanceAgent {
       <div id="power-overlay" class="power-overlay">
         <div id="power-title" class="power-title">🛑 STATION POWERED OFF</div>
         <div id="power-sub" class="power-sub">Ang kini nga computer gi-shutdown na sa operator.</div>
-        <button id="power-btn-wake" class="btn-action" style="display:none; background:#0284c7; color:#fff;" onclick="window.location.reload()">
-          🔌 Power On Station (Wake Up)
-        </button>
       </div>
 
       <!-- NORMAL CLIENT TERMINAL VIEW -->

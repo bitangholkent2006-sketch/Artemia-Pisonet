@@ -1104,33 +1104,8 @@ export class PisonetStateService {
     return { success: true };
   }
 
-  public simulateWakeOnLan(pcId: string, staffId = 'staff-admin-01'): void {
-    const pc = this.state.pcs.find((p) => p.id === pcId);
-    if (!pc) return;
-
-    pc.isPendingWake = true;
-    this.emitState();
-
-    this.addAuditLog(
-      'PC_UPDATE',
-      `[DEMO WOL] Dispatched simulated Wake-on-LAN magic packet to ${pc.name} (${pc.macAddress})`,
-      staffId,
-      'staff',
-      pc.id,
-      'pc'
-    );
-
-    // Simulate wake-up handshake after 2 seconds
-    setTimeout(() => {
-      const target = this.state.pcs.find((p) => p.id === pcId);
-      if (target) {
-        target.isPendingWake = false;
-        target.status = 'available';
-        target.connectionState = 'connected';
-        target.lastHeartbeat = new Date().toISOString();
-        this.emitState();
-      }
-    }, 2000);
+  public simulateWakeOnLan(_pcId: string, _staffId = 'staff-admin-01'): void {
+    // Deprecated: Wake-on-LAN completely removed per business requirements
   }
 
   // -------------------------------------------------------------

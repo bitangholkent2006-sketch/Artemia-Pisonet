@@ -91,9 +91,6 @@ import { PC, PCStatus } from '@pisonet/shared';
           >
             📥 Download Client (.zip)
           </a>
-          <button class="btn btn-sm btn-primary" (click)="bulkWakeOnLan()">
-            ⚡ Wake-on-LAN All
-          </button>
           <button class="btn btn-sm btn-warning" (click)="bulkCleanJunk()" title="Wipe downloads, browser history/logins, and temp junk across all stations">
             🧹 Clean Slate (All PCs)
           </button>
@@ -314,17 +311,8 @@ import { PC, PCStatus } from '@pisonet/shared';
             <!-- If Offline -->
             <ng-container *ngIf="pc.status === 'offline'">
               <button
-                class="btn btn-sm btn-primary"
-                style="flex: 1;"
-                [disabled]="pc.isPendingWake"
-                (click)="handleWakeOnLan(pc)"
-              >
-                <span *ngIf="pc.isPendingWake">⚡ Waking PC...</span>
-                <span *ngIf="!pc.isPendingWake">⚡ Wake-on-LAN</span>
-              </button>
-              <button
                 class="btn btn-sm btn-success"
-                style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: var(--accent-emerald); font-weight: 700;"
+                style="flex: 1; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: var(--accent-emerald); font-weight: 700;"
                 (click)="toggleOnline(pc)"
               >
                 🔌 Set Online
@@ -1077,14 +1065,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   // Bulk Fleet Actions
-  async bulkWakeOnLan() {
-    const offlineUnits = this.state.pcs?.filter((p: PC) => p.status === 'offline') || [];
-    this.showNotice(`⚡ Gipadala ang Wake-on-LAN packet sa ${offlineUnits.length} offline units...`, 'info');
-    for (const p of offlineUnits) {
-      await this.handleWakeOnLan(p);
-    }
-  }
-
   async bulkCleanJunk() {
     this.showNotice('🧹 Nagpadala ug Clean Slate command (Downloads, Logins, Junk) sa TANANG PC stations...', 'info');
     await this.adminState.cleanTempFiles('all');
@@ -1116,20 +1096,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
     pc.connectionState = nextStatus === 'available' ? 'connected' : 'disconnected';
     this.showNotice(`🔌 Giusab ang status sa ${pc.name} ngadto sa ${nextStatus.toUpperCase()}.`, 'info');
     await this.adminState.togglePcStatus(pc.id, nextStatus);
-  }
-
-  async handleWakeOnLan(pc: PC) {
-    (pc as any).isPendingWake = true;
-    this.showNotice(`⚡ Gipadala ang Wake-on-LAN signal sa ${pc.name}...`, 'info');
-    try {
-      await this.adminState.simulateWakeOnLan(pc.id);
-    } finally {
-      setTimeout(() => {
-        (pc as any).isPendingWake = false;
-        pc.status = 'available';
-        pc.connectionState = 'connected';
-      }, 1000);
-    }
   }
 
   async cleanStationTemp(pc: PC) {

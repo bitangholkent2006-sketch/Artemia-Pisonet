@@ -7,9 +7,35 @@ import { PCStatus } from '@pisonet/shared';
 import { AuditService } from './audit.service';
 
 export class PcService {
+  private static watchdogInterval: NodeJS.Timeout | null = null;
+  public static readonly HEARTBEAT_TIMEOUT_MS = 15000; // 15 seconds without heartbeat = offline
+
   public static async listPcs(): Promise<DbPC[]> {
     const collections = getCollections();
-    return collections.pcs.find({}).sort({ id: 1 }).toArray();
+    const pcs = await collections.pcs.find({}).sort({ id: 1 }).toArray();
+    const now = Date.now();
+    const stalePcs: string[] = [];
+
+    // Dynamically evaluate offline state if a station hasn't checked in
+    pcs.forEach((pc) => {
+      if (pc.status !== 'offline') {
+        const lastHb = pc.lastHeartbeat ? new Date(pc.lastHeartbeat).getTime() : 0;
+        if (now - lastHb > PcService.HEARTBEAT_TIMEOUT_MS) {
+          pc.status = 'offline';
+          pc.connectionState = 'disconnected';
+          stalePcs.push(pc.id);
+        }
+      }
+    });
+
+    if (stalePcs.length > 0) {
+      collections.pcs.updateMany(
+        { id: { $in: stalePcs } },
+        { $set: { status: 'offline', connectionState: 'disconnected', updatedAt: new Date() } }
+      ).catch(() => {});
+    }
+
+    return pcs;
   }
 
   public static async getPcById(id: string): Promise<DbPC | null> {
@@ -284,5 +310,65 @@ export class PcService {
     await collections.pcs.deleteOne({ id: pcId });
     await AuditService.log('PC_DELETED', `Deleted PC terminal: ${pc.name} (${pc.identifier})`, staffId, 'Staff', 'staff', pcId, 'pc');
     return true;
+  }
+
+  /**
+   * Continuous Heartbeat Watchdog
+   * Checks every 5 seconds. If a PC has not sent a heartbeat for > 15 seconds
+   * (e.g. computer powered off, shut down, app closed, internet disconnected),
+   * immediately auto-pauses any active session to preserve customer time,
+   * sets the status to 'offline', and broadcasts real-time events to all dashboards.
+   */
+  public static startHeartbeatWatchdog(): void {
+    if (PcService.watchdogInterval) return;
+
+    PcService.watchdogInterval = setInterval(async () => {
+      try {
+        const collections = getCollections();
+        const threshold = new Date(Date.now() - PcService.HEARTBEAT_TIMEOUT_MS);
+        
+        const deadPcs = await collections.pcs.find({
+          status: { $ne: 'offline' },
+          $or: [
+            { lastHeartbeat: { $lt: threshold } },
+            { lastHeartbeat: { $exists: false } }
+          ]
+        }).toArray();
+
+        if (deadPcs.length === 0) return;
+
+        const { broadcastRealtimeEvent } = await import('../socket/socket-server');
+        const { SessionService } = await import('./session.service');
+
+        for (const pc of deadPcs) {
+          console.log(`[HeartbeatWatchdog] Station ${pc.name} (${pc.id}) missed heartbeat (>15s). Transitioning to OFFLINE.`);
+          
+          if (pc.activeSessionId) {
+            console.log(`[HeartbeatWatchdog] Auto-pausing session ${pc.activeSessionId} on offline station ${pc.name}`);
+            await SessionService.pauseSession(pc.activeSessionId, 'system', 'system', undefined, undefined, 'offline');
+          }
+
+          await collections.pcs.updateOne(
+            { _id: pc._id },
+            { $set: { status: 'offline', connectionState: 'disconnected', updatedAt: new Date() } }
+          );
+
+          broadcastRealtimeEvent('pc:status-changed', { pcId: pc.id, status: 'offline', activeCustomerName: null });
+          broadcastRealtimeEvent('pc:status', { pcId: pc.id, status: 'offline' });
+          broadcastRealtimeEvent('pc:updated', { ...pc, status: 'offline', connectionState: 'disconnected' }, 'staff');
+        }
+      } catch (err) {
+        console.warn('[HeartbeatWatchdog] Watchdog cycle error:', err);
+      }
+    }, 5000);
+
+    console.log('[HeartbeatWatchdog] Automated station offline detection active (15s threshold, 5s poll).');
+  }
+
+  public static stopHeartbeatWatchdog(): void {
+    if (PcService.watchdogInterval) {
+      clearInterval(PcService.watchdogInterval);
+      PcService.watchdogInterval = null;
+    }
   }
 }

@@ -495,23 +495,6 @@ export class AdminStateService {
     }
   }
 
-  public async simulateWakeOnLan(pcId: string): Promise<{ success: boolean; message?: string }> {
-    try {
-      const pc = this.state.pcs.find((p) => p.id === pcId);
-      if (pc) {
-        pc.status = 'available';
-        pc.connectionState = 'connected';
-        pc.lastHeartbeat = new Date().toISOString();
-      }
-      const res = await this.apiClient.triggerWol(pcId);
-      await this.syncFromBackend();
-      return { success: true, message: res?.message || 'Station is now Online & Available.' };
-    } catch (err: any) {
-      await this.syncFromBackend();
-      return { success: false, message: err?.message || 'Wake-on-LAN request failed.' };
-    }
-  }
-
   public async deletePc(pcId: string): Promise<{ success: boolean; error?: string }> {
     try {
       const res = await this.apiClient.deletePc(pcId);

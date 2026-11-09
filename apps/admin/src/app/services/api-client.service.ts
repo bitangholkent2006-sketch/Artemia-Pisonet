@@ -213,12 +213,6 @@ export class ApiClientService {
     });
   }
 
-  public async triggerWol(pcId: string) {
-    return this.request<{ success: boolean; message: string }>(`/api/v1/pcs/${pcId}/wol`, {
-      method: 'POST'
-    });
-  }
-
   public async deletePc(pcId: string) {
     return this.request<{ success: boolean; message: string }>(`/api/v1/pcs/${pcId}`, {
       method: 'DELETE'
