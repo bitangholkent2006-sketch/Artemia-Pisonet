@@ -382,6 +382,23 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.emit('maintenance:screen:res', payload);
     });
 
+    // Remote Desktop Input & Mouse/Keyboard Control Relays
+    authSocket.on('maintenance:remote-input:req', (payload: any) => {
+      if (payload.pcId) {
+        const targetId = payload.pcId.toLowerCase();
+        io?.to(`pc:${targetId}`).emit('agent:remote-input:req', payload);
+        if (!targetId.startsWith('pc-')) {
+          io?.to(`pc:pc-${targetId}`).emit('agent:remote-input:req', payload);
+        }
+        io?.emit('agent:remote-input:req', payload);
+      }
+    });
+
+    authSocket.on('agent:remote-input:res', (payload: any) => {
+      io?.to('staff').emit('maintenance:remote-input:res', payload);
+      io?.emit('maintenance:remote-input:res', payload);
+    });
+
     // Active Session Lease Renewal Heartbeat
     authSocket.on('session:heartbeat', async (data: { sessionId: string }) => {
       if (data?.sessionId) {

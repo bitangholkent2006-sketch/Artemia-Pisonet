@@ -30,6 +30,7 @@ interface WindowWithDesktop extends Window {
     getHardwareHealth?: () => Promise<{ cpuModel: string; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string }>;
     downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
     onDownloadProgress?: (callback: (data: any) => void) => void;
+    sendRemoteInput?: (payload: any) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
   };
 }
 
@@ -831,6 +832,21 @@ class StationMaintenanceAgent {
         this.socket?.emit('agent:download:res', {
           reqId: payload.reqId,
           pcId: payload.targetPcId || this.pcId,
+          ...res,
+          timestamp: new Date().toISOString()
+        });
+      });
+
+      // 10. Remote Desktop Input Simulation Relay (Mouse clicks & Keyboard typing)
+      this.socket.on('agent:remote-input:req', async (payload: { reqId: string; pcId?: string; targetPcId?: string; type: string; xPercent?: number; yPercent?: number; x?: number; y?: number; key?: string; text?: string; delta?: number }) => {
+        if (!this.matchesThisStation(payload.pcId) && !this.matchesThisStation(payload.targetPcId)) return;
+        let res: any = { success: false, error: 'Remote input not supported on web client' };
+        if (desktopWindow.pisonetDesktop?.sendRemoteInput) {
+          res = await desktopWindow.pisonetDesktop.sendRemoteInput(payload);
+        }
+        this.socket?.emit('agent:remote-input:res', {
+          reqId: payload.reqId,
+          pcId: this.pcId,
           ...res,
           timestamp: new Date().toISOString()
         });

@@ -1,8 +1,8 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage, screen } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { exec, spawn } from 'child_process';
+import { exec, spawn, execFile } from 'child_process';
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -574,6 +574,88 @@ ipcMain.handle('maintenance:capture-screen', async () => {
   } catch (err: any) {
     return { base64Image: '', error: err?.message || 'Screenshot failed.' };
   }
+});
+
+// 8.1 Remote Desktop Input Simulator (Mouse clicks, double-clicks, right-clicks, typing, shortcuts)
+ipcMain.handle('maintenance:remote-input', async (_event, payload: {
+  type: string;
+  xPercent?: number;
+  yPercent?: number;
+  x?: number;
+  y?: number;
+  key?: string;
+  text?: string;
+  delta?: number;
+}) => {
+  return new Promise((resolve) => {
+    try {
+      const type = (payload.type || 'click').toLowerCase();
+      let targetX = payload.x || 0;
+      let targetY = payload.y || 0;
+
+      if (payload.xPercent != null && payload.yPercent != null) {
+        const primary = screen.getPrimaryDisplay();
+        const { width, height } = primary.bounds || primary.size;
+        targetX = Math.max(0, Math.min(width - 1, Math.round(width * (payload.xPercent / 100))));
+        targetY = Math.max(0, Math.min(height - 1, Math.round(height * (payload.yPercent / 100))));
+      }
+
+      // Locate RemoteInput.exe helper
+      const possiblePaths = [
+        path.join(process.resourcesPath, 'native', 'RemoteInput.exe'),
+        path.join(__dirname, '../../native/RemoteInput.exe'),
+        path.join(__dirname, '../native/RemoteInput.exe'),
+        path.join(process.cwd(), 'resources', 'native', 'RemoteInput.exe'),
+        path.join(process.cwd(), 'apps', 'customer-desktop', 'native', 'RemoteInput.exe')
+      ];
+
+      const helperExe = possiblePaths.find(p => fs.existsSync(p));
+
+      if (helperExe && process.platform === 'win32') {
+        let args: string[] = [];
+        if (type === 'click' || type === 'dclick' || type === 'rclick' || type === 'move' || type === 'down' || type === 'up') {
+          args = [type, String(targetX), String(targetY)];
+        } else if (type === 'scroll') {
+          args = ['scroll', String(payload.delta || 120)];
+        } else if (type === 'key') {
+          args = ['key', payload.key || '{ENTER}'];
+        } else if (type === 'text') {
+          args = ['text', payload.text || ''];
+        }
+
+        execFile(helperExe, args, { windowsHide: true }, (err) => {
+          if (err) {
+            resolve({ success: false, error: err.message });
+          } else {
+            resolve({ success: true, x: targetX, y: targetY });
+          }
+        });
+      } else if (process.platform === 'win32') {
+        // Fallback to PowerShell
+        let psCmd = '';
+        if (type === 'click' || type === 'rclick') {
+          const downFlag = type === 'rclick' ? '0x08' : '0x02';
+          const upFlag = type === 'rclick' ? '0x10' : '0x04';
+          psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); }'; [M]::SetCursorPos(${targetX}, ${targetY}); [M]::mouse_event(${downFlag}, 0, 0, 0, 0); [M]::mouse_event(${upFlag}, 0, 0, 0, 0);`;
+        } else if (type === 'text' || type === 'key') {
+          const send = type === 'text' ? payload.text : payload.key;
+          psCmd = `(New-Object -ComObject WScript.Shell).SendKeys('${(send || '').replace(/'/g, "''")}');`;
+        }
+
+        if (psCmd) {
+          exec(`powershell.exe -NoProfile -Command "${psCmd}"`, (err) => {
+            resolve({ success: !err, x: targetX, y: targetY });
+          });
+        } else {
+          resolve({ success: true });
+        }
+      } else {
+        resolve({ success: false, error: 'Platform not supported' });
+      }
+    } catch (err: any) {
+      resolve({ success: false, error: err?.message || 'Remote input error' });
+    }
+  });
 });
 
 // 9. Get Disk Drives Usage

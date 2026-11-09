@@ -702,6 +702,34 @@ export class AdminStateService {
     });
   }
 
+  public sendRemoteInput(payload: {
+    pcId: string;
+    type: 'click' | 'dclick' | 'rclick' | 'move' | 'down' | 'up' | 'scroll' | 'key' | 'text';
+    xPercent?: number;
+    yPercent?: number;
+    delta?: number;
+    key?: string;
+    text?: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      const reqId = 'inp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve({ success: true });
+      }, 3000);
+
+      const cleanup = this.apiClient.onSocketEvent('maintenance:remote-input:res', (data: any) => {
+        if (data.reqId === reqId || data.pcId?.toLowerCase() === payload.pcId.toLowerCase()) {
+          clearTimeout(timer);
+          cleanup();
+          resolve({ success: data.success ?? true, error: data.error });
+        }
+      });
+
+      this.apiClient.emitSocket('maintenance:remote-input:req', { reqId, ...payload });
+    });
+  }
+
   // -------------------------------------------------------------
   // Fleet Management
   // -------------------------------------------------------------
