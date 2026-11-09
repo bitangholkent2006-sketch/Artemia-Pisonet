@@ -53,11 +53,12 @@ function fetchHardwareInfo() {
   });
 }
 
-// Ensure any old registry lock policies are removed on launch
+// Ensure any old registry lock policies are removed on launch, and cancel any accidental shutdown
 if (process.platform === 'win32') {
   try {
     exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" /v "NoWinKeys" /f', () => {});
     exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" /v "DisableTaskMgr" /f', () => {});
+    exec('shutdown /a', () => {});
   } catch {}
 }
 

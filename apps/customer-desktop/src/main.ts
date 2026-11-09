@@ -257,6 +257,7 @@ class StationMaintenanceAgent {
   }
 
   constructor() {
+    desktopWindow.pisonetDesktop?.cancelShutdown?.().catch?.(() => {});
     this.setupStationIdentity();
     this.renderUI();
     this.initSocket();
@@ -327,8 +328,10 @@ class StationMaintenanceAgent {
           this.logMessage(`Station matched in Fleet Database: ID=${current.id}, Name=${this.pcName}`);
           if (current.status === 'locked') {
             this.setLockedState(true);
-          } else if (current.status === 'offline') {
-            this.handleShutdown();
+          } else {
+            this.setLockedState(false);
+            this.isPoweredOff = false;
+            document.getElementById('power-overlay')?.classList.remove('visible');
           }
         }
       }
@@ -394,9 +397,10 @@ class StationMaintenanceAgent {
     }
   }
 
-  public handleShutdown() {
+  public handleShutdown(isExplicitCommand: boolean = false) {
+    if (!isExplicitCommand) return;
     this.isPoweredOff = true;
-    this.logMessage('Shutdown command received. Station powered off.');
+    this.logMessage('Shutdown command received from Admin Operator.');
     const powerOverlay = document.getElementById('power-overlay');
     const powerTitle = document.getElementById('power-title');
     const powerSub = document.getElementById('power-sub');
@@ -405,12 +409,12 @@ class StationMaintenanceAgent {
     if (powerOverlay && powerTitle && powerSub) {
       powerOverlay.classList.add('visible');
       powerTitle.innerText = '🛑 STATION POWERED OFF';
-      powerSub.innerText = 'Ang kini nga computer gi-shutdown na sa operator o offline.';
+      powerSub.innerText = 'Ang kini nga computer gi-shutdown na sa operator.';
       if (powerBtn) powerBtn.style.display = 'inline-flex';
     }
 
     if (desktopWindow.pisonetDesktop?.shutdownPC) {
-      desktopWindow.pisonetDesktop.shutdownPC(10);
+      desktopWindow.pisonetDesktop.shutdownPC(15);
     }
   }
 
@@ -535,7 +539,7 @@ class StationMaintenanceAgent {
         } else if (payload.action === 'restart') {
           this.handleRestart();
         } else if (payload.action === 'shutdown') {
-          this.handleShutdown();
+          this.handleShutdown(true);
         }
       });
 
@@ -543,9 +547,7 @@ class StationMaintenanceAgent {
       this.socket.on('pc:status', (data: { pcId: string; status: string }) => {
         if (this.matchesThisStation(data.pcId)) {
           this.setLockedState(data.status === 'locked');
-          if (data.status === 'offline') {
-            this.handleShutdown();
-          } else if (this.isPoweredOff && data.status === 'available') {
+          if (this.isPoweredOff && (data.status === 'available' || data.status === 'in-use')) {
             this.isPoweredOff = false;
             document.getElementById('power-overlay')?.classList.remove('visible');
           }
