@@ -873,8 +873,9 @@ class StationMaintenanceAgent {
         } catch {}
       }
 
+      const activeId = this.dbPcId || this.pcId;
       const telemetryPayload = {
-        pcId: this.pcId,
+        pcId: activeId,
         ...this.telemetry,
         diskUsage: this.telemetry.diskUsage,
         timestamp: new Date().toISOString()
@@ -883,7 +884,7 @@ class StationMaintenanceAgent {
       this.socket.emit('pc:telemetry', telemetryPayload);
 
       this.socket.emit('pc:heartbeat', {
-        pcId: this.pcId,
+        pcId: activeId,
         telemetry: {
           ...this.telemetry,
           diskUsage: this.telemetry.diskUsage

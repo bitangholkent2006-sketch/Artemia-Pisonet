@@ -179,8 +179,20 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
             if (data.telemetry.ssdModel != null) updateFields.ssdModel = data.telemetry.ssdModel;
             if (data.telemetry.ssdStatus != null) updateFields.ssdStatus = data.telemetry.ssdStatus;
 
-            await collections.pcs.updateOne({ id: targetId }, { $set: updateFields });
-            broadcastRealtimeEvent('pc:telemetry', { pcId: targetId, ...data.telemetry, diskUsage }, 'staff');
+            const cleanIdentifier = String(targetId).trim().toUpperCase();
+            const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+            const targetFilter = {
+              $or: [
+                { id: targetId },
+                { id: cleanId },
+                { id: `pc-${cleanId}` },
+                { identifier: cleanIdentifier },
+                { name: cleanIdentifier }
+              ]
+            };
+            const updatedDoc = await collections.pcs.findOneAndUpdate(targetFilter, { $set: updateFields }, { returnDocument: 'after' });
+            const finalPcId = (updatedDoc as any)?.value?.id || targetId;
+            broadcastRealtimeEvent('pc:telemetry', { pcId: finalPcId, ...data.telemetry, diskUsage }, 'staff');
           } catch {}
         }
       }
@@ -207,8 +219,20 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
           if (data.ssdModel != null) updateFields.ssdModel = data.ssdModel;
           if (data.ssdStatus != null) updateFields.ssdStatus = data.ssdStatus;
 
-          await collections.pcs.updateOne({ id: targetId }, { $set: updateFields });
-          broadcastRealtimeEvent('pc:telemetry', { pcId: targetId, ...data, diskUsage }, 'staff');
+          const cleanIdentifier = String(targetId).trim().toUpperCase();
+          const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+          const targetFilter = {
+            $or: [
+              { id: targetId },
+              { id: cleanId },
+              { id: `pc-${cleanId}` },
+              { identifier: cleanIdentifier },
+              { name: cleanIdentifier }
+            ]
+          };
+          const updatedDoc = await collections.pcs.findOneAndUpdate(targetFilter, { $set: updateFields }, { returnDocument: 'after' });
+          const finalPcId = (updatedDoc as any)?.value?.id || targetId;
+          broadcastRealtimeEvent('pc:telemetry', { pcId: finalPcId, ...data, diskUsage }, 'staff');
         } catch {}
       }
     });
@@ -376,7 +400,17 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
             try {
               const { getCollections } = await import('../database/connection');
               const collections = getCollections();
-              const pc = await collections.pcs.findOne({ id: targetPcId });
+              const cleanIdentifier = String(targetPcId).trim().toUpperCase();
+              const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+              const pc = await collections.pcs.findOne({
+                $or: [
+                  { id: targetPcId },
+                  { id: cleanId },
+                  { id: `pc-${cleanId}` },
+                  { identifier: cleanIdentifier },
+                  { name: cleanIdentifier }
+                ]
+              });
               if (pc) {
                 // If PC was toggled by staff in the last 10 seconds, preserve the staff action
                 const recentlyUpdated = pc.updatedAt && (Date.now() - new Date(pc.updatedAt).getTime() < 10000);
@@ -390,11 +424,11 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
                   await SessionService.pauseSession(pc.activeSessionId, 'system', 'system', undefined, undefined, 'offline');
                 } else {
                   await collections.pcs.updateOne(
-                    { id: targetPcId },
+                    { _id: pc._id },
                     { $set: { connectionState: 'disconnected', status: 'offline', updatedAt: new Date() } }
                   );
-                  broadcastRealtimeEvent('pc:status-changed', { pcId: targetPcId, status: 'offline', activeCustomerName: null });
-                  broadcastRealtimeEvent('pc:status', { pcId: targetPcId, status: 'offline' });
+                  broadcastRealtimeEvent('pc:status-changed', { pcId: pc.id, status: 'offline', activeCustomerName: null });
+                  broadcastRealtimeEvent('pc:status', { pcId: pc.id, status: 'offline' });
                   broadcastRealtimeEvent('pc:updated', { ...pc, status: 'offline', connectionState: 'disconnected' });
                 }
               }

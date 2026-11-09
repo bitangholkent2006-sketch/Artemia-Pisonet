@@ -221,7 +221,17 @@ export class PcService {
   ): Promise<void> {
     const collections = getCollections();
     const now = new Date();
-    let pc = await collections.pcs.findOne({ id: pcId });
+    const cleanIdentifier = pcId.trim().toUpperCase();
+    const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+    let pc = await collections.pcs.findOne({
+      $or: [
+        { id: pcId },
+        { id: cleanId },
+        { id: `pc-${cleanId}` },
+        { identifier: cleanIdentifier },
+        { name: cleanIdentifier }
+      ]
+    });
     if (!pc) {
       // Auto-register newly connected station automatically
       await PcService.autoDiscoverOrRegisterPc(pcId, pcId.toUpperCase(), ipAddress);
@@ -243,13 +253,13 @@ export class PcService {
       statusChanged = true;
     }
 
-    await collections.pcs.updateOne({ id: pcId }, { $set: updates });
+    await collections.pcs.updateOne({ _id: pc._id }, { $set: updates });
 
     if (statusChanged) {
       try {
         const { broadcastRealtimeEvent } = await import('../socket/socket-server');
-        broadcastRealtimeEvent('pc:status', { pcId, status: newStatus });
-        broadcastRealtimeEvent('pc:status-changed', { pcId, status: newStatus, activeCustomerName: pc.activeCustomerName });
+        broadcastRealtimeEvent('pc:status', { pcId: pc.id, status: newStatus });
+        broadcastRealtimeEvent('pc:status-changed', { pcId: pc.id, status: newStatus, activeCustomerName: pc.activeCustomerName });
         broadcastRealtimeEvent('pc:updated', { ...pc, ...updates, status: newStatus, connectionState: 'connected' });
       } catch {}
     }
