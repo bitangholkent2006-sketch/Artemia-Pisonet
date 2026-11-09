@@ -19,7 +19,7 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
             <span class="nav-badge">{{ state.pcs.length }} Configured</span>
           </h2>
           <p style="font-size:0.82rem; color:var(--text-dim); margin-top:2px;">
-            Hardware identifiers, connection status telemetry, and simulated Wake-on-LAN controls.
+            Hardware identifiers, real-time connection status telemetry, and fleet station controls.
           </p>
         </div>
 
