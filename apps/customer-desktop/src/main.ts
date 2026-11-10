@@ -32,7 +32,7 @@ interface WindowWithDesktop extends Window {
     // Maintenance Native Bridge
     executeCommand: (cmd: string, type: 'powershell' | 'cmd') => Promise<{ output: string; exitCode: number; error?: string }>;
     cleanTemp: () => Promise<{ deletedBytes: number; cleanedPaths: string[]; error?: string }>;
-    systemRefresh?: (options?: { wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean }) => Promise<{ success: boolean; deletedBytes: number; uninstalledCount: number; cleanedTargets: string[]; error?: string }>;
+    systemRefresh?: (options?: { wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean }) => Promise<{ success: boolean; deletedBytes: number; uninstalledCount: number; cleanedTargets: string[]; deletedApps?: string[]; deletedFiles?: string[]; totalDeletedFiles?: number; skippedItems?: string[]; isElevated?: boolean; error?: string }>;
     updateGame: (gameId: string, cmd?: string) => Promise<{ status: string; log: string }>;
     listFiles: (targetPath: string) => Promise<{ entries: any[]; error?: string }>;
     deletePath: (targetPath: string) => Promise<{ success: boolean; error?: string }>;
@@ -53,7 +53,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.15';
+const CLIENT_AGENT_VERSION = '1.0.16';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -866,7 +866,7 @@ class StationMaintenanceAgent {
           return;
         }
         this.logMessage('[System Refresh] Executing deep wipe of user files & 3rd-party apps/games (keeping system & Artemia)...');
-        let res: { success: boolean; deletedBytes: number; uninstalledCount: number; cleanedTargets: string[]; error?: string };
+        let res: { success: boolean; deletedBytes: number; uninstalledCount: number; cleanedTargets: string[]; deletedApps?: string[]; deletedFiles?: string[]; totalDeletedFiles?: number; skippedItems?: string[]; isElevated?: boolean; error?: string };
         if (desktopWindow.pisonetDesktop?.systemRefresh) {
           res = await desktopWindow.pisonetDesktop.systemRefresh({
             wipeUserFiles: payload.wipeUserFiles,
@@ -874,10 +874,10 @@ class StationMaintenanceAgent {
             wipeOtherDrives: payload.wipeOtherDrives
           });
         } else {
-          res = { success: false, deletedBytes: 0, uninstalledCount: 0, cleanedTargets: [], error: 'Desktop runtime required' };
+          res = { success: false, deletedBytes: 0, uninstalledCount: 0, cleanedTargets: [], deletedApps: [], deletedFiles: [], totalDeletedFiles: 0, skippedItems: [], error: 'Desktop runtime required' };
         }
         const freedMb = (res.deletedBytes / (1024 * 1024)).toFixed(1);
-        this.logMessage(`[System Refresh] Done. Freed ${freedMb} MB, uninstalled ${res.uninstalledCount} apps.`);
+        this.logMessage(`[System Refresh] Done. Freed ${freedMb} MB, removed ${res.deletedApps?.length ?? res.uninstalledCount} apps, ${res.totalDeletedFiles ?? 0} files.`);
         this.showToast(`♻️ System Refresh Complete: Freed ${freedMb} MB!`, res.success ? 'success' : 'error', 6);
         await this.refreshHardwareHealth();
 
@@ -889,6 +889,11 @@ class StationMaintenanceAgent {
           deletedBytes: res.deletedBytes,
           uninstalledCount: res.uninstalledCount,
           cleanedTargets: res.cleanedTargets,
+          deletedApps: res.deletedApps || [],
+          deletedFiles: res.deletedFiles || [],
+          totalDeletedFiles: res.totalDeletedFiles ?? 0,
+          skippedItems: res.skippedItems || [],
+          isElevated: res.isElevated,
           error: res.error,
           timestamp: new Date().toISOString()
         });

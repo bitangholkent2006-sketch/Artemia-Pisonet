@@ -1357,6 +1357,11 @@ export interface SystemRefreshResult {
   deletedBytes: number;
   uninstalledCount: number;
   cleanedTargets: string[];
+  deletedApps?: string[];
+  deletedFiles?: string[];
+  totalDeletedFiles?: number;
+  skippedItems?: string[];
+  isElevated?: boolean;
   error?: string;
 }
 
@@ -1369,6 +1374,10 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
       deletedBytes: 0,
       uninstalledCount: 0,
       cleanedTargets: [],
+      deletedApps: [],
+      deletedFiles: [],
+      totalDeletedFiles: 0,
+      skippedItems: [],
       error: 'System Refresh is already running.'
     });
   }
@@ -1383,7 +1392,11 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
       success: true,
       deletedBytes: 0,
       uninstalledCount: 0,
-      cleanedTargets: ['Dry-run verified (no targets selected)']
+      cleanedTargets: ['Dry-run verified (no targets selected)'],
+      deletedApps: [],
+      deletedFiles: [],
+      totalDeletedFiles: 0,
+      skippedItems: []
     });
   }
 
@@ -1393,7 +1406,11 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
       success: true,
       deletedBytes: 0,
       uninstalledCount: 0,
-      cleanedTargets: ['Non-Windows simulation']
+      cleanedTargets: ['Non-Windows simulation'],
+      deletedApps: [],
+      deletedFiles: [],
+      totalDeletedFiles: 0,
+      skippedItems: []
     });
   }
 
@@ -1404,9 +1421,14 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
     const psScript = `
       $ProgressPreference = 'SilentlyContinue'
       $ErrorActionPreference = 'SilentlyContinue'
-      $totalBytes = 0
+      $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+      $totalBytes = [int64]0
       $uninstalledCount = 0
+      $totalDeletedFiles = 0
       $cleanedTargets = [System.Collections.Generic.List[string]]::new()
+      $deletedApps = [System.Collections.Generic.List[string]]::new()
+      $deletedFiles = [System.Collections.Generic.List[string]]::new()
+      $skippedItems = [System.Collections.Generic.List[string]]::new()
       $protectDirs = @('${exeDir}'.ToLower(), '${artemiaData}'.ToLower(), '${artemiaDot}'.ToLower())
 
       function IsProtectedPath([string]$fullPath) {
@@ -1418,13 +1440,63 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
         return $false
       }
 
+      function Format-Size([int64]$b) {
+        if ($b -ge 1GB) { return ([Math]::Round($b / 1GB, 2).ToString() + ' GB') }
+        if ($b -ge 1MB) { return ([Math]::Round($b / 1MB, 1).ToString() + ' MB') }
+        if ($b -ge 1KB) { return ([Math]::Round($b / 1KB, 0).ToString() + ' KB') }
+        return ($b.ToString() + ' B')
+      }
+
+      function Add-DeletedApp([string]$name) {
+        if ($name -and $deletedApps.Count -lt 120 -and -not $deletedApps.Contains($name)) {
+          $deletedApps.Add($name)
+        }
+      }
+
+      function Add-DeletedFile([string]$label) {
+        $script:totalDeletedFiles++
+        if ($label -and $deletedFiles.Count -lt 180) {
+          $deletedFiles.Add($label)
+        }
+      }
+
+      function Add-Skipped([string]$label) {
+        if ($label -and $skippedItems.Count -lt 60 -and -not $skippedItems.Contains($label)) {
+          $skippedItems.Add($label)
+        }
+      }
+
+      function Remove-TargetQuiet([object]$item, [string]$kind) {
+        try {
+          $sizeBytes = [int64]0
+          if (-not $item.PSIsContainer) {
+            $sizeBytes = [int64]$item.Length
+          } else {
+            $sum = (Get-ChildItem $item.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+            if ($sum) { $sizeBytes = [int64]$sum }
+          }
+          Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
+          $script:totalBytes += $sizeBytes
+          if ($kind -eq 'app') {
+            $script:uninstalledCount++
+            Add-DeletedApp ($item.Name + ' (' + (Format-Size $sizeBytes) + ')')
+          } else {
+            Add-DeletedFile ($item.FullName + ' (' + (Format-Size $sizeBytes) + ')')
+          }
+          return $true
+        } catch {
+          Add-Skipped ($item.FullName + ': ' + $_.Exception.Message)
+          return $false
+        }
+      }
+
       ${wipeUserFiles ? `
-      # Close web browsers before clearing profiles
+      # Close web browsers silently before clearing profiles
       try { Stop-Process -Name chrome, msedge, brave, firefox, opera, iexplore -Force -ErrorAction SilentlyContinue } catch {}
       ` : ''}
 
       ${wipeApps ? `
-      # Close 3rd-party desktop/game processes ONLY (strictly skip OS, drivers, Artemia, Dev IDEs & elevated system processes without accessible Path)
+      # Close 3rd-party desktop/game processes ONLY (never kill OS, drivers, Artemia, Dev IDEs, or inaccessible system processes)
       $keepProcs = @('artemia customer terminal', 'artemiakiosklock_v2', 'explorer', 'svchost', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'smss', 'dwm', 'sihost', 'ctfmon', 'runtimebroker', 'searchhost', 'startmenuexperiencehost', 'shellexperiencehost', 'taskhostw', 'audiodg', 'conhost', 'powershell', 'wscript', 'cscript', 'cmd', 'antigravity', 'code', 'node')
       Get-Process | ForEach-Object {
         try {
@@ -1437,97 +1509,92 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
           Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
         } catch {}
       }
-      ` : ''}
 
-      ${wipeApps ? `
-      # 1. Silently uninstall 3rd-party Windows desktop programs (preserve Windows updates, Redistributables, Drivers, Artemia)
-      $uninstKeys = @(
-        'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
-        'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
-        'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
-      )
-      $apps = Get-ItemProperty $uninstKeys -ErrorAction SilentlyContinue | Where-Object {
-        $_.DisplayName -and
-        $_.SystemComponent -ne 1 -and
-        $_.DisplayName -notmatch 'Microsoft Visual C\\+\\+|\\.NET|DirectX|Windows SDK|Update for|Security Update|NVIDIA|AMD Software|Radeon|Intel\\(R\\)|Realtek|Artemia'
-      }
-      foreach ($a in $apps) {
-        try {
-          $cmdStr = if ($a.QuietUninstallString) { $a.QuietUninstallString } else { $a.UninstallString }
-          if (-not $cmdStr) { continue }
-          if ($cmdStr -match 'msiexec' -and $cmdStr -match '\\{[A-Fa-f0-9-]+\\}') {
-            $guid = $matches[0]
-            $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList "/x $guid /qn /norestart" -PassThru -WindowStyle Hidden
-            if ($p -and -not $p.WaitForExit(20000)) { try { $p.Kill() } catch {} }
-            $uninstalledCount++
-          } elseif ($a.QuietUninstallString) {
-            $p = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/c ' + $a.QuietUninstallString) -PassThru -WindowStyle Hidden
-            if ($p -and -not $p.WaitForExit(20000)) { try { $p.Kill() } catch {} }
-            $uninstalledCount++
-          }
-        } catch {}
+      # 1. Silent MSI uninstall ONLY when elevated (so ZERO UAC / GUI prompts EVER appear on PCs!)
+      if ($isAdmin) {
+        $uninstKeys = @(
+          'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+          'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+          'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
+        )
+        $apps = Get-ItemProperty $uninstKeys -ErrorAction SilentlyContinue | Where-Object {
+          $_.DisplayName -and
+          $_.SystemComponent -ne 1 -and
+          $_.DisplayName -notmatch 'Microsoft Visual C\\+\\+|\\.NET|DirectX|Windows SDK|Update for|Security Update|NVIDIA|AMD Software|Radeon|Intel\\(R\\)|Realtek|Artemia'
+        }
+        foreach ($a in $apps) {
+          try {
+            $cmdStr = if ($a.QuietUninstallString) { $a.QuietUninstallString } else { $a.UninstallString }
+            if (-not $cmdStr) { continue }
+            if ($cmdStr -match 'msiexec' -and $cmdStr -match '\\{[A-Fa-f0-9-]+\\}') {
+              $guid = $matches[0]
+              $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList "/x $guid /qn /norestart REBOOT=ReallySuppress" -PassThru -WindowStyle Hidden
+              if ($p -and -not $p.WaitForExit(20000)) { try { $p.Kill() } catch {} }
+              if ($p -and $p.ExitCode -eq 0) {
+                $uninstalledCount++
+                Add-DeletedApp $a.DisplayName
+              }
+            }
+          } catch {}
+        }
       }
 
-      # 2. Remove remaining 3rd-party app/game folders inside Program Files, ProgramData & custom C:\\ folders
-      $systemKeepRegex = '^(microsoft.*|windows.*|common files|internet explorer|reference assemblies|msbuild|modularity|modelfoundry|nvidia.*|amd|ati technologies|intel.*|realtek.*|vulkan.*|package cache|regid\\..*|dotnet|powerShell|artemia.*)$'
-      foreach ($pfRoot in @('C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\ProgramData')) {
+      # 2. Directly & silently delete 3rd-party app/game folders (NO GUI uninstaller clicks ever!)
+      $systemKeepRegex = '^(microsoft.*|windows.*|common files|internet explorer|reference assemblies|msbuild|modularity|modelfoundry|nvidia.*|amd|ati technologies|intel.*|realtek.*|vulkan.*|package cache|regid\\..*|dotnet|powershell|artemia.*)$'
+      $localAppsDir = Join-Path $env:LOCALAPPDATA 'Programs'
+      $pfRoots = @($localAppsDir, 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\ProgramData')
+      foreach ($pfRoot in $pfRoots) {
         if (Test-Path $pfRoot) {
           Get-ChildItem -Path $pfRoot -Force -ErrorAction SilentlyContinue | ForEach-Object {
-            try {
-              if ($_.Name -match $systemKeepRegex -or (IsProtectedPath $_.FullName)) { return }
-              if (-not $_.PSIsContainer) { $totalBytes += $_.Length } else {
-                $totalBytes += ((Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
-              }
-              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-            } catch {}
+            if ($_.Name -match $systemKeepRegex -or (IsProtectedPath $_.FullName)) { return }
+            [void](Remove-TargetQuiet $_ 'app')
           }
         }
+      }
+
+      # Clean Start Menu 3rd-party program shortcuts + user-level Uninstall registry remnants
+      foreach ($smPath in @(
+        (Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'),
+        'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs'
+      )) {
+        if (Test-Path $smPath) {
+          Get-ChildItem -Path $smPath -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.Name.ToLower() -in @('desktop.ini','startup','accessories','administrative tools','maintenance','system tools','windows powerShell','windows administrative tools') -or $_.Name -match '^(Windows|Microsoft|Artemia)') { return }
+            [void](Remove-TargetQuiet $_ 'file')
+          }
+        }
+      }
+      Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+          $dn = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName
+          if ($dn -and $dn -notmatch 'Artemia|Microsoft|OneDrive') {
+            Remove-Item $_.PSPath -Recurse -Force -ErrorAction Stop
+            Add-DeletedApp $dn
+          }
+        } catch {}
       }
 
       # Custom root folders on C:\\ (e.g. C:\\Games, C:\\Riot Games, C:\\Garena) keeping Windows & system roots
       $cSysKeep = @('windows','users','program files','program files (x86)','programdata','recovery','perflogs','msocache','config.msi','$recycle.bin','system volume information','oneget','inetpub')
       Get-ChildItem -Path 'C:\\' -Force -ErrorAction SilentlyContinue | ForEach-Object {
-        try {
-          if ($cSysKeep -contains $_.Name.ToLower() -or (IsProtectedPath $_.FullName)) { return }
-          if (-not $_.PSIsContainer) {
-            if ($_.Name.ToLower() -match 'pagefile|hiberfil|swapfile|bootmgr|bootnxt') { return }
-            $totalBytes += $_.Length
-          } else {
-            $totalBytes += ((Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
-          }
-          Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-        } catch {}
+        if ($cSysKeep -contains $_.Name.ToLower() -or (IsProtectedPath $_.FullName)) { return }
+        if (-not $_.PSIsContainer -and $_.Name.ToLower() -match 'pagefile|hiberfil|swapfile|bootmgr|bootnxt') { return }
+        [void](Remove-TargetQuiet $_ 'app')
       }
       $cleanedTargets.Add('Installed 3rd-Party Apps & Games')
       ` : ''}
 
       ${wipeUserFiles ? `
-      # 3. Wipe ALL user files & Desktop shortcuts across user profile and Public folders
+      # 3. Wipe ALL user files & Desktop shortcuts across user profile and Public folders silently
       $userSubDirs = @('Desktop','Downloads','Documents','Pictures','Videos','Music','Favorites','Saved Games','Links','Contacts','3D Objects')
       foreach ($sub in $userSubDirs) {
-        $dirPath = Join-Path $env:USERPROFILE $sub
-        if (Test-Path $dirPath) {
-          Get-ChildItem -Path $dirPath -Force -ErrorAction SilentlyContinue | ForEach-Object {
-            try {
-              if ($_.Name -eq 'desktop.ini' -or (IsProtectedPath $_.FullName)) { return }
-              if ($_.Name -match '^Artemia') { return }
-              if (-not $_.PSIsContainer) { $totalBytes += $_.Length } else {
-                $totalBytes += ((Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
-              }
-              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-            } catch {}
-          }
-        }
-        $pubPath = Join-Path 'C:\\Users\\Public' $sub
-        if (Test-Path $pubPath) {
-          Get-ChildItem -Path $pubPath -Force -ErrorAction SilentlyContinue | ForEach-Object {
-            try {
-              if ($_.Name -eq 'desktop.ini' -or (IsProtectedPath $_.FullName) -or $_.Name -match '^Artemia') { return }
-              if (-not $_.PSIsContainer) { $totalBytes += $_.Length } else {
-                $totalBytes += ((Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
-              }
-              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-            } catch {}
+        foreach ($baseDir in @($env:USERPROFILE, 'C:\\Users\\Public')) {
+          $dirPath = Join-Path $baseDir $sub
+          if (Test-Path $dirPath) {
+            Get-ChildItem -Path $dirPath -Force -ErrorAction SilentlyContinue | ForEach-Object {
+              if ($_.Name -eq 'desktop.ini' -or (IsProtectedPath $_.FullName) -or ($_.Name -match '^Artemia')) { return }
+              [void](Remove-TargetQuiet $_ 'file')
+            }
           }
         }
       }
@@ -1538,8 +1605,14 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
         (Join-Path $env:APPDATA 'Mozilla\\Firefox\\Profiles')
       )) {
         if (Test-Path $bPath) {
-          $totalBytes += ((Get-ChildItem $bPath -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
-          Remove-Item $bPath -Recurse -Force -ErrorAction SilentlyContinue
+          try {
+            $sum = (Get-ChildItem $bPath -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+            Remove-Item $bPath -Recurse -Force -ErrorAction Stop
+            if ($sum) { $totalBytes += [int64]$sum }
+            Add-DeletedFile ($bPath + ' (' + (Format-Size ([int64]$sum)) + ')')
+          } catch {
+            Add-Skipped ($bPath + ': ' + $_.Exception.Message)
+          }
         }
       }
       Clear-RecycleBin -Force -ErrorAction SilentlyContinue
@@ -1551,13 +1624,8 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
       Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -ne 'C:\\' -and $_.Root -match '^[A-Z]:\\\\$' } | ForEach-Object {
         $drvRoot = $_.Root
         Get-ChildItem -Path $drvRoot -Force -ErrorAction SilentlyContinue | ForEach-Object {
-          try {
-            if ($_.Name.ToLower() -in @('$recycle.bin','system volume information','recovery','config.msi') -or (IsProtectedPath $_.FullName)) { return }
-            if (-not $_.PSIsContainer) { $totalBytes += $_.Length } else {
-              $totalBytes += ((Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
-            }
-            Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-          } catch {}
+          if ($_.Name.ToLower() -in @('$recycle.bin','system volume information','recovery','config.msi') -or (IsProtectedPath $_.FullName)) { return }
+          [void](Remove-TargetQuiet $_ 'file')
         }
       }
       $cleanedTargets.Add('Extra Drives & Custom Game Folders')
@@ -1566,7 +1634,12 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
       [PSCustomObject]@{
         deletedBytes = [int64]$totalBytes
         uninstalledCount = [int]$uninstalledCount
-        cleanedTargets = $cleanedTargets
+        cleanedTargets = @($cleanedTargets)
+        deletedApps = @($deletedApps)
+        deletedFiles = @($deletedFiles)
+        totalDeletedFiles = [int]$totalDeletedFiles
+        skippedItems = @($skippedItems)
+        isElevated = [bool]$isAdmin
       } | ConvertTo-Json -Compress
     `;
 
@@ -1578,6 +1651,12 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
       let deletedBytes = 0;
       let uninstalledCount = 0;
       let cleanedTargets: string[] = [];
+      let deletedApps: string[] = [];
+      let deletedFiles: string[] = [];
+      let totalDeletedFiles = 0;
+      let skippedItems: string[] = [];
+      let isElevated = false;
+
       if (stdout) {
         try {
           const m = stdout.match(/\{[\s\S]*\}/);
@@ -1585,16 +1664,26 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
             const parsed = JSON.parse(m[0]);
             deletedBytes = Number(parsed.deletedBytes) || 0;
             uninstalledCount = Number(parsed.uninstalledCount) || 0;
+            totalDeletedFiles = Number(parsed.totalDeletedFiles) || 0;
+            isElevated = !!parsed.isElevated;
             if (Array.isArray(parsed.cleanedTargets)) cleanedTargets = parsed.cleanedTargets;
+            if (Array.isArray(parsed.deletedApps)) deletedApps = parsed.deletedApps;
+            if (Array.isArray(parsed.deletedFiles)) deletedFiles = parsed.deletedFiles;
+            if (Array.isArray(parsed.skippedItems)) skippedItems = parsed.skippedItems;
           }
         } catch {}
       }
-      logToFile(`[System Refresh] Complete: freed=${Math.round(deletedBytes / (1024 * 1024))}MB, uninstalled=${uninstalledCount}`);
+      logToFile(`[System Refresh] Complete: freed=${Math.round(deletedBytes / (1024 * 1024))}MB, apps=${deletedApps.length}, files=${totalDeletedFiles}, skipped=${skippedItems.length}, elevated=${isElevated}`);
       resolve({
         success: !err || cleanedTargets.length > 0,
         deletedBytes,
         uninstalledCount,
         cleanedTargets,
+        deletedApps,
+        deletedFiles,
+        totalDeletedFiles,
+        skippedItems,
+        isElevated,
         error: err && cleanedTargets.length === 0 ? err.message : undefined
       });
     });

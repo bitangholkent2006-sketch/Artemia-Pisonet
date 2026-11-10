@@ -146,7 +146,17 @@ import { PC, PCStatus } from '@pisonet/shared';
       <!-- Feedback Notification Banner -->
       <div *ngIf="actionNotice" class="action-feedback-banner" [ngClass]="actionNoticeType">
         <span>{{ actionNotice }}</span>
-        <button class="banner-close-btn" (click)="actionNotice = null">✕</button>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button
+            *ngIf="refreshReports.length > 0"
+            class="btn btn-sm btn-secondary"
+            style="padding: 3px 10px; font-size: 0.75rem;"
+            (click)="showRefreshReportModal = true"
+          >
+            📋 Tan-awa ang Na-delete ({{ refreshReports.length }})
+          </button>
+          <button class="banner-close-btn" (click)="actionNotice = null">✕</button>
+        </div>
       </div>
 
       <!-- Controls & Filter Row -->
@@ -527,7 +537,7 @@ import { PC, PCStatus } from '@pisonet/shared';
 
           <div class="modal-body">
             <div style="background: rgba(225, 29, 72, 0.12); border: 1px solid rgba(244, 63, 94, 0.35); border-radius: 10px; padding: 12px; font-size: 0.82rem; color: #fecdd3; margin-bottom: 14px; line-height: 1.5;">
-              ⚠️ <strong>Pahibalo:</strong> Tangtangon ani ang mga <strong>3rd-party apps, games, ug user files</strong> aron mobalik sa limpyo nga Windows system + <strong>Artemia Customer Terminal</strong> lang. Pabilin nga intact ang Windows OS, drivers, ug Artemia agent.
+              ⚠️ <strong>Zero-Click Silent Refresh:</strong> Tangtangon diretso (walay popup o tuplokon sa matag PC) ang mga <strong>3rd-party apps, games, ug user files</strong> aron mobalik sa limpyo nga Windows system + <strong>Artemia Customer Terminal</strong>, ug mo-report dayon dinhi kung unsa ang tanang na-delete.
             </div>
 
             <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; font-size: 0.84rem; color: #cbd5e1;">
@@ -537,23 +547,12 @@ import { PC, PCStatus } from '@pisonet/shared';
               </label>
               <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                 <input type="checkbox" [(ngModel)]="refreshOptions.wipeApps" />
-                <span>Uninstall &amp; Delete 3rd-Party Apps/Games (Program Files, C:\Games)</span>
+                <span>Uninstall &amp; Delete 3rd-Party Apps/Games (Program Files, LocalApps, C:\Games)</span>
               </label>
               <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                 <input type="checkbox" [(ngModel)]="refreshOptions.wipeOtherDrives" />
                 <span>Limpyohan apil ang uban Drives (D:, E:, excluding Artemia)</span>
               </label>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">I-type ang <strong style="color:#fb7185;">REFRESH</strong> aron ma-confirm:</label>
-              <input
-                type="text"
-                class="form-input"
-                [(ngModel)]="refreshConfirmWord"
-                (keydown.enter)="executeSystemRefresh()"
-                placeholder="REFRESH"
-              />
             </div>
           </div>
 
@@ -561,11 +560,95 @@ import { PC, PCStatus } from '@pisonet/shared';
             <button class="btn btn-secondary" (click)="closeRefreshModal()">Cancel</button>
             <button
               class="btn btn-danger"
-              [disabled]="refreshConfirmWord.trim().toUpperCase() !== 'REFRESH' || isSendingRefresh || (!refreshOptions.wipeUserFiles && !refreshOptions.wipeApps && !refreshOptions.wipeOtherDrives)"
+              [disabled]="isSendingRefresh || (!refreshOptions.wipeUserFiles && !refreshOptions.wipeApps && !refreshOptions.wipeOtherDrives)"
               (click)="executeSystemRefresh()"
             >
-              {{ isSendingRefresh ? 'Nagpadala...' : '♻️ Confirm Deep Refresh' }}
+              {{ isSendingRefresh ? 'Nagpadala...' : '♻️ Start Auto-Refresh Now' }}
             </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: Detailed System Refresh Report (Shows Exact Deleted Apps & Files per PC) -->
+      <div *ngIf="showRefreshReportModal && refreshReports.length > 0" class="modal-backdrop" (click)="showRefreshReportModal = false">
+        <div class="modal-dialog" style="max-width: 720px; border-color: rgba(16, 185, 129, 0.45);" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.4rem;">📋</span>
+              <h3 class="modal-title-text" style="color: #34d399;">
+                System Refresh Report — Mga Na-delete ({{ refreshReports.length }} PC)
+              </h3>
+            </div>
+            <button class="btn btn-sm btn-secondary" (click)="showRefreshReportModal = false">✕</button>
+          </div>
+
+          <div class="modal-body" style="max-height: 70vh; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;">
+            <div
+              *ngFor="let rep of refreshReports"
+              style="background: #090d16; border: 1px solid #1e293b; border-radius: 12px; padding: 14px;"
+            >
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
+                <div>
+                  <strong style="color: #f8fafc; font-size: 1rem;">🖥️ {{ rep.pcName }}</strong>
+                  <span style="margin-left: 8px; font-size: 0.75rem; color: #38bdf8; font-weight: 700;">
+                    Freed {{ rep.freedMb }} MB
+                  </span>
+                  <span style="margin-left: 8px; font-size: 0.72rem; color: #94a3b8;">
+                    ({{ rep.isElevated ? 'Admin Mode' : 'Standard Mode' }})
+                  </span>
+                </div>
+                <span style="font-size: 0.72rem; color: #64748b;">{{ rep.timestamp | date:'shortTime' }}</span>
+              </div>
+
+              <div style="margin-bottom: 10px;">
+                <div style="font-size: 0.78rem; font-weight: 700; color: #f43f5e; margin-bottom: 6px;">
+                  🗑️ Deleted Apps / Programs ({{ rep.deletedApps.length }}):
+                </div>
+                <div *ngIf="rep.deletedApps.length === 0" style="font-size: 0.76rem; color: #64748b; font-style: italic;">
+                  Walay 3rd-party apps nga na-delete sa run.
+                </div>
+                <div *ngIf="rep.deletedApps.length > 0" style="display: flex; flex-wrap: wrap; gap: 6px;">
+                  <span
+                    *ngFor="let appItem of rep.deletedApps"
+                    style="background: rgba(244, 63, 94, 0.14); border: 1px solid rgba(244, 63, 94, 0.35); color: #fda4af; padding: 3px 8px; border-radius: 6px; font-size: 0.74rem;"
+                  >
+                    {{ appItem }}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <div style="font-size: 0.78rem; font-weight: 700; color: #fbbf24; margin-bottom: 6px;">
+                  📄 Deleted Files &amp; Folders ({{ rep.totalDeletedFiles }} total):
+                </div>
+                <div *ngIf="rep.deletedFiles.length === 0" style="font-size: 0.76rem; color: #64748b; font-style: italic;">
+                  Walay user files nga na-delete (limpyo na daan).
+                </div>
+                <div
+                  *ngIf="rep.deletedFiles.length > 0"
+                  style="max-height: 150px; overflow-y: auto; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 8px; font-family: var(--font-mono); font-size: 0.72rem; color: #cbd5e1; line-height: 1.5;"
+                >
+                  <div *ngFor="let fileItem of rep.deletedFiles">{{ fileItem }}</div>
+                  <div *ngIf="rep.totalDeletedFiles > rep.deletedFiles.length" style="color: #38bdf8; margin-top: 4px;">
+                    ...ug {{ rep.totalDeletedFiles - rep.deletedFiles.length }} pa ka files/folders ang napapas.
+                  </div>
+                </div>
+              </div>
+
+              <div *ngIf="rep.skippedItems.length > 0" style="margin-top: 10px;">
+                <div style="font-size: 0.74rem; font-weight: 700; color: #94a3b8; margin-bottom: 4px;">
+                  ⚠️ Skipped / Requires Admin or In Use ({{ rep.skippedItems.length }}):
+                </div>
+                <div style="max-height: 80px; overflow-y: auto; background: rgba(15, 23, 42, 0.7); border-radius: 6px; padding: 6px 8px; font-size: 0.7rem; color: #94a3b8;">
+                  <div *ngFor="let sk of rep.skippedItems">{{ sk }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-secondary" (click)="refreshReports = []; showRefreshReportModal = false">Clear Logs</button>
+            <button class="btn btn-primary" (click)="showRefreshReportModal = false">OK / Close</button>
           </div>
         </div>
       </div>
@@ -1356,8 +1439,19 @@ export class DashboardComponent implements OnInit, OnDestroy {
   isSavingRename: boolean = false;
 
   refreshModalTarget: PC | 'all' | null = null;
-  refreshConfirmWord: string = '';
   isSendingRefresh: boolean = false;
+  showRefreshReportModal: boolean = false;
+  refreshReports: Array<{
+    pcId: string;
+    pcName: string;
+    freedMb: string;
+    deletedApps: string[];
+    deletedFiles: string[];
+    totalDeletedFiles: number;
+    skippedItems: string[];
+    isElevated: boolean;
+    timestamp: string;
+  }> = [];
   refreshOptions = {
     wipeUserFiles: true,
     wipeApps: true,
@@ -1421,8 +1515,30 @@ export class DashboardComponent implements OnInit, OnDestroy {
         return;
       }
       const freedMb = data.deletedBytes ? (data.deletedBytes / (1024 * 1024)).toFixed(1) : '0';
-      const uninstalled = data.uninstalledCount || 0;
-      this.showNotice(`♻️ [Deep Refresh Complete] ${pcLabel}: Freed ${freedMb} MB • ${uninstalled} apps removed (System & Artemia preserved)!`, 'success');
+      const deletedApps: string[] = Array.isArray(data.deletedApps) ? data.deletedApps : [];
+      const deletedFiles: string[] = Array.isArray(data.deletedFiles) ? data.deletedFiles : [];
+      const totalDeletedFiles: number = typeof data.totalDeletedFiles === 'number' ? data.totalDeletedFiles : deletedFiles.length;
+      const skippedItems: string[] = Array.isArray(data.skippedItems) ? data.skippedItems : [];
+
+      this.refreshReports = [
+        {
+          pcId: data.pcId || pcLabel,
+          pcName: pcLabel,
+          freedMb,
+          deletedApps,
+          deletedFiles,
+          totalDeletedFiles,
+          skippedItems,
+          isElevated: !!data.isElevated,
+          timestamp: data.timestamp || new Date().toISOString()
+        },
+        ...this.refreshReports.filter(r => r.pcId !== (data.pcId || pcLabel))
+      ];
+      this.showRefreshReportModal = true;
+      this.showNotice(
+        `♻️ [Deep Refresh Complete] ${pcLabel}: Freed ${freedMb} MB • ${deletedApps.length} apps & ${totalDeletedFiles} files deleted!`,
+        'success'
+      );
     });
 
     this.otaStatusSub = this.adminState.onClientUpdateStatus((data: any) => {
@@ -1543,25 +1659,23 @@ export class DashboardComponent implements OnInit, OnDestroy {
   // Deep System Refresh Modal & Action
   openRefreshModal(target: PC | 'all') {
     this.refreshModalTarget = target;
-    this.refreshConfirmWord = '';
     this.refreshOptions = { wipeUserFiles: true, wipeApps: true, wipeOtherDrives: true };
   }
 
   closeRefreshModal() {
     this.refreshModalTarget = null;
-    this.refreshConfirmWord = '';
   }
 
   async executeSystemRefresh() {
     if (!this.refreshModalTarget || this.isSendingRefresh) return;
-    if (this.refreshConfirmWord.trim().toUpperCase() !== 'REFRESH') return;
     const targetId = this.refreshModalTarget === 'all' ? 'all' : this.refreshModalTarget.id;
     const targetLabel = this.refreshModalTarget === 'all' ? 'TANANG online PCs' : this.refreshModalTarget.name;
     this.isSendingRefresh = true;
     try {
+      this.refreshReports = [];
       const res = await this.adminState.systemRefresh(targetId, this.refreshOptions);
       if (res.success) {
-        this.showNotice(`♻️ Deep System Refresh dispatched ngadto sa ${targetLabel}! Palihog paghulat og 1-2 minutos samtang nag-limpyo sa apps ug files.`, 'info');
+        this.showNotice(`♻️ Silent Deep Refresh gisugdan na sa ${targetLabel}! Automatic ipakita dinhi ang lista sa na-delete nga apps ug files.`, 'info');
         this.closeRefreshModal();
       } else {
         this.showNotice(`⚠️ ${res.message}`, 'warn');

@@ -31,7 +31,7 @@ export interface PisonetDesktopApi {
   // Maintenance Agent Native APIs
   executeCommand: (command: string, type: 'powershell' | 'cmd') => Promise<{ output: string; exitCode: number; error?: string }>;
   cleanTemp: () => Promise<{ deletedBytes: number; cleanedPaths: string[]; error?: string }>;
-  systemRefresh: (options?: { wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean }) => Promise<{ success: boolean; deletedBytes: number; uninstalledCount: number; cleanedTargets: string[]; error?: string }>;
+  systemRefresh: (options?: { wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean }) => Promise<{ success: boolean; deletedBytes: number; uninstalledCount: number; cleanedTargets: string[]; deletedApps?: string[]; deletedFiles?: string[]; totalDeletedFiles?: number; skippedItems?: string[]; isElevated?: boolean; error?: string }>;
   updateGame: (gameId: string, command?: string) => Promise<{ status: string; log: string }>;
   listFiles: (targetPath: string) => Promise<{ entries: any[]; error?: string }>;
   deletePath: (targetPath: string) => Promise<{ success: boolean; error?: string }>;

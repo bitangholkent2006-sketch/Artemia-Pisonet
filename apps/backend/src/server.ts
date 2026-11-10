@@ -139,10 +139,12 @@ app.get('/download/setup-pc.bat', (c) => {
     `Start-Sleep -Seconds 2`,
     `icacls $asar /remove:d Everyone 2>$null | Out-Null; icacls $asar /remove:d Users 2>$null | Out-Null`,
     `if ((Test-Path $tmpAsar) -and ((Get-Item $tmpAsar).Length -gt 100000)) { Copy-Item -Path $tmpAsar -Destination $asar -Force; Remove-Item $tmpAsar -Force -ErrorAction SilentlyContinue }`,
-    `Write-Host '[4/4] Registering Windows startup & launching agent...'`,
+    `Write-Host '[4/4] Registering Windows startup & elevated logon task...'`,
     `$runKey='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'`,
     `New-Item -Path $runKey -Force | Out-Null`,
     `Set-ItemProperty -Path $runKey -Name 'Artemia Fleet Station Agent' -Value ([char]34 + $exe + [char]34)`,
+    `$isAdm = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)`,
+    `if ($isAdm) { schtasks /Create /TN 'Artemia Fleet Station Agent' /SC ONLOGON /RL HIGHEST /TR ([char]34 + $exe + [char]34) /F 2>$null | Out-Null }`,
     `Start-Process -FilePath $exe -WorkingDirectory $installDir`,
     `Write-Host ''; Write-Host '[OK] Artemia Fleet Agent is running and connected!' -ForegroundColor Green`
   ].join('; ');
