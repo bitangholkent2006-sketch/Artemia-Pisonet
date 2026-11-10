@@ -1377,6 +1377,16 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
   const wipeApps = options.wipeApps !== false;
   const wipeOtherDrives = options.wipeOtherDrives !== false;
 
+  if (!wipeUserFiles && !wipeApps && !wipeOtherDrives) {
+    isRefreshingSystem = false;
+    return Promise.resolve({
+      success: true,
+      deletedBytes: 0,
+      uninstalledCount: 0,
+      cleanedTargets: ['Dry-run verified (no targets selected)']
+    });
+  }
+
   if (process.platform !== 'win32') {
     isRefreshingSystem = false;
     return Promise.resolve({
@@ -1408,17 +1418,26 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
         return $false
       }
 
-      # Close user/game processes first (strictly keep Windows, Explorer & Artemia running)
-      $keepProcs = @('artemia customer terminal', 'artemiakiosklock_v2', 'explorer', 'svchost', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'smss', 'dwm', 'sihost', 'ctfmon', 'runtimebroker', 'searchhost', 'startmenuexperiencehost', 'shellexperiencehost', 'taskhostw', 'audiodg', 'conhost', 'powershell', 'wscript', 'cscript', 'cmd', 'idle', 'system', 'registry', 'fontdrvhost')
+      ${wipeUserFiles ? `
+      # Close web browsers before clearing profiles
+      try { Stop-Process -Name chrome, msedge, brave, firefox, opera, iexplore -Force -ErrorAction SilentlyContinue } catch {}
+      ` : ''}
+
+      ${wipeApps ? `
+      # Close 3rd-party desktop/game processes ONLY (strictly skip OS, drivers, Artemia, Dev IDEs & elevated system processes without accessible Path)
+      $keepProcs = @('artemia customer terminal', 'artemiakiosklock_v2', 'explorer', 'svchost', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'smss', 'dwm', 'sihost', 'ctfmon', 'runtimebroker', 'searchhost', 'startmenuexperiencehost', 'shellexperiencehost', 'taskhostw', 'audiodg', 'conhost', 'powershell', 'wscript', 'cscript', 'cmd', 'antigravity', 'code', 'node')
       Get-Process | ForEach-Object {
         try {
           $n = $_.ProcessName.ToLower()
           if ($keepProcs -contains $n) { return }
           $p = $_.Path
-          if ($p -and ($p.ToLower().StartsWith(($env:SystemRoot).ToLower()) -or $p.ToLower().Contains('nvidia') -or $p.ToLower().Contains('amd') -or $p.ToLower().Contains('intel') -or $p.ToLower().Contains('realtek') -or $p.ToLower().Contains('artemia'))) { return }
+          if (-not $p) { return }
+          $pl = $p.ToLower()
+          if ($pl.StartsWith(($env:SystemRoot).ToLower()) -or (IsProtectedPath $p) -or ($pl -match 'nvidia|amd|intel|realtek|artemia|microsoft|antigravity|visual studio|language_server|git\\\\')) { return }
           Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
         } catch {}
       }
+      ` : ''}
 
       ${wipeApps ? `
       # 1. Silently uninstall 3rd-party Windows desktop programs (preserve Windows updates, Redistributables, Drivers, Artemia)

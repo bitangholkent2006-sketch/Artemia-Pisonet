@@ -1,7 +1,7 @@
 {
-  "version": "1.0.14",
+  "version": "1.0.15",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-11T01:12:00.000Z",
+  "releaseDate": "2026-11-11T01:18:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Full keyboard+mouse lock blocker while locked, Deep System Refresh (wipe apps & user files keeping Windows + Artemia), Anti-Delete NTFS protection + Password-protected Operator Exit + Watchdog, fast live GPU/SSD/CPU % specs checker, and 1-click Push Update support for all versions"
+  "changelog": "Full keyboard+mouse lock blocker while locked, Deep System Refresh (safe process filter keeping OS/drivers/Artemia intact), Anti-Delete NTFS protection + Password-protected Operator Exit + Watchdog, fast live GPU/SSD/CPU % specs checker, and 1-click Push Update support for all versions"
 }
