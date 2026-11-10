@@ -140,7 +140,7 @@ app.get('/download/setup-pc.bat', (c) => {
     `Write-Host '[4/4] Registering Windows startup & launching agent...'`,
     `$runKey='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'`,
     `New-Item -Path $runKey -Force | Out-Null`,
-    `Set-ItemProperty -Path $runKey -Name 'Artemia Fleet Station Agent' -Value ('"' + $exe + '"')`,
+    `Set-ItemProperty -Path $runKey -Name 'Artemia Fleet Station Agent' -Value ([char]34 + $exe + [char]34)`,
     `Start-Process -FilePath $exe -WorkingDirectory $installDir`,
     `Write-Host ''; Write-Host '[OK] Artemia Fleet Agent is running and connected!' -ForegroundColor Green`
   ].join('; ');
