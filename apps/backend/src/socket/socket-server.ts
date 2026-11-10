@@ -73,8 +73,9 @@ function scheduleAutoOtaIfOutdated(authSocket: AuthenticatedSocket, pc: { id: st
     const downloadUrl = 'https://artemia-pisonet-backend.onrender.com/download/client/app.asar';
     console.log(`[Auto-OTA] Station ${pc.name} (${pc.id}) running version "${effectiveVer || 'legacy-v1.0.0'}". Pushing v${latestNow}...`);
 
-    if (effectiveVer) {
-      // Modern agent >= 1.0.2 understands agent:client-update:run natively
+    // Agents >= 1.0.10 have fixed /FO CSV tasklist & /T process-tree wait barrier in applyClientUpdate.
+    // Older agents (<= 1.0.9) upgrade via the hardened server batch script so slower PCs never hit SingletonLock races.
+    if (effectiveVer && compareSemver(effectiveVer, '1.0.10') >= 0) {
       authSocket.emit('agent:client-update:run', {
         reqId: 'auto_ota_' + Date.now(),
         targetPcId: pc.id,
@@ -84,7 +85,6 @@ function scheduleAutoOtaIfOutdated(authSocket: AuthenticatedSocket, pc: { id: st
         timestamp: new Date().toISOString()
       });
     } else {
-      // Legacy v1.0.0 agent lacks agent:client-update:run; upgrade safely via ping-wait + process-exit barrier
       const ps = `
 $proc = Get-Process -Name "Artemia Customer Terminal" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $proc -or -not $proc.Path) { exit 0 }
@@ -113,25 +113,22 @@ if ((Test-Path $tempAsar) -and ((Get-Item $tempAsar).Length -gt 100000)) {
     "set /a retries=0",
     "set /a wait_tries=0",
     "ping -n 2 127.0.0.1 >nul",
-    "taskkill /F /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
+    "taskkill /F /T /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
     ":wait_exit",
-    "tasklist /FI $($q)IMAGENAME eq Artemia Customer Terminal.exe$($q) 2>NUL | find /I $($q)Artemia Customer Terminal.exe$($q) >NUL",
-    "if not errorlevel 1 (",
-    "  set /a wait_tries+=1",
-    "  if %wait_tries% LSS 15 (",
-    "    taskkill /F /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
-    "    ping -n 2 127.0.0.1 >nul",
-    "    goto wait_exit",
-    "  )",
-    ")",
+    "tasklist /FO CSV /NH /FI $($q)IMAGENAME eq Artemia Customer Terminal.exe$($q) 2>NUL | find /I $($q)Artemia Customer Terminal.exe$($q) >NUL",
+    "if errorlevel 1 goto retry_copy",
+    "set /a wait_tries+=1",
+    "if %wait_tries% GEQ 15 goto retry_copy",
+    "taskkill /F /T /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
+    "ping -n 2 127.0.0.1 >nul",
+    "goto wait_exit",
     ":retry_copy",
     "copy /Y $($q)$tempAsar$($q) $($q)$targetAsar$($q) >nul 2>&1",
     "if not errorlevel 1 goto copy_ok",
     "set /a retries+=1",
-    "if %retries% LSS 15 (",
-    "  ping -n 2 127.0.0.1 >nul",
-    "  goto retry_copy",
-    ")",
+    "if %retries% GEQ 15 goto copy_ok",
+    "ping -n 2 127.0.0.1 >nul",
+    "goto retry_copy",
     ":copy_ok",
     "del /f /q $($q)$tempAsar$($q) >nul 2>&1",
     "ping -n 3 127.0.0.1 >nul",

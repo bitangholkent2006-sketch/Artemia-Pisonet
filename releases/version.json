@@ -1,7 +1,7 @@
 {
-  "version": "1.0.9",
+  "version": "1.0.10",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-10T23:00:00.000Z",
+  "releaseDate": "2026-11-10T23:42:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Fix pc:heartbeat legacy-OTA race that caused unintended taskkill on reconnect, add SingletonLock tasklist wait barrier before relaunch"
+  "changelog": "Safe server-side OTA upgrade for <=1.0.9 clients via CSV tasklist & /T process-tree barrier, stop killing operator browsers/Downloads Artemia folders on startup, add lifecycle crash logging"
 }

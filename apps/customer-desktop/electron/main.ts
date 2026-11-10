@@ -23,6 +23,19 @@ function logToFile(msg: string) {
 
 logToFile('Starting main.ts. PID: ' + process.pid + ', execPath: ' + process.execPath);
 
+process.on('uncaughtException', (err) => {
+  logToFile('[FATAL uncaughtException] ' + (err?.stack || err?.message || String(err)));
+});
+process.on('unhandledRejection', (reason: any) => {
+  logToFile('[WARN unhandledRejection] ' + (reason?.stack || reason?.message || String(reason)));
+});
+app.on('render-process-gone', (_e, _wc, details) => {
+  logToFile('[WARN render-process-gone] ' + JSON.stringify(details));
+});
+app.on('child-process-gone', (_e, details) => {
+  logToFile('[WARN child-process-gone] ' + JSON.stringify(details));
+});
+
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
@@ -614,20 +627,26 @@ function performCleanSlate(reason: 'startup' | 'idle' | 'manual' | 'admin' = 'ma
   }
 
   return new Promise((resolve) => {
+    const exeDir = path.dirname(process.execPath).replace(/'/g, "''");
+    const killBrowsers = reason !== 'startup';
     const psScript = `
       $totalBytes = 0
       $cleanedItems = [System.Collections.Generic.List[string]]::new()
 
-      # 1. Close web browsers to release locks on SQLite databases (cookies, logins, history)
-      try {
+      # 1. Close web browsers to release locks ONLY on idle/manual/admin clean (never kill operator browser at startup)
+      ${killBrowsers ? `try {
         Stop-Process -Name chrome, msedge, brave, firefox, opera, iexplore -Force -ErrorAction SilentlyContinue
-      } catch {}
+      } catch {}` : ''}
 
-      # 2. Clean Downloads Folder (Customer downloaded installers, games, zip files, cheat tools)
+      # 2. Clean Downloads Folder while preserving Artemia client folders/installers
       $downloads = Join-Path $env:USERPROFILE 'Downloads'
+      $agentDir = '${exeDir}'.ToLower()
       if (Test-Path $downloads) {
-        Get-ChildItem -Path $downloads -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+        Get-ChildItem -Path $downloads -Force -ErrorAction SilentlyContinue | ForEach-Object {
           try {
+            $nameLower = $_.Name.ToLower()
+            $fullLower = $_.FullName.ToLower()
+            if ($nameLower -like 'artemia*' -or $agentDir.StartsWith($fullLower)) { return }
             if (-not $_.PSIsContainer) { $totalBytes += $_.Length }
             Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
           } catch {}
@@ -1708,6 +1727,7 @@ async function applyClientUpdate(downloadUrl: string): Promise<{ success: boolea
     const exeName = path.basename(exePath);
 
     // Note: ping -n N works reliably when stdin is redirected (unlike timeout /t which fails immediately under stdio: 'ignore')
+    // Uses tasklist /FO CSV /NH so >25-char executable names are not truncated, and keeps counters outside parenthesized blocks.
     const batchScript = `@echo off
 chcp 65001 >nul
 set "ELECTRON_RUN_AS_NODE="
@@ -1720,28 +1740,26 @@ ping -n 3 127.0.0.1 >nul
 copy /y "${tempAsar}" "${targetAsar}" >nul 2>&1
 if not errorlevel 1 goto copy_ok
 set /a retries+=1
-if %retries% EQU 4 taskkill /F /PID ${process.pid} >nul 2>&1
-if %retries% EQU 8 taskkill /F /IM "${exeName}" >nul 2>&1
-if %retries% LSS 20 (
-  ping -n 2 127.0.0.1 >nul
-  goto retry_copy
-)
+if %retries% EQU 3 taskkill /F /T /PID ${process.pid} >nul 2>&1
+if %retries% EQU 6 taskkill /F /T /IM "${exeName}" >nul 2>&1
+if %retries% GEQ 20 goto copy_ok
+ping -n 2 127.0.0.1 >nul
+goto retry_copy
 
 :copy_ok
 del /f /q "${tempAsar}" >nul 2>&1
 
 :wait_exit
-tasklist /FI "IMAGENAME eq ${exeName}" 2>NUL | find /I "${exeName}" >NUL
-if not errorlevel 1 (
-  set /a wait_tries+=1
-  if %wait_tries% EQU 5 taskkill /F /IM "${exeName}" >nul 2>&1
-  if %wait_tries% LSS 15 (
-    ping -n 2 127.0.0.1 >nul
-    goto wait_exit
-  )
-)
-
+tasklist /FO CSV /NH /FI "IMAGENAME eq ${exeName}" 2>NUL | find /I "${exeName}" >NUL
+if errorlevel 1 goto do_launch
+set /a wait_tries+=1
+if %wait_tries% EQU 3 taskkill /F /T /IM "${exeName}" >nul 2>&1
+if %wait_tries% GEQ 15 goto do_launch
 ping -n 2 127.0.0.1 >nul
+goto wait_exit
+
+:do_launch
+ping -n 3 127.0.0.1 >nul
 start "" /D "${exeDir}" "${exePath}"
 del /f /q "%~f0" >nul 2>&1
 exit
@@ -1851,11 +1869,20 @@ if (!gotLock) {
 }
 
 app.on('before-quit', () => {
+  logToFile(`app before-quit fired (isQuitting=${isQuitting}, isOtaRestarting=${isOtaRestarting})`);
   isQuitting = true;
   try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
   if (!isOtaRestarting) {
     notifyServerOffline();
   }
+});
+
+app.on('will-quit', () => {
+  logToFile(`app will-quit fired (isOtaRestarting=${isOtaRestarting})`);
+});
+
+app.on('quit', (_e, exitCode) => {
+  logToFile(`app quit fired with exitCode=${exitCode}`);
 });
 
 app.on('window-all-closed', () => {

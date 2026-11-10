@@ -49,7 +49,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.9';
+const CLIENT_AGENT_VERSION = '1.0.10';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
