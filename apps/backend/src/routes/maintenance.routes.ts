@@ -3,6 +3,7 @@ import { requireStaff } from '../middleware/auth.middleware';
 import { broadcastRealtimeEvent, tryGetIO } from '../socket/socket-server';
 import { getCollections } from '../database/connection';
 import { PcService } from '../services/pc.service';
+import { getLatestAsarInfo, getLatestReleaseInfo } from '../config/releases';
 
 export const maintenanceRoutes = new Hono();
 
@@ -207,34 +208,16 @@ maintenanceRoutes.post('/power', requireStaff, async (c) => {
 
 // OTA Client Updater: Get current release metadata
 maintenanceRoutes.get('/client-update-info', requireStaff, async (c) => {
-  const fs = await import('fs');
-  const path = await import('path');
-  const possiblePaths = [
-    path.resolve(process.cwd(), 'releases/app.asar'),
-    path.resolve(__dirname, '../../releases/app.asar'),
-    path.resolve(__dirname, '../../../releases/app.asar'),
-    path.resolve(process.cwd(), 'dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar'),
-    path.resolve(__dirname, '../../dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar')
-  ];
-  const asarPath = possiblePaths.find((p) => fs.existsSync(p));
-  const sizeBytes = asarPath ? fs.statSync(asarPath).size : 0;
-  const modified = asarPath ? fs.statSync(asarPath).mtime.toISOString() : null;
-
-  let version = '1.0.2';
-  const versionFile = path.resolve(process.cwd(), 'releases/version.json');
-  if (fs.existsSync(versionFile)) {
-    try {
-      version = JSON.parse(fs.readFileSync(versionFile, 'utf8')).version || version;
-    } catch {}
-  }
+  const asarInfo = getLatestAsarInfo();
+  const releaseInfo = getLatestReleaseInfo();
 
   return c.json({
     success: true,
     data: {
-      version,
-      sizeBytes,
-      lastModified: modified,
-      ready: !!asarPath
+      version: releaseInfo.version,
+      sizeBytes: asarInfo.sizeBytes,
+      lastModified: asarInfo.lastModified,
+      ready: !!asarInfo.path
     }
   });
 });
@@ -245,25 +228,10 @@ maintenanceRoutes.post('/push-client-update', requireStaff, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { targetPcId = 'all', targetPcIds } = body;
 
-  const fs = await import('fs');
-  const path = await import('path');
-  const possiblePaths = [
-    path.resolve(process.cwd(), 'releases/app.asar'),
-    path.resolve(__dirname, '../../releases/app.asar'),
-    path.resolve(__dirname, '../../../releases/app.asar'),
-    path.resolve(process.cwd(), 'dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar'),
-    path.resolve(__dirname, '../../dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar')
-  ];
-  const asarPath = possiblePaths.find((p) => fs.existsSync(p));
-  const sizeBytes = asarPath ? fs.statSync(asarPath).size : 176772;
-
-  let version = '1.0.2';
-  const versionFile = path.resolve(process.cwd(), 'releases/version.json');
-  if (fs.existsSync(versionFile)) {
-    try {
-      version = JSON.parse(fs.readFileSync(versionFile, 'utf8')).version || version;
-    } catch {}
-  }
+  const asarInfo = getLatestAsarInfo();
+  const releaseInfo = getLatestReleaseInfo();
+  const sizeBytes = asarInfo.sizeBytes || 212008;
+  const version = releaseInfo.version;
 
   const host = c.req.header('host') || 'artemia-pisonet-backend.onrender.com';
   const protocol = host.includes('localhost') ? 'http' : 'https';

@@ -38,16 +38,27 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
       </div>
 
       <!-- Plug and Play Auto-Discovery Banner -->
-      <div class="callout-info" style="margin-bottom:20px; border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.08);">
-        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color:#34d399; flex-shrink:0;">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-        </svg>
-        <div>
-          <strong style="color:#34d399;">Plug & Play Auto-Discovery Active</strong>
-          <div style="color:#cbd5e1; font-size:0.82rem; margin-top:2px;">
-            Dili na kinahanglan mag-manomano og add o register! Inig install o abli sa Artemia Fleet Agent sa bisan asang PC sa shop, automatic kining mo-rehistro ug mo-gawas dayon dinhi sa imong dashboard.
+      <div class="callout-info" style="margin-bottom:20px; border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.08); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div style="display:flex; align-items:flex-start; gap:10px; flex:1; min-width:240px;">
+          <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color:#34d399; flex-shrink:0; margin-top:2px;">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          <div>
+            <strong style="color:#34d399;">Plug & Play Auto-Discovery & Auto-OTA Active</strong>
+            <div style="color:#cbd5e1; font-size:0.82rem; margin-top:2px;">
+              Inig abli sa agent sa bisan unsang PC (bisan bag-o o daan nga installer), automatic kining mo-update sa pinakabag-ong client, mo-enable sa Windows startup, ug mo-online dayon dinhi nga real-time. Kung naay PC nga wala nagdagan ang agent (parehas sa offline station), i-run kausa ang <strong>1-Click Setup (.bat)</strong> sa maong PC.
+            </div>
           </div>
         </div>
+        <a
+          href="https://artemia-pisonet-backend.onrender.com/download/setup-pc.bat"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="btn btn-sm btn-primary"
+          style="background: linear-gradient(135deg, #7c3aed, #2563eb); text-decoration:none; white-space:nowrap; font-weight:700;"
+        >
+          ⚡ 1-Click PC Setup (.bat)
+        </a>
       </div>
 
       <!-- PC Inventory Table -->

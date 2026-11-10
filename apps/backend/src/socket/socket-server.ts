@@ -3,6 +3,7 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import fs from 'fs';
 import path from 'path';
 import { config } from '../config/env';
+import { compareSemver, getLatestReleaseInfo } from '../config/releases';
 import { AuthService } from '../services/auth.service';
 import { PcService } from '../services/pc.service';
 import { SessionService } from '../services/session.service';
@@ -24,20 +25,7 @@ let io: SocketIOServer | null = null;
 const autoOtaCooldown = new Map<string, number>();
 
 function getLatestClientVersion(): string {
-  const candidates = [
-    path.resolve(process.cwd(), 'releases/version.json'),
-    path.resolve(__dirname, '../../releases/version.json'),
-    path.resolve(__dirname, '../../../releases/version.json')
-  ];
-  for (const p of candidates) {
-    try {
-      if (fs.existsSync(p)) {
-        const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
-        if (parsed?.version) return String(parsed.version).trim();
-      }
-    } catch {}
-  }
-  return '1.0.6';
+  return getLatestReleaseInfo().version;
 }
 
 function joinAllStationRooms(authSocket: AuthenticatedSocket, rawId: string, rawName: string, pc: { id: string; identifier: string; name: string }) {
@@ -67,12 +55,12 @@ function joinAllStationRooms(authSocket: AuthenticatedSocket, rawId: string, raw
 function scheduleAutoOtaIfOutdated(authSocket: AuthenticatedSocket, pc: { id: string; name: string }, clientVersion?: string) {
   const latestVersion = getLatestClientVersion();
   const normalizedClientVer = clientVersion ? String(clientVersion).trim() : '';
-  if (normalizedClientVer === latestVersion) return;
+  if (normalizedClientVer && compareSemver(normalizedClientVer, latestVersion) >= 0) return;
 
   const now = Date.now();
   const lastAttempt = autoOtaCooldown.get(pc.id) || 0;
-  // 10-minute cooldown per PC to avoid update loops
-  if (now - lastAttempt < 10 * 60 * 1000) return;
+  // 5-minute cooldown per PC to avoid update loops
+  if (now - lastAttempt < 5 * 60 * 1000) return;
   autoOtaCooldown.set(pc.id, now);
 
   setTimeout(() => {
@@ -91,7 +79,7 @@ function scheduleAutoOtaIfOutdated(authSocket: AuthenticatedSocket, pc: { id: st
         timestamp: new Date().toISOString()
       });
     } else {
-      // Legacy v1.0.0 agent lacks agent:client-update:run, upgrade seamlessly via agent:command:run
+      // Legacy v1.0.0 agent lacks agent:client-update:run; upgrade safely via ping-wait batch & fix startup registry
       const ps = `
 $proc = Get-Process -Name "Artemia Customer Terminal" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $proc -or -not $proc.Path) { exit 0 }
@@ -101,23 +89,41 @@ $targetAsar = Join-Path $targetDir "resources\\app.asar"
 $tempAsar = Join-Path $env:TEMP ("app_" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".asar")
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 try {
-  Invoke-WebRequest -Uri "${downloadUrl}" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 20
+  $runKey = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+  if (Test-Path $runKey) {
+    Set-ItemProperty -Path $runKey -Name "Artemia Fleet Station Agent" -Value ('"' + $exePath + '"') -ErrorAction SilentlyContinue
+  }
+} catch {}
+try {
+  Invoke-WebRequest -Uri "${downloadUrl}" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 25
 } catch {
-  Invoke-WebRequest -Uri "https://raw.githubusercontent.com/bitangholkent2006-sketch/Artemia-Pisonet/artemia-pisonet/releases/app.asar" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 20
+  Invoke-WebRequest -Uri "https://raw.githubusercontent.com/bitangholkent2006-sketch/Artemia-Pisonet/artemia-pisonet/releases/app.asar" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 25
 }
-if ((Test-Path $tempAsar) -and ((Get-Item $tempAsar).Length -gt 150000)) {
+if ((Test-Path $tempAsar) -and ((Get-Item $tempAsar).Length -gt 100000)) {
   $batPath = Join-Path $env:TEMP ("artemia_ota_" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".bat")
   $q = [char]34
   $lines = @(
     "@echo off",
-    "timeout /t 2 /nobreak >nul",
+    "set $($q)ELECTRON_RUN_AS_NODE=$($q)",
+    "set /a retries=0",
+    "ping -n 2 127.0.0.1 >nul",
     "taskkill /F /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
-    "timeout /t 2 /nobreak >nul",
-    "copy /Y $($q)$tempAsar$($q) $($q)$targetAsar$($q)",
-    "timeout /t 1 /nobreak >nul",
-    "start $($q)$($q) $($q)$exePath$($q)",
+    "ping -n 3 127.0.0.1 >nul",
+    ":retry_copy",
+    "copy /Y $($q)$tempAsar$($q) $($q)$targetAsar$($q) >nul 2>&1",
+    "if not errorlevel 1 goto copy_ok",
+    "set /a retries+=1",
+    "if %retries% EQU 4 taskkill /F /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
+    "if %retries% LSS 15 (",
+    "  ping -n 2 127.0.0.1 >nul",
+    "  goto retry_copy",
+    ")",
+    ":copy_ok",
     "del /f /q $($q)$tempAsar$($q) >nul 2>&1",
-    "del $($q)%~f0$($q)"
+    "ping -n 2 127.0.0.1 >nul",
+    "start $($q)$($q) /D $($q)$targetDir$($q) $($q)$exePath$($q)",
+    "del /f /q $($q)%~f0$($q) >nul 2>&1",
+    "exit"
   )
   Set-Content -Path $batPath -Value $lines -Encoding ASCII -Force
   Start-Process -FilePath "cmd.exe" -ArgumentList "/c $($q)$batPath$($q)" -WindowStyle Hidden
@@ -266,9 +272,20 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     // PC Terminal Heartbeat Event & Telemetry
-    authSocket.on('pc:heartbeat', async (data: { pcId: string; telemetry?: any; macAddress?: string; hardwareId?: string }) => {
+    authSocket.on('pc:heartbeat', async (data: { pcId: string; telemetry?: any; macAddress?: string; hardwareId?: string; clientVersion?: string }) => {
       const targetId = authSocket.data.pcId || pcId || data?.pcId;
       if (targetId) {
+        if (data?.clientVersion) {
+          authSocket.data.clientVersion = data.clientVersion;
+        }
+        const effectiveVersion = data?.clientVersion || authSocket.data.clientVersion;
+        if (!effectiveVersion || compareSemver(effectiveVersion, getLatestClientVersion()) < 0) {
+          scheduleAutoOtaIfOutdated(
+            authSocket,
+            { id: targetId, name: authSocket.data.pcIdentifier || targetId },
+            effectiveVersion
+          );
+        }
         await PcService.recordHeartbeat(targetId, socket.handshake.address?.replace('::ffff:', ''), data?.macAddress, data?.hardwareId);
         if (data?.telemetry) {
           try {

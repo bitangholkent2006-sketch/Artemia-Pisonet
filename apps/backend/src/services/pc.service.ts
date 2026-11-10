@@ -93,6 +93,7 @@ export class PcService {
     const now = new Date();
 
     let pc: DbPC | null = null;
+    let isNewStation = false;
 
     // 1. Primary Hardware Identification Match (UUID persisted on client disk)
     if (cleanHardwareId) {
@@ -196,12 +197,17 @@ export class PcService {
       };
 
       await collections.pcs.insertOne(pc);
+      isNewStation = true;
       console.log(`[AutoDiscover] Auto-registered new station: ${pc.name} (${pc.id}) [Hardware: ${cleanHardwareId || cleanMac || 'New'}]`);
     }
 
+    const { deviceKeyHash: _, _id: __, ...safePc } = pc;
     try {
       const { broadcastRealtimeEvent } = await import('../socket/socket-server');
-      broadcastRealtimeEvent('pc:updated', pc, 'staff');
+      if (isNewStation) {
+        broadcastRealtimeEvent('pc:registered', safePc, 'staff');
+      }
+      broadcastRealtimeEvent('pc:updated', safePc, 'staff');
       broadcastRealtimeEvent('pc:status', { pcId: pc.id, status: pc.status });
     } catch {}
 

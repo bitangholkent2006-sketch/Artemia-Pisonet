@@ -7,6 +7,7 @@ import { Server as HttpServer } from 'http';
 import fs from 'fs';
 import path from 'path';
 import { config } from './config/env';
+import { compareSemver, getLatestAsarInfo, getLatestReleaseInfo } from './config/releases';
 import { connectToDatabase, disconnectDatabase, getCollections, isDatabaseConnected } from './database/connection';
 import { initSocketServer } from './socket/socket-server';
 import { SessionService } from './services/session.service';
@@ -84,24 +85,11 @@ app.route('/api/v1/maintenance', maintenanceRoutes);
 // Client App Auto-Update & Download routes
 app.get('/api/v1/client-app/update-check', (c) => {
   const currentVersion = c.req.query('currentVersion') || '1.0.0';
-  let latestVersion = '1.0.1';
-  let changelog = 'Latest security updates and cloud synchronization';
+  const releaseInfo = getLatestReleaseInfo();
+  const latestVersion = releaseInfo.version;
+  const changelog = releaseInfo.changelog;
 
-  const versionPaths = [
-    path.resolve(process.cwd(), 'releases/version.json'),
-    path.resolve(__dirname, '../../releases/version.json'),
-    path.resolve(__dirname, '../../../releases/version.json')
-  ];
-  const versionFile = versionPaths.find((p) => fs.existsSync(p));
-  if (versionFile) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(versionFile, 'utf8'));
-      if (parsed.version) latestVersion = parsed.version;
-      if (parsed.changelog) changelog = parsed.changelog;
-    } catch {}
-  }
-
-  const updateAvailable = currentVersion.trim() !== latestVersion.trim();
+  const updateAvailable = compareSemver(currentVersion, latestVersion) < 0;
   const host = c.req.header('host') || 'artemia-pisonet-backend.onrender.com';
   const protocol = host.includes('localhost') ? 'http' : 'https';
 
@@ -115,21 +103,72 @@ app.get('/api/v1/client-app/update-check', (c) => {
 });
 
 app.get('/download/client/app.asar', (c) => {
-  const possiblePaths = [
-    path.resolve(process.cwd(), 'releases/app.asar'),
-    path.resolve(__dirname, '../../releases/app.asar'),
-    path.resolve(__dirname, '../../../releases/app.asar'),
-    path.resolve(process.cwd(), 'dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar'),
-    path.resolve(__dirname, '../../dist-client/Artemia Customer Terminal-win32-x64/resources/app.asar')
-  ];
-  const asarPath = possiblePaths.find((p) => fs.existsSync(p));
+  const asarInfo = getLatestAsarInfo();
 
-  if (asarPath) {
+  if (asarInfo.path) {
     c.header('Content-Disposition', 'attachment; filename="app.asar"');
     c.header('Content-Type', 'application/octet-stream');
-    return c.body(fs.readFileSync(asarPath));
+    return c.body(fs.readFileSync(asarInfo.path));
   }
   return c.text('Release app.asar package not found.', 404);
+});
+
+// 1-Click Windows Auto-Installer & Repair Script (Installs/updates any new or offline PC to latest v1.0.8+ & sets auto-start)
+app.get('/download/setup-pc.bat', (c) => {
+  const host = c.req.header('host') || 'artemia-pisonet-backend.onrender.com';
+  const protocol = host.includes('localhost') ? 'http' : 'https';
+  const baseUrl = `${protocol}://${host}`;
+
+  const psScript = [
+    `$ErrorActionPreference='Stop'`,
+    `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12`,
+    `$server='${baseUrl}'`,
+    `$proc=Get-Process -Name 'Artemia Customer Terminal' -ErrorAction SilentlyContinue | Select-Object -First 1`,
+    `$installDir=''`,
+    `if ($proc -and $proc.Path) { $installDir=Split-Path $proc.Path }`,
+    `if (-not $installDir) { foreach ($c in @('C:\\Artemia-Customer-Terminal', (Join-Path $env:USERPROFILE 'Downloads\\Artemia-Customer-Terminal-PC'), (Join-Path $env:USERPROFILE 'Desktop\\Artemia-Customer-Terminal-PC'), (Join-Path (Get-Location) 'Artemia Customer Terminal-win32-x64'))) { if (Test-Path (Join-Path $c 'Artemia Customer Terminal.exe')) { $installDir=$c; break } } }`,
+    `if (-not $installDir) { $installDir='C:\\Artemia-Customer-Terminal'; Write-Host '[1/4] Downloading Artemia Client base package...'; $zip=Join-Path $env:TEMP 'artemia_client.zip'; Invoke-WebRequest -Uri ($server + '/download/client') -OutFile $zip -UseBasicParsing -TimeoutSec 240; Write-Host ('[2/4] Extracting to ' + $installDir + '...'); New-Item -ItemType Directory -Force -Path $installDir | Out-Null; Expand-Archive -Path $zip -DestinationPath $installDir -Force; $nested=Get-ChildItem -Path $installDir -Recurse -Filter 'Artemia Customer Terminal.exe' | Select-Object -First 1; if ($nested) { $installDir=Split-Path $nested.FullName }; Remove-Item $zip -Force -ErrorAction SilentlyContinue }`,
+    `$exe=Join-Path $installDir 'Artemia Customer Terminal.exe'`,
+    `$asar=Join-Path $installDir 'resources\\app.asar'`,
+    `if (-not (Test-Path $exe)) { throw ('Executable not found in ' + $installDir) }`,
+    `Write-Host '[3/4] Updating to latest live Artemia client...'`,
+    `$tmpAsar=Join-Path $env:TEMP 'artemia_latest.asar'`,
+    `Invoke-WebRequest -Uri ($server + '/download/client/app.asar') -OutFile $tmpAsar -UseBasicParsing -TimeoutSec 60`,
+    `Stop-Process -Name 'Artemia Customer Terminal' -Force -ErrorAction SilentlyContinue`,
+    `Start-Sleep -Seconds 2`,
+    `if ((Test-Path $tmpAsar) -and ((Get-Item $tmpAsar).Length -gt 100000)) { Copy-Item -Path $tmpAsar -Destination $asar -Force; Remove-Item $tmpAsar -Force -ErrorAction SilentlyContinue }`,
+    `Write-Host '[4/4] Registering Windows startup & launching agent...'`,
+    `$runKey='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'`,
+    `New-Item -Path $runKey -Force | Out-Null`,
+    `Set-ItemProperty -Path $runKey -Name 'Artemia Fleet Station Agent' -Value ('"' + $exe + '"')`,
+    `Start-Process -FilePath $exe -WorkingDirectory $installDir`,
+    `Write-Host ''; Write-Host '[OK] Artemia Fleet Agent is running and connected!' -ForegroundColor Green`
+  ].join('; ');
+
+  const batLines = [
+    '@echo off',
+    'chcp 65001 >nul',
+    'cd /d "%~dp0"',
+    'set "ELECTRON_RUN_AS_NODE="',
+    'title Artemia Fleet Agent - Auto Setup & Live Updater',
+    'echo ============================================================',
+    'echo  Artemia Fleet Agent - 1-Click PC Setup ^& Auto-Updater',
+    'echo ============================================================',
+    'echo.',
+    `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${psScript.replace(/"/g, '\\"')}"`,
+    'if errorlevel 1 (',
+    '  echo.',
+    '  echo [ERROR] Setup failed. Check internet connection or run as Administrator.',
+    '  pause',
+    '  exit /b 1',
+    ')',
+    'ping -n 4 127.0.0.1 >nul',
+    'exit /b 0'
+  ];
+
+  c.header('Content-Disposition', 'attachment; filename="Artemia-Client-Setup.bat"');
+  c.header('Content-Type', 'application/x-bat; charset=utf-8');
+  return c.body(batLines.join('\r\n'));
 });
 
 // Direct Client App Download route: serves local package if present or redirects to GitHub Releases CDN

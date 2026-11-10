@@ -167,6 +167,14 @@ function setAutoStart(enable: boolean) {
       name: "Artemia Fleet Station Agent",
       path: getAutoStartLoginPath()
     });
+    if (process.platform === 'win32') {
+      const regKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+      if (enable) {
+        exec(`reg add "${regKey}" /v "Artemia Fleet Station Agent" /t REG_SZ /d "\\"${process.execPath}\\"" /f`, () => {});
+      } else {
+        exec(`reg delete "${regKey}" /v "Artemia Fleet Station Agent" /f`, () => {});
+      }
+    }
   } catch {}
 }
 

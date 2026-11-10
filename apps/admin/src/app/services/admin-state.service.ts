@@ -74,16 +74,16 @@ export class AdminStateService {
   }
 
   private async initOnlineSync() {
+    this.setupRealtimeListeners();
     try {
       const health = await this.apiClient.checkHealth();
       if (health && health.database === 'connected') {
         this.isOnlineMode = true;
         console.log('[AdminState] Connected to live MongoDB Atlas backend via REST & Socket.IO.');
         await this.syncFromBackend();
-        this.setupRealtimeListeners();
       }
     } catch {
-      console.log('[AdminState] Backend connecting or offline...');
+      console.log('[AdminState] Backend connecting or offline, retrying sync shortly...');
     }
   }
 
@@ -147,9 +147,40 @@ export class AdminStateService {
     }
   }
 
+  private listenersRegistered = false;
+
+  private upsertPcInState(incomingPc: any) {
+    if (!incomingPc?.id) return;
+    const currentPcs = [...(this.state.pcs || [])];
+    const targetId = String(incomingPc.id).toLowerCase();
+    const index = currentPcs.findIndex(p => p.id.toLowerCase() === targetId);
+    if (index !== -1) {
+      currentPcs[index] = { ...currentPcs[index], ...incomingPc };
+    } else {
+      currentPcs.push(incomingPc);
+      currentPcs.sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+    }
+    this.rawStateService.updateState({ pcs: currentPcs });
+  }
+
   private setupRealtimeListeners() {
-    this.apiClient.onSocketEvent('pc:updated', () => this.syncFromBackend());
-    this.apiClient.onSocketEvent('pc:registered', () => this.syncFromBackend());
+    if (this.listenersRegistered) return;
+    this.listenersRegistered = true;
+
+    this.apiClient.connectionStatus$.subscribe((status) => {
+      if (status === 'connected' && this.state?.activeAuth?.isAuthenticated) {
+        this.syncFromBackend();
+      }
+    });
+
+    this.apiClient.onSocketEvent('pc:updated', (pc: any) => {
+      this.upsertPcInState(pc);
+      this.syncFromBackend();
+    });
+    this.apiClient.onSocketEvent('pc:registered', (pc: any) => {
+      this.upsertPcInState(pc);
+      this.syncFromBackend();
+    });
     this.apiClient.onSocketEvent('pc:status', () => this.syncFromBackend());
     this.apiClient.onSocketEvent('pc:status-changed', () => this.syncFromBackend());
     this.apiClient.onSocketEvent('pc:telemetry', (data: any) => {

@@ -1,7 +1,7 @@
 {
-  "version": "1.0.7",
+  "version": "1.0.8",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-10T21:30:00.000Z",
+  "releaseDate": "2026-11-10T22:28:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Fix double-OTA broadcast collision, add OTA mutex & unique temp scripts, reliable detached Windows ping-wait restart & quoted auto-start path"
+  "changelog": "Auto-OTA Fleet Sync for ALL PCs (fixed backend release path & semver comparison), hardened legacy-v1.0.0 auto-upgrade, fixed cold-boot pc:join hardwareId race, quoted Windows auto-start & 1-click PC installer"
 }

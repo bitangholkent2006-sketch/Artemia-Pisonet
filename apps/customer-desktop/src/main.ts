@@ -49,7 +49,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.7';
+const CLIENT_AGENT_VERSION = '1.0.8';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -354,8 +354,14 @@ class StationMaintenanceAgent {
 
   constructor() {
     desktopWindow.pisonetDesktop?.cancelShutdown?.().catch?.(() => {});
-    this.setupStationIdentity();
     this.renderUI();
+    this.bootstrapAgent();
+  }
+
+  private async bootstrapAgent() {
+    // Wait for hardwareId, macAddress, and hostname identity BEFORE opening socket
+    // so pc:join never registers with fallback defaults on newly added PCs.
+    await this.setupStationIdentity();
     this.initSocket();
     this.startTelemetryLoop();
   }
@@ -1241,6 +1247,7 @@ class StationMaintenanceAgent {
         pcId: activeId,
         macAddress: this.macAddress,
         hardwareId: this.hardwareId,
+        clientVersion: CLIENT_AGENT_VERSION,
         telemetry: {
           ...this.telemetry,
           diskUsage: this.telemetry.diskUsage

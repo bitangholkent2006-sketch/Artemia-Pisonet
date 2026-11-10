@@ -83,6 +83,16 @@ import { PC, PCStatus } from '@pisonet/shared';
         <div class="bulk-buttons">
           <a
             class="btn btn-sm btn-primary"
+            href="https://artemia-pisonet-backend.onrender.com/download/setup-pc.bat"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="1-Click Auto-Setup & Repair script para sa bag-o o offline nga PC (e.g. PC-06)"
+            style="background: linear-gradient(135deg, #7c3aed, #2563eb); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-weight: 700;"
+          >
+            ⚡ 1-Click PC Setup (.bat)
+          </a>
+          <a
+            class="btn btn-sm btn-primary"
             href="https://github.com/bitangholkent2006-sketch/Artemia-Pisonet/releases/download/v1.0.0/Artemia-Customer-Terminal-PC.zip"
             target="_blank"
             rel="noopener noreferrer"

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { requireAuth, AppEnv } from '../middleware/auth.middleware';
 import { getCollections } from '../database/connection';
 import { CustomerService } from '../services/customer.service';
+import { PcService } from '../services/pc.service';
 
 export const syncRoutes = new Hono<AppEnv>();
 
@@ -11,8 +12,8 @@ syncRoutes.get('/', requireAuth, async (c) => {
   const collections = getCollections();
   const now = new Date();
 
-  // 1. PCs
-  const pcs = await collections.pcs.find({}).sort({ id: 1 }).toArray();
+  // 1. PCs (Reconciled with live WebSocket rooms & heartbeats)
+  const pcs = await PcService.listPcs();
   const safePcs = pcs.map((pc: any) => {
     const { deviceKeyHash, _id, ...rest } = pc;
     return rest;
