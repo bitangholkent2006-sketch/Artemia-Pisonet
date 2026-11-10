@@ -551,6 +551,26 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.to('staff').emit('maintenance:download:res', result);
     });
 
+    // Live WinGet Online Package Search Relay (Runs native winget search on an active client PC)
+    authSocket.on('maintenance:winget:search:req', async (payload: { reqId?: string; query?: string }) => {
+      if (!io || !payload?.query?.trim()) return;
+      const fleetSockets = await io.in('fleet').fetchSockets();
+      const targetStation = fleetSockets.find((s) => s.data?.authType !== 'staff' && s.data?.pcId);
+      if (!targetStation) {
+        authSocket.emit('maintenance:winget:search:res', {
+          reqId: payload.reqId,
+          items: [],
+          error: 'Walay online client PC nga maka-search sa WinGet karon. I-online bisan usa ka PC.'
+        });
+        return;
+      }
+      targetStation.emit('agent:winget:search:req', { reqId: payload.reqId, query: payload.query.trim() });
+    });
+
+    authSocket.on('agent:winget:search:res', (result: any) => {
+      io?.to('staff').emit('maintenance:winget:search:res', result);
+    });
+
     authSocket.on('maintenance:power:run', (payload: any) => {
       emitToPcTarget('agent:power:run', payload, payload.targetPcId || payload.pcId);
     });

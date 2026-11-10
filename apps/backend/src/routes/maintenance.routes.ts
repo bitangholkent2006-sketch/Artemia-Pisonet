@@ -131,7 +131,7 @@ maintenanceRoutes.post('/game-update', requireStaff, async (c) => {
 maintenanceRoutes.post('/download', requireStaff, async (c) => {
   const staff = c.get('user');
   const body = await c.req.json();
-  const { targetPcId = 'all', targetPcIds, url, filename, targetPath, targetDir, autoRun, runArgs, silentArgs } = body;
+  const { targetPcId = 'all', targetPcIds, url, filename, targetPath, targetDir, autoRun, runArgs, silentArgs, createShortcut } = body;
 
   if (!url || !url.trim()) {
     return c.json({ success: false, message: 'Download URL is required' }, 400);
@@ -146,6 +146,7 @@ maintenanceRoutes.post('/download', requireStaff, async (c) => {
     targetPath: targetPath || targetDir,
     autoRun: !!autoRun,
     runArgs: runArgs || silentArgs,
+    createShortcut: createShortcut !== false,
     sender: staff?.fullName || staff?.username || 'Admin',
     timestamp: new Date().toISOString()
   };
@@ -158,6 +159,305 @@ maintenanceRoutes.post('/download', requireStaff, async (c) => {
     message: `Download task dispatched to ${targets.includes('all') ? 'all online stations' : targets.join(', ')}.`,
     payload
   });
+});
+
+function isSafePublicHttpUrl(rawUrl: string): boolean {
+  try {
+    const u = new URL(rawUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const h = u.hostname.toLowerCase();
+    if (
+      h === 'localhost' ||
+      h === '::1' ||
+      h.startsWith('127.') ||
+      h.startsWith('10.') ||
+      h.startsWith('192.168.') ||
+      h.startsWith('169.254.') ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(h)
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function parseFilenameFromHeaders(res: Response, fallbackUrl: string): string {
+  const cd = res.headers.get('content-disposition') || '';
+  const utfMatch = cd.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utfMatch?.[1]) {
+    try { return decodeURIComponent(utfMatch[1].trim().replace(/^["']|["']$/g, '')); } catch {}
+  }
+  const plainMatch = cd.match(/filename\s*=\s*("?)([^";\r\n]+)\1/i);
+  if (plainMatch?.[2]) return plainMatch[2].trim();
+  try {
+    const last = new URL(fallbackUrl).pathname.split('/').filter(Boolean).pop() || '';
+    if (last && last.includes('.')) return decodeURIComponent(last);
+  } catch {}
+  return '';
+}
+
+async function probeDownloadTarget(targetUrl: string): Promise<{
+  url: string;
+  filename: string;
+  sizeBytes: number;
+  contentType: string;
+  isBinary: boolean;
+}> {
+  if (!isSafePublicHttpUrl(targetUrl)) {
+    throw new Error('Blocked unsafe URL.');
+  }
+  const res = await fetch(targetUrl, {
+    method: 'GET',
+    redirect: 'follow',
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36' },
+    signal: AbortSignal.timeout(10000)
+  });
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  const len = parseInt(res.headers.get('content-length') || '0', 10) || 0;
+  const finalUrl = res.url || targetUrl;
+  const filename = parseFilenameFromHeaders(res, finalUrl);
+  const isHtml = ct.includes('text/html') || ct.includes('application/xhtml');
+  if (!isHtml) {
+    try { await res.body?.cancel(); } catch {}
+  }
+  return { url: finalUrl, filename, sizeBytes: len, contentType: ct, isBinary: res.ok && !isHtml };
+}
+
+// Smart Website / File-Host Resolver: Extracts direct downloadable links from MediaFire, Google Drive, Dropbox, GitHub, or Game Websites
+maintenanceRoutes.post('/resolve-download', requireStaff, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  let rawInput = String(body?.url || body?.input || '').trim();
+  if (!rawInput) {
+    return c.json({ success: false, message: 'Palihog isulod ang website o download link.' }, 400);
+  }
+  if (!/^https?:\/\//i.test(rawInput)) {
+    rawInput = 'https://' + rawInput;
+  }
+  if (!isSafePublicHttpUrl(rawInput)) {
+    return c.json({ success: false, message: 'Invalid o private local URL dili pwede.' }, 400);
+  }
+
+  try {
+    const parsed = new URL(rawInput);
+
+    // 1. Google Drive Share Link -> Direct Download
+    if (parsed.hostname.includes('drive.google.com')) {
+      const m = rawInput.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || rawInput.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      if (m?.[1]) {
+        const direct = `https://drive.usercontent.google.com/download?id=${m[1]}&export=download&confirm=t`;
+        return c.json({
+          success: true,
+          candidates: [{
+            url: direct,
+            filename: `gdrive_${m[1]}.zip`,
+            sizeBytes: 0,
+            host: 'Google Drive (Direct)',
+            kind: 'direct'
+          }]
+        });
+      }
+    }
+
+    // 2. Dropbox Share Link -> dl=1
+    if (parsed.hostname.includes('dropbox.com')) {
+      parsed.searchParams.set('dl', '1');
+      const direct = parsed.toString();
+      const probed = await probeDownloadTarget(direct).catch(() => null);
+      return c.json({
+        success: true,
+        candidates: [{
+          url: probed?.url || direct,
+          filename: probed?.filename || 'dropbox_download.zip',
+          sizeBytes: probed?.sizeBytes || 0,
+          host: 'Dropbox (Direct)',
+          kind: 'direct'
+        }]
+      });
+    }
+
+    // 3. GitHub Releases API (extracts .exe/.msi/.zip assets cleanly)
+    const ghMatch = rawInput.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/releases.*)?$/i);
+    if (ghMatch) {
+      const apiRes = await fetch(`https://api.github.com/repos/${ghMatch[1]}/${ghMatch[2].replace(/\.git$/, '')}/releases/latest`, {
+        headers: { 'User-Agent': 'Artemia-Fleet-Resolver', 'Accept': 'application/vnd.github+json' },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (apiRes.ok) {
+        const rel: any = await apiRes.json();
+        const assets = Array.isArray(rel.assets) ? rel.assets : [];
+        const filtered = assets
+          .filter((a: any) => /\.(exe|msi|zip|7z|rar)$/i.test(a.name || ''))
+          .slice(0, 10)
+          .map((a: any) => ({
+            url: a.browser_download_url,
+            filename: a.name,
+            sizeBytes: Number(a.size) || 0,
+            host: `GitHub (${rel.tag_name || 'Release'})`,
+            kind: 'direct'
+          }));
+        if (filtered.length > 0) {
+          return c.json({ success: true, candidates: filtered });
+        }
+      }
+    }
+
+    // 4. Probe HTTP target directly (follows redirects like dl.roslegacy.net/full -> CDN .zip!)
+    const pageRes = await fetch(rawInput, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36' },
+      signal: AbortSignal.timeout(12000)
+    });
+    const ct = (pageRes.headers.get('content-type') || '').toLowerCase();
+    const len = parseInt(pageRes.headers.get('content-length') || '0', 10) || 0;
+    const finalUrl = pageRes.url || rawInput;
+    const isHtml = ct.includes('text/html') || ct.includes('application/xhtml');
+
+    if (!isHtml && pageRes.ok) {
+      try { await pageRes.body?.cancel(); } catch {}
+      return c.json({
+        success: true,
+        candidates: [{
+          url: finalUrl,
+          filename: parseFilenameFromHeaders(pageRes, finalUrl) || 'installer.exe',
+          sizeBytes: len,
+          host: new URL(finalUrl).hostname,
+          kind: 'direct'
+        }]
+      });
+    }
+
+    // 5. Scrape HTML webpage for MediaFire CDN button or downloadable links/buttons
+    const reader = pageRes.body?.getReader();
+    let html = '';
+    if (reader) {
+      const dec = new TextDecoder();
+      while (html.length < 300000) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        html += dec.decode(value, { stream: true });
+      }
+      try { await reader.cancel(); } catch {}
+    }
+
+    if (parsed.hostname.includes('mediafire.com')) {
+      const mfMatch = html.match(/href="(https:\/\/download\d*\.mediafire\.com\/[^"]+)"/i) || html.match(/id="downloadButton"[^>]*href="([^"]+)"/i);
+      if (mfMatch?.[1]) {
+        const probed = await probeDownloadTarget(mfMatch[1]).catch(() => null);
+        return c.json({
+          success: true,
+          candidates: [{
+            url: mfMatch[1],
+            filename: probed?.filename || parseFilenameFromHeaders(pageRes, mfMatch[1]) || 'mediafire_file.zip',
+            sizeBytes: probed?.sizeBytes || 0,
+            host: 'MediaFire (Extracted)',
+            kind: 'direct'
+          }]
+        });
+      }
+    }
+
+    const rawMatches = new Set<string>();
+    for (const m of html.matchAll(/(?:href|data-url|data-href)\s*=\s*["']([^"']+)["']/gi)) {
+      if (m[1]) rawMatches.add(m[1].trim());
+    }
+
+    const scored: Array<{ url: string; score: number }> = [];
+    for (const href of rawMatches) {
+      if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:')) continue;
+      let absUrl = '';
+      try { absUrl = new URL(href, finalUrl).toString(); } catch { continue; }
+      if (!isSafePublicHttpUrl(absUrl)) continue;
+      let score = 0;
+      if (/\.(exe|msi|zip|rar|7z)(\?|$)/i.test(absUrl)) score += 100;
+      if (/(mediafire\.com|drive\.google\.com|mega\.nz|dropbox\.com)/i.test(absUrl)) score += 60;
+      if (/(\/|^)(dl\.|download|installer|setup|client|patch|full)/i.test(absUrl)) score += 35;
+      if (score >= 35 && !/\.(css|js|png|jpg|jpeg|svg|webp|ico|woff2?)(\?|$)/i.test(absUrl)) {
+        scored.push({ url: absUrl, score });
+      }
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const uniqueTop = Array.from(new Map(scored.map((s) => [s.url, s])).values()).slice(0, 8);
+
+    const candidates: Array<{ url: string; filename: string; sizeBytes: number; host: string; kind: string }> = [];
+    for (const item of uniqueTop) {
+      const probed = await probeDownloadTarget(item.url).catch(() => null);
+      if (probed?.isBinary) {
+        candidates.push({
+          url: probed.url,
+          filename: probed.filename || 'download_file',
+          sizeBytes: probed.sizeBytes,
+          host: new URL(probed.url).hostname,
+          kind: 'direct'
+        });
+      } else {
+        let fallbackName = '';
+        try { fallbackName = decodeURIComponent(new URL(item.url).pathname.split('/').pop() || ''); } catch {}
+        candidates.push({
+          url: item.url,
+          filename: fallbackName || new URL(item.url).hostname,
+          sizeBytes: 0,
+          host: new URL(item.url).hostname,
+          kind: /\.(exe|msi|zip|rar|7z)(\?|$)/i.test(item.url) ? 'direct' : 'page'
+        });
+      }
+    }
+
+    return c.json({
+      success: candidates.length > 0,
+      sourceUrl: finalUrl,
+      candidates,
+      message: candidates.length > 0 ? `Nakit-an ang ${candidates.length} download link(s) gikan sa website.` : 'Walay direct download file (.exe/.msi/.zip/.rar) nakit-an sa webpage.'
+    });
+  } catch (err: any) {
+    return c.json({ success: false, message: err?.message || 'Napakyas ang pag-scan sa website.' }, 500);
+  }
+});
+
+// Saved Custom Downloader Shortcuts (Synced in MongoDB across Desktop/Mobile Admin)
+maintenanceRoutes.get('/download-presets', requireStaff, async (c) => {
+  try {
+    const collections = getCollections();
+    const list = await collections.downloadPresets.find({}).sort({ createdAt: -1 }).toArray();
+    return c.json({ success: true, data: list.map(({ _id: _, ...rest }) => rest) });
+  } catch (err: any) {
+    return c.json({ success: false, data: [], message: err?.message });
+  }
+});
+
+maintenanceRoutes.post('/download-presets', requireStaff, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const name = String(body?.name || '').trim();
+  const url = String(body?.url || '').trim();
+  if (!name || !url) {
+    return c.json({ success: false, message: 'Name and URL are required.' }, 400);
+  }
+  const preset = {
+    id: 'custom_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+    name,
+    icon: String(body?.icon || '⭐').trim(),
+    url,
+    filename: String(body?.filename || '').trim(),
+    targetDir: String(body?.targetDir || '').trim(),
+    autoRun: body?.autoRun !== false,
+    silentArgs: String(body?.silentArgs || '').trim(),
+    createShortcut: body?.createShortcut !== false,
+    category: String(body?.category || 'Custom Shop').trim(),
+    createdAt: new Date().toISOString()
+  };
+  const collections = getCollections();
+  await collections.downloadPresets.insertOne({ ...preset });
+  return c.json({ success: true, data: preset });
+});
+
+maintenanceRoutes.delete('/download-presets/:id', requireStaff, async (c) => {
+  const id = c.req.param('id');
+  const collections = getCollections();
+  await collections.downloadPresets.deleteOne({ id });
+  return c.json({ success: true });
 });
 
 // Remote Power Actions: Restart, Shutdown, Sleep, Maintenance Lock

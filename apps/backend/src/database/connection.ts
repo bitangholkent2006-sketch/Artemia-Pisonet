@@ -117,7 +117,8 @@ export function getCollections() {
     pricing: db.collection<DbPricingConfig>('pricing_settings'),
     auditRecords: db.collection<DbAuditRecord>('audit_records'),
     idempotencyKeys: db.collection<DbIdempotencyKey>('idempotency_keys'),
-    systemSettings: db.collection<any>('system_settings')
+    systemSettings: db.collection<any>('system_settings'),
+    downloadPresets: db.collection<any>('download_presets')
   };
 }
 

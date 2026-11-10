@@ -400,10 +400,45 @@ export class ApiClientService {
     autoRun?: boolean;
     runArgs?: string;
     silentArgs?: string;
+    createShortcut?: boolean;
   }) {
     return this.request<{ success: boolean; message: string; payload?: any }>('/api/v1/maintenance/download', {
       method: 'POST',
       body: JSON.stringify(payload)
+    });
+  }
+
+  public async resolveDownloadUrl(url: string) {
+    return this.request<{ success: boolean; sourceUrl?: string; message?: string; candidates?: Array<{ url: string; filename: string; sizeBytes: number; host: string; kind: string }> }>('/api/v1/maintenance/resolve-download', {
+      method: 'POST',
+      body: JSON.stringify({ url })
+    });
+  }
+
+  public async getCustomDownloadPresets() {
+    return this.request<{ success: boolean; data: any[] }>('/api/v1/maintenance/download-presets');
+  }
+
+  public async saveCustomDownloadPreset(preset: {
+    name: string;
+    icon?: string;
+    url: string;
+    filename?: string;
+    targetDir?: string;
+    autoRun?: boolean;
+    silentArgs?: string;
+    createShortcut?: boolean;
+    category?: string;
+  }) {
+    return this.request<{ success: boolean; data: any; message?: string }>('/api/v1/maintenance/download-presets', {
+      method: 'POST',
+      body: JSON.stringify(preset)
+    });
+  }
+
+  public async deleteCustomDownloadPreset(id: string) {
+    return this.request<{ success: boolean }>(`/api/v1/maintenance/download-presets/${id}`, {
+      method: 'DELETE'
     });
   }
 

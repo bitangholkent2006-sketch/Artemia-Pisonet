@@ -2572,38 +2572,181 @@ ipcMain.handle('maintenance:get-hardware-health', () => {
   };
 });
 
-// 11. Remote App & File Downloader (Streamed with Realtime Progress & Auto-Run)
-ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => {
-  try {
-    const { reqId, url, autoRun, runArgs } = payload;
-    const parsedUrl = new URL(url);
-    let filename = payload.filename || path.basename(parsedUrl.pathname);
-    if (!filename || filename.length < 3 || !filename.includes('.')) {
-      filename = `installer_${Date.now()}.exe`;
+// 11. Remote App & File Downloader (WinGet Store, Cloud Hosts, Streamed File, Auto-Extract & Shortcut Creator)
+function parseWingetTable(stdout: string): Array<{ id: string; name: string; version: string }> {
+  const lines = stdout.split(/\r?\n/).map((l) => l.replace(/\r/g, ''));
+  const sepIdx = lines.findIndex((l) => /^-{5,}/.test(l.trim()));
+  if (sepIdx <= 0) return [];
+  const header = lines[sepIdx - 1];
+  const idCol = header.indexOf('Id');
+  const verCol = header.indexOf('Version');
+  if (idCol <= 0) return [];
+  const results: Array<{ id: string; name: string; version: string }> = [];
+  for (let i = sepIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line || !line.trim() || line.startsWith('<')) continue;
+    const name = line.slice(0, idCol).trim();
+    const idAndRest = verCol > idCol ? line.slice(idCol, verCol).trim() : line.slice(idCol).trim().split(/\s+/)[0];
+    const verAndMatch = verCol > idCol ? line.slice(verCol).trim().split(/\s+/)[0] : '';
+    if (idAndRest && name && !idAndRest.includes(' ')) {
+      results.push({ id: idAndRest, name, version: verAndMatch || 'Latest' });
     }
+    if (results.length >= 10) break;
+  }
+  return results;
+}
+
+ipcMain.handle('winget:search', async (_event, query: string) => {
+  const cleanQ = String(query || '').trim();
+  if (!cleanQ || process.platform !== 'win32') return { items: [], error: 'Query required on Windows' };
+  return new Promise((resolve) => {
+    execFile(
+      'winget',
+      ['search', cleanQ, '--source', 'winget', '--accept-source-agreements', '-n', '10', '--disable-interactivity'],
+      { timeout: 15000, windowsHide: true },
+      (err, stdout) => {
+        const items = stdout ? parseWingetTable(stdout) : [];
+        resolve({ items, error: items.length === 0 && err ? err.message : undefined });
+      }
+    );
+  });
+});
+
+function resolveHeaderFilename(res: Response, fallbackUrl: string, explicitFilename?: string): string {
+  if (explicitFilename && explicitFilename.trim()) return explicitFilename.trim();
+  const cd = res.headers.get('content-disposition') || '';
+  const utfMatch = cd.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utfMatch?.[1]) {
+    try { return path.basename(decodeURIComponent(utfMatch[1].trim().replace(/^["']|["']$/g, ''))); } catch {}
+  }
+  const plainMatch = cd.match(/filename\s*=\s*("?)([^";\r\n]+)\1/i);
+  if (plainMatch?.[2]) return path.basename(plainMatch[2].trim());
+  try {
+    const seg = new URL(res.url || fallbackUrl).pathname.split('/').filter(Boolean).pop();
+    if (seg && seg.includes('.')) return path.basename(decodeURIComponent(seg));
+  } catch {}
+  return `installer_${Date.now()}.exe`;
+}
+
+function createDesktopShortcutForExtracted(extractDir: string, shortcutName: string): Promise<string | null> {
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  const ps = `
+    $ProgressPreference = 'SilentlyContinue'
+    $dir = '${extractDir.replace(/'/g, "''")}'
+    $scName = '${shortcutName.replace(/'/g, "''").replace(/[\\/:*?"<>|]/g, '')}'
+    if (-not $scName) { $scName = 'Game' }
+    $exe = Get-ChildItem -Path $dir -Recurse -Filter '*.exe' -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -notmatch 'unins|crash|unitycrash|redist|vc_redist|dxsetup|update|helper|report' } |
+      Sort-Object @{Expression={ if ($_.DirectoryName -eq $dir) { 0 } else { 1 } }}, @{Expression={ -$_.Length }} |
+      Select-Object -First 1
+    if ($exe) {
+      $ws = New-Object -ComObject WScript.Shell
+      $desktop = [Environment]::GetFolderPath('Desktop')
+      $lnk = $ws.CreateShortcut((Join-Path $desktop ($scName + '.lnk')))
+      $lnk.TargetPath = $exe.FullName
+      $lnk.WorkingDirectory = $exe.DirectoryName
+      $lnk.Save()
+      Write-Output $exe.FullName
+    }
+  `;
+  const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { timeout: 15000, windowsHide: true }, (_e, stdout) => {
+      resolve(stdout?.trim() || null);
+    });
+  });
+}
+
+ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean }) => {
+  try {
+    const { reqId, autoRun, runArgs, createShortcut } = payload;
+    let url = String(payload.url || '').trim();
+
+    // 1. Handle winget://PackageId silent Windows Store / App install
+    if (url.toLowerCase().startsWith('winget://')) {
+      const pkgId = url.slice('winget://'.length).trim();
+      if (!pkgId) return { success: false, error: 'Missing WinGet Package ID' };
+      event.sender.send('maintenance:download:progress', { reqId, downloadedBytes: 0, totalBytes: 0, percent: 25, status: 'downloading' });
+      return await new Promise((resolve) => {
+        execFile(
+          'winget',
+          ['install', '--id', pkgId, '-e', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'],
+          { timeout: 240000, windowsHide: true },
+          (err, stdout, stderr) => {
+            const outText = (stdout || '') + (stderr || '');
+            const alreadyInstalled = outText.includes('already installed') || outText.includes('No available upgrade') || (err as any)?.code === -1978335189 || (err as any)?.code === -1978335212;
+            const ok = !err || alreadyInstalled;
+            if (ok) {
+              event.sender.send('maintenance:download:progress', { reqId, downloadedBytes: 1, totalBytes: 1, percent: 100, status: 'completed' });
+            }
+            resolve({
+              success: ok,
+              destPath: `WinGet:${pkgId}`,
+              filename: pkgId,
+              totalBytes: 0,
+              executed: ok,
+              execError: ok ? undefined : (outText.trim().slice(-220) || err?.message)
+            });
+          }
+        );
+      });
+    }
+
+    const fetchBinaryWithUnwrap = async (startUrl: string, depth = 0): Promise<Response> => {
+      if (depth > 3) throw new Error('Too many webpage unwrap hops');
+      const r = await fetch(startUrl, {
+        redirect: 'follow',
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36' }
+      });
+      if (!r.ok || !r.body) {
+        throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+      }
+      const ct = (r.headers.get('content-type') || '').toLowerCase();
+      if (ct.includes('text/html') || ct.includes('application/xhtml')) {
+        const html = await r.text();
+        // Auto-unwrap MediaFire or Google Drive virus-scan warning or first direct binary link
+        const mf = html.match(/href="(https:\/\/download\d*\.mediafire\.com\/[^"]+)"/i) || html.match(/id="downloadButton"[^>]*href="([^"]+)"/i);
+        if (mf?.[1]) return fetchBinaryWithUnwrap(mf[1], depth + 1);
+        const gdForm = html.match(/action="(https:\/\/drive\.usercontent\.google\.com\/download[^"]*)"/i);
+        const gdConfirm = html.match(/name="confirm"\s+value="([^"]+)"/i);
+        const gdUuid = html.match(/name="uuid"\s+value="([^"]+)"/i);
+        const gdId = startUrl.match(/[?&]id=([^&]+)/)?.[1] || startUrl.match(/\/d\/([^/]+)/)?.[1];
+        if ((gdForm || gdUuid) && gdId) {
+          const next = `https://drive.usercontent.google.com/download?id=${encodeURIComponent(gdId)}&export=download&confirm=${encodeURIComponent(gdConfirm?.[1] || 't')}${gdUuid?.[1] ? '&uuid=' + encodeURIComponent(gdUuid[1]) : ''}`;
+          return fetchBinaryWithUnwrap(next, depth + 1);
+        }
+        const binLink = html.match(/href=["']([^"']+\.(?:exe|msi|zip|rar|7z)(?:\?[^"']*)?)["']/i);
+        if (binLink?.[1]) {
+          return fetchBinaryWithUnwrap(new URL(binLink[1], r.url || startUrl).toString(), depth + 1);
+        }
+        throw new Error('Ang URL kay website page (HTML), dili direct file. Gamita ang Scan Website button sa Admin.');
+      }
+      return r;
+    };
+
+    const res = await fetchBinaryWithUnwrap(url);
+    const filename = resolveHeaderFilename(res, url, payload.filename);
 
     const defaultDir = path.join(os.homedir(), 'Downloads');
-    if (!fs.existsSync(defaultDir)) {
-      fs.mkdirSync(defaultDir, { recursive: true });
+    if (!fs.existsSync(defaultDir)) fs.mkdirSync(defaultDir, { recursive: true });
+
+    let destFile = path.join(defaultDir, filename);
+    const customTarget = payload.targetPath?.trim() || '';
+    if (customTarget) {
+      // Allow Target Directory inputs like "C:\Games" OR full file path "C:\Games\setup.exe"
+      const looksLikeDir = (fs.existsSync(customTarget) && fs.statSync(customTarget).isDirectory()) || !/\.[a-zA-Z0-9]{2,5}$/.test(path.basename(customTarget));
+      destFile = looksLikeDir ? path.join(customTarget, filename) : customTarget;
     }
 
-    const destFile = payload.targetPath && payload.targetPath.trim() ? payload.targetPath.trim() : path.join(defaultDir, filename);
     const destDir = path.dirname(destFile);
-    if (!fs.existsSync(destDir)) {
-      fs.mkdirSync(destDir, { recursive: true });
-    }
-
-    const res = await fetch(url);
-    if (!res.ok || !res.body) {
-      return { success: false, error: `HTTP ${res.status}: ${res.statusText}` };
-    }
+    if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
 
     const totalBytes = parseInt(res.headers.get('content-length') || '0', 10);
     let downloadedBytes = 0;
     let lastReport = 0;
 
     const fileStream = fs.createWriteStream(destFile);
-    const reader = res.body.getReader();
+    const reader = res.body!.getReader();
 
     try {
       while (true) {
@@ -2630,7 +2773,7 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
         }
       }
 
-      // MUST wait until WriteStream finishes flushing and closes file handle before Auto-Run!
+      // MUST wait until WriteStream finishes flushing and closes file handle before Auto-Run / Extract!
       await new Promise<void>((resolveClose, rejectClose) => {
         fileStream.once('close', resolveClose);
         fileStream.once('error', rejectClose);
@@ -2652,26 +2795,76 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
 
     let executed = false;
     let execError: string | undefined = undefined;
+    let finalDestPath = destFile;
 
-    if (autoRun) {
-      try {
-        const argParts = (runArgs || '').trim() ? (runArgs || '').trim().split(/\s+/) : [];
-        const proc = spawn(destFile, argParts, {
-          cwd: destDir,
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: false
-        });
-        proc.unref();
-        executed = true;
-      } catch (e: any) {
-        execError = e?.message || String(e);
+    if (autoRun && process.platform === 'win32') {
+      const lowerExt = path.extname(destFile).toLowerCase();
+      if (lowerExt === '.zip' || lowerExt === '.7z' || lowerExt === '.rar') {
+        try {
+          const cleanFolderName = path.basename(destFile, lowerExt).replace(/[_-]*(setup|install|full|client).*$/i, '').trim() || path.basename(destFile, lowerExt);
+          const extractBase = customTarget && (fs.existsSync(customTarget) || !/\.[a-zA-Z0-9]{2,5}$/.test(path.basename(customTarget)))
+            ? path.join(customTarget, cleanFolderName)
+            : path.join('C:\\Games', cleanFolderName);
+          if (!fs.existsSync(extractBase)) fs.mkdirSync(extractBase, { recursive: true });
+
+          if (lowerExt === '.zip') {
+            await new Promise<void>((resExt, rejExt) => {
+              execFile(
+                'powershell.exe',
+                ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', `Expand-Archive -LiteralPath '${destFile.replace(/'/g, "''")}' -DestinationPath '${extractBase.replace(/'/g, "''")}' -Force`],
+                { timeout: 600000, windowsHide: true },
+                (err) => (err ? rejExt(err) : resExt())
+              );
+            });
+          } else {
+            const sevenZ = ['C:\\Program Files\\7-Zip\\7z.exe', 'C:\\Program Files (x86)\\7-Zip\\7z.exe'].find((p) => fs.existsSync(p));
+            const winRar = ['C:\\Program Files\\WinRAR\\WinRAR.exe', 'C:\\Program Files (x86)\\WinRAR\\WinRAR.exe'].find((p) => fs.existsSync(p));
+            if (sevenZ) {
+              await new Promise<void>((r, j) => execFile(sevenZ, ['x', '-y', `-o${extractBase}`, destFile], { timeout: 600000, windowsHide: true }, (e) => (e ? j(e) : r())));
+            } else if (winRar) {
+              await new Promise<void>((r, j) => execFile(winRar, ['x', '-y', '-ibck', destFile, extractBase + '\\'], { timeout: 600000, windowsHide: true }, (e) => (e ? j(e) : r())));
+            } else {
+              await new Promise<void>((r, j) => execFile('tar.exe', ['-xf', destFile, '-C', extractBase], { timeout: 600000, windowsHide: true }, (e) => (e ? j(e) : r())));
+            }
+          }
+
+          if (createShortcut !== false) {
+            await createDesktopShortcutForExtracted(extractBase, cleanFolderName);
+          }
+          finalDestPath = extractBase;
+          executed = true;
+        } catch (e: any) {
+          execError = e?.message || String(e);
+        }
+      } else if (lowerExt === '.msi') {
+        try {
+          const msiArgs = (runArgs || '').trim() ? (runArgs || '').trim().split(/\s+/) : ['/qn', '/norestart'];
+          const proc = spawn('msiexec.exe', ['/i', destFile, ...msiArgs], { detached: true, stdio: 'ignore', windowsHide: true });
+          proc.unref();
+          executed = true;
+        } catch (e: any) {
+          execError = e?.message || String(e);
+        }
+      } else {
+        try {
+          const argParts = (runArgs || '').trim() ? (runArgs || '').trim().split(/\s+/) : [];
+          const proc = spawn(destFile, argParts, {
+            cwd: destDir,
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false
+          });
+          proc.unref();
+          executed = true;
+        } catch (e: any) {
+          execError = e?.message || String(e);
+        }
       }
     }
 
     return {
       success: true,
-      destPath: destFile,
+      destPath: finalDestPath,
       filename,
       totalBytes: downloadedBytes,
       executed,

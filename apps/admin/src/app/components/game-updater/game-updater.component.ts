@@ -11,9 +11,12 @@ export interface AppPreset {
   icon: string;
   url: string;
   filename: string;
+  targetDir?: string;
   autoRun: boolean;
   silentArgs: string;
+  createShortcut?: boolean;
   category: string;
+  isCustom?: boolean;
 }
 
 export interface StationDownloadState {
@@ -168,42 +171,165 @@ export interface StationDownloadState {
             </div>
           </div>
 
-          <!-- Step 2: Download Configuration & Presets -->
+          <!-- Step 2: Smart Store, Website Extractor, WinGet Search & Presets -->
           <div class="card">
-            <div class="card-header">
-              <span class="step-badge">Step 2</span>
-              <h3 class="card-title">Pilia o Isulod ang App / File</h3>
-            </div>
-
-            <!-- Quick App Presets -->
-            <div class="presets-header">⚡ Popular 1-Click App Presets:</div>
-            <div class="presets-grid">
+            <div class="card-header" style="justify-content: space-between; flex-wrap: wrap;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span class="step-badge">Step 2</span>
+                <h3 class="card-title">Smart App & Game Store / Link Finder</h3>
+              </div>
               <button
                 type="button"
-                *ngFor="let p of popularPresets"
-                class="preset-btn"
-                [ngClass]="{'active': selectedPresetId === p.id}"
-                (click)="applyPreset(p)"
+                class="btn-toggle-all"
+                (click)="showSaveShortcutForm = !showSaveShortcutForm"
+                [disabled]="!downloadUrl.trim()"
+                title="I-save ang current URL isip permanenteng 1-click shortcut"
               >
-                <span class="preset-icon">{{ p.icon }}</span>
-                <span class="preset-name">{{ p.name }}</span>
+                ⭐ Save as Shortcut
               </button>
             </div>
 
-            <!-- Download Form Inputs -->
+            <!-- Save Custom Shortcut Inline Form -->
+            <div *ngIf="showSaveShortcutForm" style="background: #090d16; border: 1px solid #334155; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+              <div style="font-size: 0.8rem; font-weight: 700; color: #fbbf24; margin-bottom: 8px;">⭐ I-save isip 1-Click Shop Shortcut (Synced sa Database)</div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <input type="text" class="form-input" style="flex: 2; min-width: 160px;" [(ngModel)]="customShortcutName" placeholder="Pangalan (e.g. ROS Legacy / CrossFire)" />
+                <input type="text" class="form-input" style="width: 64px; text-align: center;" [(ngModel)]="customShortcutIcon" placeholder="🎮" />
+                <button type="button" class="btn btn-sm btn-primary" (click)="saveCurrentAsShortcut()" [disabled]="!customShortcutName.trim() || !downloadUrl.trim() || isSavingShortcut">
+                  {{ isSavingShortcut ? 'Saving...' : '💾 Save' }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Store Search & WinGet Online Search -->
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
+              <input
+                type="text"
+                class="form-input"
+                style="flex: 1; min-width: 170px;"
+                [(ngModel)]="presetSearchQuery"
+                (keydown.enter)="searchOnlineCatalog()"
+                placeholder="Search games/apps (e.g. ros, steam, vlc, obs, zoom)..."
+              />
+              <button
+                type="button"
+                class="btn btn-sm btn-secondary"
+                (click)="searchOnlineCatalog()"
+                [disabled]="!presetSearchQuery.trim() || isSearchingWinget"
+                title="Pangita online sa Windows Package Manager (WinGet)"
+              >
+                {{ isSearchingWinget ? '⏳ Nag-search...' : '🔍 Search WinGet' }}
+              </button>
+            </div>
+
+            <!-- WinGet Live Search Results -->
+            <div *ngIf="wingetResults.length > 0" style="background: #090d16; border: 1px solid rgba(56,189,248,0.4); border-radius: 8px; padding: 10px; margin-bottom: 12px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 0.76rem; font-weight: 700; color: #38bdf8;">🌐 Online Windows Catalog Results (1-Click Silent Install):</span>
+                <button type="button" class="btn-close-sm" (click)="wingetResults = []">✕</button>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px; max-height: 170px; overflow-y: auto;">
+                <div
+                  *ngFor="let item of wingetResults"
+                  style="display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #111827; border: 1px solid #1e293b; border-radius: 6px; padding: 6px 10px;"
+                >
+                  <div style="min-width: 0;">
+                    <div style="font-size: 0.8rem; font-weight: 700; color: #f8fafc;">{{ item.name }}</div>
+                    <div style="font-size: 0.7rem; color: #94a3b8;">{{ item.id }} • v{{ item.version }}</div>
+                  </div>
+                  <button type="button" class="btn-toggle-all" (click)="useWingetPackage(item)">⚡ Select</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Category Filter Pills -->
+            <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;">
+              <button
+                type="button"
+                *ngFor="let cat of presetCategories"
+                class="btn-toggle-all"
+                [style.background]="activeCategory === cat.key ? 'rgba(2, 132, 199, 0.3)' : ''"
+                [style.borderColor]="activeCategory === cat.key ? '#38bdf8' : ''"
+                (click)="activeCategory = cat.key"
+              >
+                {{ cat.label }}
+              </button>
+            </div>
+
+            <!-- Filtered 1-Click Presets Grid -->
+            <div class="presets-grid">
+              <div
+                *ngFor="let p of filteredPresets"
+                class="preset-btn"
+                [ngClass]="{'active': selectedPresetId === p.id}"
+                (click)="applyPreset(p)"
+                style="justify-content: space-between;"
+              >
+                <span style="display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;">
+                  <span class="preset-icon">{{ p.icon }}</span>
+                  <span class="preset-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ p.name }}</span>
+                </span>
+                <button
+                  *ngIf="p.isCustom"
+                  type="button"
+                  class="btn-close-sm"
+                  style="font-size: 0.75rem; color: #fb7185; padding: 0 2px;"
+                  (click)="deleteCustomShortcut($event, p.id)"
+                  title="Delete saved shortcut"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <!-- Download Form Inputs + Website Smart Link Resolver -->
             <div class="download-form">
               <div class="form-group">
                 <label class="form-label">
-                  <span>Direct Download URL (HTTP/HTTPS)</span>
+                  <span>Website URL o Direct Download Link (HTTP/HTTPS/MediaFire/GDrive/WinGet)</span>
                   <span class="req">*</span>
                 </label>
-                <input
-                  type="text"
-                  class="form-input"
-                  [(ngModel)]="downloadUrl"
-                  placeholder="https://example.com/installer.exe"
-                  (ngModelChange)="onUrlChange()"
-                />
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                  <input
+                    type="text"
+                    class="form-input"
+                    style="flex: 1; min-width: 190px;"
+                    [(ngModel)]="downloadUrl"
+                    placeholder="e.g. https://roslegacy.net/ o MediaFire/GDrive o .exe/.zip"
+                    (ngModelChange)="onUrlChange()"
+                  />
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-primary"
+                    (click)="scanWebsiteForDownload()"
+                    [disabled]="!downloadUrl.trim() || isScanningUrl"
+                    title="I-scan ang website page aron awtomatikong kuhaon ang tinuod nga download link"
+                  >
+                    {{ isScanningUrl ? '⏳ Scanning...' : '✨ Scan Website / Fix Link' }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- Discovered Website Download Candidates -->
+              <div *ngIf="resolvedCandidates.length > 0" style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; padding: 10px; margin-bottom: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <span style="font-size: 0.76rem; font-weight: 700; color: #34d399;">✨ Nakit-an nga Download Link(s) sa Website (Click para gamiton):</span>
+                  <button type="button" class="btn-close-sm" (click)="resolvedCandidates = []">✕</button>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                  <div
+                    *ngFor="let c of resolvedCandidates"
+                    style="display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #090d16; border: 1px solid #1e293b; border-radius: 6px; padding: 6px 10px;"
+                  >
+                    <div style="min-width: 0; overflow: hidden;">
+                      <div style="font-size: 0.78rem; font-weight: 700; color: #f8fafc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        {{ c.filename }} <span *ngIf="c.sizeBytes > 0" style="color: #38bdf8;">({{ formatSize(c.sizeBytes) }})</span>
+                      </div>
+                      <div style="font-size: 0.68rem; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ c.host }} • {{ c.url }}</div>
+                    </div>
+                    <button type="button" class="btn-toggle-all" (click)="applyResolvedCandidate(c)">✅ Gamita Ni</button>
+                  </div>
+                </div>
               </div>
 
               <div class="form-row">
@@ -213,7 +339,7 @@ export interface StationDownloadState {
                     type="text"
                     class="form-input"
                     [(ngModel)]="downloadFilename"
-                    placeholder="e.g. ChromeStandaloneSetup64.exe"
+                    placeholder="Auto-detect kung blangko"
                   />
                 </div>
                 <div class="form-group half">
@@ -222,23 +348,36 @@ export interface StationDownloadState {
                     type="text"
                     class="form-input"
                     [(ngModel)]="downloadTargetDir"
-                    placeholder="Default: Downloads folder"
+                    placeholder="Default: Downloads (or C:\Games)"
                   />
+                  <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px;">
+                    <button type="button" class="btn-toggle-all" style="font-size: 0.68rem; padding: 2px 6px;" (click)="downloadTargetDir = ''">Downloads</button>
+                    <button type="button" class="btn-toggle-all" style="font-size: 0.68rem; padding: 2px 6px;" (click)="downloadTargetDir = 'C:\\Games'">C:\Games</button>
+                    <button type="button" class="btn-toggle-all" style="font-size: 0.68rem; padding: 2px 6px;" (click)="downloadTargetDir = 'D:\\Games'">D:\Games</button>
+                    <button type="button" class="btn-toggle-all" style="font-size: 0.68rem; padding: 2px 6px;" (click)="downloadTargetDir = 'C:\\Apps'">C:\Apps</button>
+                  </div>
                 </div>
               </div>
 
-              <!-- Auto-run / Silent Install Options -->
+              <!-- Auto-run / Extract / Desktop Shortcut Options -->
               <div class="install-options-box">
                 <label class="checkbox-label">
                   <input type="checkbox" [(ngModel)]="autoRunInstaller" />
                   <span class="checkbox-text">
-                    <strong>Auto-run installer after download</strong>
-                    <span class="subtext">Awtomatikong sugdan ang installation pagkahuman sa download</span>
+                    <strong>Auto-install (.exe/.msi/WinGet) o Auto-extract (.zip/.rar/.7z)</strong>
+                    <span class="subtext">Awtomatikong mo-install o mo-extract sa folder pagkahuman sa download</span>
+                  </span>
+                </label>
+                <label class="checkbox-label" style="margin-top: 8px;" *ngIf="autoRunInstaller">
+                  <input type="checkbox" [(ngModel)]="createDesktopShortcut" />
+                  <span class="checkbox-text">
+                    <strong>Paghimo og Desktop Shortcut (.lnk) para sa Extracted Games</strong>
+                    <span class="subtext">Para makita dayon sa customer desktop (e.g. ROS Legacy, offline games)</span>
                   </span>
                 </label>
 
-                <div *ngIf="autoRunInstaller" class="form-group silent-args-group">
-                  <label class="form-label">Silent Install Flags / Arguments</label>
+                <div *ngIf="autoRunInstaller && !downloadUrl.startsWith('winget://')" class="form-group silent-args-group">
+                  <label class="form-label">Silent Install Flags / Arguments (Para sa .exe/.msi)</label>
                   <input
                     type="text"
                     class="form-input"
@@ -1377,24 +1516,76 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
 
   popularPresets: AppPreset[] = [
     {
+      id: 'roslegacy',
+      name: 'ROS Legacy (Full .zip)',
+      icon: '🎯',
+      url: 'https://dl.roslegacy.net/full',
+      filename: 'ROSLegacy_Install.zip',
+      targetDir: 'C:\\Games\\ROS Legacy',
+      autoRun: true,
+      silentArgs: '',
+      createShortcut: true,
+      category: 'Games'
+    },
+    {
+      id: 'steam',
+      name: 'Steam Client',
+      icon: '🎮',
+      url: 'https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe',
+      filename: 'SteamSetup.exe',
+      autoRun: true,
+      silentArgs: '/S',
+      category: 'Games'
+    },
+    {
+      id: 'epic',
+      name: 'Epic Games',
+      icon: '⚡',
+      url: 'https://launcher-public-service-prod06.ol.epicgames.com/launcher/api/installer/download/EpicGamesLauncherInstaller.msi',
+      filename: 'EpicGamesLauncherInstaller.msi',
+      autoRun: true,
+      silentArgs: '/qn /norestart',
+      category: 'Games'
+    },
+    {
+      id: 'roblox',
+      name: 'Roblox Player',
+      icon: '🧱',
+      url: 'https://www.roblox.com/download/client',
+      filename: 'RobloxPlayerLauncher.exe',
+      autoRun: true,
+      silentArgs: '',
+      category: 'Games'
+    },
+    {
+      id: 'valorant',
+      name: 'Valorant / Riot',
+      icon: '🔫',
+      url: 'https://valorant.secure.dyn.riotcdn.net/channels/public/x/installer/current/live.live.ap.exe',
+      filename: 'InstallValorant.exe',
+      autoRun: true,
+      silentArgs: '--skip-welcome',
+      category: 'Games'
+    },
+    {
       id: 'chrome',
       name: 'Google Chrome',
       icon: '🌐',
-      url: 'https://dl.google.com/chrome/install/standalone/ChromeStandaloneSetup64.exe',
+      url: 'https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe',
       filename: 'ChromeStandaloneSetup64.exe',
       autoRun: true,
       silentArgs: '/silent /install',
-      category: 'Web Browser'
+      category: 'Browsers'
     },
     {
-      id: 'discord',
-      name: 'Discord',
-      icon: '💬',
-      url: 'https://discord.com/api/download?platform=win',
-      filename: 'DiscordSetup.exe',
+      id: 'brave',
+      name: 'Brave Browser',
+      icon: '🦁',
+      url: 'https://laptop-updates.brave.com/latest/winx64',
+      filename: 'BraveBrowserSetup.exe',
       autoRun: true,
-      silentArgs: '/s',
-      category: 'Gaming Voice & Chat'
+      silentArgs: '/silent /install',
+      category: 'Browsers'
     },
     {
       id: 'firefox',
@@ -1404,7 +1595,37 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
       filename: 'FirefoxInstaller.exe',
       autoRun: true,
       silentArgs: '/S',
-      category: 'Web Browser'
+      category: 'Browsers'
+    },
+    {
+      id: 'discord',
+      name: 'Discord',
+      icon: '💬',
+      url: 'https://discord.com/api/download?platform=win',
+      filename: 'DiscordSetup.exe',
+      autoRun: true,
+      silentArgs: '-s',
+      category: 'Browsers'
+    },
+    {
+      id: 'vlc',
+      name: 'VLC Player',
+      icon: '🎬',
+      url: 'https://get.videolan.org/vlc/3.0.21/win64/vlc-3.0.21-win64.exe',
+      filename: 'vlc-win64.exe',
+      autoRun: true,
+      silentArgs: '/L=1033 /S',
+      category: 'Tools'
+    },
+    {
+      id: 'winrar',
+      name: 'WinRAR (64-bit)',
+      icon: '🗜️',
+      url: 'https://www.win-rar.com/fileadmin/winrar-versions/winrar/winrar-x64-701.exe',
+      filename: 'winrar-x64.exe',
+      autoRun: true,
+      silentArgs: '/S',
+      category: 'Tools'
     },
     {
       id: '7zip',
@@ -1414,7 +1635,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
       filename: '7z2408-x64.exe',
       autoRun: true,
       silentArgs: '/S',
-      category: 'File Archiver'
+      category: 'Tools'
     },
     {
       id: 'spotify',
@@ -1424,25 +1645,67 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
       filename: 'SpotifySetup.exe',
       autoRun: true,
       silentArgs: '/silent',
-      category: 'Media & Music'
+      category: 'Tools'
+    },
+    {
+      id: 'vcredist',
+      name: 'Visual C++ (x64)',
+      icon: '🧩',
+      url: 'winget://Microsoft.VCRedist.2015+.x64',
+      filename: 'WinGet',
+      autoRun: true,
+      silentArgs: '',
+      category: 'Tools'
+    },
+    {
+      id: 'obs',
+      name: 'OBS Studio',
+      icon: '🎥',
+      url: 'winget://OBSProject.OBSStudio',
+      filename: 'WinGet',
+      autoRun: true,
+      silentArgs: '',
+      category: 'Tools'
     },
     {
       id: 'custom',
-      name: 'Custom Direct URL',
+      name: 'Custom URL / Website',
       icon: '🔗',
       url: '',
       filename: '',
       autoRun: true,
       silentArgs: '/S',
-      category: 'Direct Download'
+      category: 'Custom'
     }
   ];
 
+  customPresets: AppPreset[] = [];
+  presetSearchQuery: string = '';
+  activeCategory: string = 'all';
+  presetCategories = [
+    { key: 'all', label: 'All' },
+    { key: 'Games', label: '🎮 Games' },
+    { key: 'Browsers', label: '🌐 Browsers & Chat' },
+    { key: 'Tools', label: '🛠️ Tools' },
+    { key: 'custom', label: '⭐ Saved' }
+  ];
+
+  isScanningUrl = false;
+  resolvedCandidates: Array<{ url: string; filename: string; sizeBytes: number; host: string; kind: string }> = [];
+  isSearchingWinget = false;
+  wingetResults: Array<{ id: string; name: string; version: string }> = [];
+
+  showSaveShortcutForm = false;
+  customShortcutName = '';
+  customShortcutIcon = '⭐';
+  isSavingShortcut = false;
+
   selectedPresetId: string = 'chrome';
-  downloadUrl: string = 'https://dl.google.com/chrome/install/standalone/ChromeStandaloneSetup64.exe';
+  downloadUrl: string = 'https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe';
   downloadFilename: string = 'ChromeStandaloneSetup64.exe';
   downloadTargetDir: string = '';
   autoRunInstaller: boolean = true;
+  createDesktopShortcut: boolean = true;
   silentArgs: string = '/silent /install';
   isDispatchingDownload = false;
 
@@ -1484,6 +1747,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    this.loadCustomShortcuts();
     this.adminState.getClientUpdateInfo().then((info) => {
       if (info?.success && info.data) {
         if (info.data.version) this.latestOtaVersion = info.data.version;
@@ -1705,16 +1969,149 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
     this.consoleLogs = [];
   }
 
+  get allPresets(): AppPreset[] {
+    return [...this.customPresets, ...this.popularPresets];
+  }
+
+  get filteredPresets(): AppPreset[] {
+    let list = this.allPresets;
+    if (this.activeCategory === 'custom') {
+      list = list.filter((p) => p.isCustom);
+    } else if (this.activeCategory !== 'all') {
+      list = list.filter((p) => p.category === this.activeCategory);
+    }
+    if (this.presetSearchQuery.trim()) {
+      const q = this.presetSearchQuery.trim().toLowerCase();
+      list = list.filter((p) => p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q) || p.url.toLowerCase().includes(q));
+    }
+    return list;
+  }
+
+  async loadCustomShortcuts() {
+    const saved = await this.adminState.getCustomDownloadPresets();
+    this.customPresets = saved.map((s: any) => ({ ...s, isCustom: true }));
+  }
+
+  async saveCurrentAsShortcut() {
+    if (!this.customShortcutName.trim() || !this.downloadUrl.trim()) return;
+    this.isSavingShortcut = true;
+    try {
+      const res = await this.adminState.saveCustomDownloadPreset({
+        name: this.customShortcutName.trim(),
+        icon: this.customShortcutIcon.trim() || '⭐',
+        url: this.downloadUrl.trim(),
+        filename: this.downloadFilename.trim(),
+        targetDir: this.downloadTargetDir.trim(),
+        autoRun: this.autoRunInstaller,
+        silentArgs: this.silentArgs.trim(),
+        createShortcut: this.createDesktopShortcut,
+        category: 'Games'
+      });
+      if (res.success && res.data) {
+        this.customPresets = [{ ...res.data, isCustom: true }, ...this.customPresets];
+        this.customShortcutName = '';
+        this.showSaveShortcutForm = false;
+        this.statusNotice = `⭐ Na-save ang shortcut nga "${res.data.name}"! 1-click na siya bisan asa ka mo-login.`;
+        this.noticeType = 'success';
+      }
+    } finally {
+      this.isSavingShortcut = false;
+    }
+  }
+
+  async deleteCustomShortcut(ev: Event, id: string) {
+    ev.stopPropagation();
+    await this.adminState.deleteCustomDownloadPreset(id);
+    this.customPresets = this.customPresets.filter((p) => p.id !== id);
+  }
+
+  async searchOnlineCatalog() {
+    const q = this.presetSearchQuery.trim();
+    if (!q || this.isSearchingWinget) return;
+    this.isSearchingWinget = true;
+    this.wingetResults = [];
+    try {
+      const res = await this.adminState.searchWingetCatalog(q);
+      this.wingetResults = res.items || [];
+      if (this.wingetResults.length === 0) {
+        this.statusNotice = res.error || `Walay WinGet package nakit-an para sa "${q}". Sulayi i-paste ang website URL ug gamita ang Scan Website.`;
+        this.noticeType = 'warn';
+      }
+    } finally {
+      this.isSearchingWinget = false;
+    }
+  }
+
+  useWingetPackage(item: { id: string; name: string; version: string }) {
+    this.downloadUrl = `winget://${item.id}`;
+    this.downloadFilename = `${item.name} (${item.id})`;
+    this.autoRunInstaller = true;
+    this.silentArgs = '';
+    this.wingetResults = [];
+    this.statusNotice = `✅ Gi-select ang "${item.name}" (${item.id}). I-click lang ang Download button sa taas aron mo-auto install sa mga PC!`;
+    this.noticeType = 'success';
+  }
+
+  async scanWebsiteForDownload() {
+    const raw = this.downloadUrl.trim();
+    if (!raw || this.isScanningUrl) return;
+    this.isScanningUrl = true;
+    this.resolvedCandidates = [];
+    try {
+      const res = await this.adminState.resolveDownloadUrl(raw);
+      const list = res.candidates || [];
+      if (list.length === 1 && list[0].kind === 'direct') {
+        this.applyResolvedCandidate(list[0]);
+        this.statusNotice = `✨ Direct download link na-detect (${list[0].filename})! Pwede na i-push sa mga PC.`;
+        this.noticeType = 'success';
+      } else if (list.length > 0) {
+        this.resolvedCandidates = list;
+        this.statusNotice = `✨ Nakit-an ang ${list.length} downloadable link(s) gikan sa website! Pilia sa ubos.`;
+        this.noticeType = 'success';
+      } else {
+        this.statusNotice = res.message || 'Walay direct file link nakit-an sa maong website.';
+        this.noticeType = 'warn';
+      }
+    } finally {
+      this.isScanningUrl = false;
+    }
+  }
+
+  applyResolvedCandidate(c: { url: string; filename: string; sizeBytes: number }) {
+    this.downloadUrl = c.url;
+    if (c.filename && c.filename.includes('.')) {
+      this.downloadFilename = c.filename;
+    }
+    this.resolvedCandidates = [];
+    if (/\.(zip|rar|7z)$/i.test(this.downloadFilename)) {
+      this.autoRunInstaller = true;
+      this.createDesktopShortcut = true;
+      if (!this.downloadTargetDir) {
+        this.downloadTargetDir = 'C:\\Games';
+      }
+    }
+  }
+
+  formatSize(bytes: number): string {
+    if (!bytes || bytes <= 0) return '';
+    if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
   applyPreset(preset: AppPreset) {
     this.selectedPresetId = preset.id;
+    this.resolvedCandidates = [];
     if (preset.id !== 'custom') {
       this.downloadUrl = preset.url;
       this.downloadFilename = preset.filename;
+      this.downloadTargetDir = preset.targetDir || '';
       this.autoRunInstaller = preset.autoRun;
       this.silentArgs = preset.silentArgs;
+      this.createDesktopShortcut = preset.createShortcut !== false;
     } else {
       this.downloadUrl = '';
       this.downloadFilename = '';
+      this.downloadTargetDir = '';
       this.silentArgs = '/S';
     }
   }
@@ -1781,7 +2178,8 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
         targetPath: this.downloadTargetDir.trim() || undefined,
         autoRun: this.autoRunInstaller,
         silentArgs: this.silentArgs.trim() || undefined,
-        runArgs: this.silentArgs.trim() || undefined
+        runArgs: this.silentArgs.trim() || undefined,
+        createShortcut: this.createDesktopShortcut
       };
 
       const res = await this.adminState.triggerRemoteDownload(payload);

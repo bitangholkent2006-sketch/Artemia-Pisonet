@@ -41,7 +41,8 @@ interface WindowWithDesktop extends Window {
     captureScreen: (options?: { width?: number; height?: number; quality?: number; skipFallback?: boolean }) => Promise<{ base64Image: string; error?: string }>;
     getDiskDrives: () => Promise<{ drives: any[] }>;
     getHardwareHealth?: () => Promise<{ cpuModel: string; cpuPercent: number; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuPercent?: number; gpuStatus: string; ssdModel: string; ssdHealthPercent?: number | null; ssdActivePercent?: number; ssdStatus: string; activeApp: string }>;
-    downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
+    downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
+    searchWinget?: (query: string) => Promise<{ items: Array<{ id: string; name: string; version: string }>; error?: string }>;
     onDownloadProgress?: (callback: (data: any) => void) => void;
     onCleanAutoDone?: (callback: (data: any) => void) => void;
     onRequestOperatorExit?: (callback: () => void) => void;
@@ -53,7 +54,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.16';
+const CLIENT_AGENT_VERSION = '1.0.17';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -1103,7 +1104,7 @@ class StationMaintenanceAgent {
         });
       });
 
-      this.socket.on('agent:download:run', async (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; targetPcId?: string; targetPcIds?: string[] }) => {
+      this.socket.on('agent:download:run', async (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean; targetPcId?: string; targetPcIds?: string[] }) => {
         const list = Array.isArray(payload.targetPcIds) && payload.targetPcIds.length > 0
           ? payload.targetPcIds
           : [payload.targetPcId];
@@ -1130,6 +1131,19 @@ class StationMaintenanceAgent {
           pcId: this.dbPcId || this.pcId || payload.targetPcId,
           ...res,
           timestamp: new Date().toISOString()
+        });
+      });
+
+      this.socket.on('agent:winget:search:req', async (payload: { reqId?: string; query: string }) => {
+        if (!payload?.query) return;
+        let res: { items: Array<{ id: string; name: string; version: string }>; error?: string } = { items: [] };
+        if (desktopWindow.pisonetDesktop?.searchWinget) {
+          res = await desktopWindow.pisonetDesktop.searchWinget(payload.query);
+        }
+        this.socket?.emit('agent:winget:search:res', {
+          reqId: payload.reqId,
+          items: res.items || [],
+          error: res.error
         });
       });
 

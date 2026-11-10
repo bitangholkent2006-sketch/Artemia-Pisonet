@@ -622,14 +622,64 @@ export class AdminStateService {
     autoRun?: boolean;
     runArgs?: string;
     silentArgs?: string;
+    createShortcut?: boolean;
   }): Promise<{ success: boolean; message: string }> {
     try {
-      this.apiClient.emitSocket('maintenance:download:run', payload);
       const res = await this.apiClient.triggerRemoteDownload(payload);
       return { success: res.success, message: res.message };
     } catch (err: any) {
-      return { success: true, message: 'Download command dispatched to target PCs.' };
+      return { success: false, message: err.message || 'Download dispatch failed.' };
     }
+  }
+
+  public async resolveDownloadUrl(url: string) {
+    try {
+      return await this.apiClient.resolveDownloadUrl(url);
+    } catch (err: any) {
+      return { success: false, message: err?.message || 'Failed to scan URL.', candidates: [] };
+    }
+  }
+
+  public async getCustomDownloadPresets() {
+    try {
+      const res = await this.apiClient.getCustomDownloadPresets();
+      return res.data || [];
+    } catch {
+      return [];
+    }
+  }
+
+  public async saveCustomDownloadPreset(preset: any): Promise<{ success: boolean; data?: any; message?: string }> {
+    try {
+      return await this.apiClient.saveCustomDownloadPreset(preset);
+    } catch (err: any) {
+      return { success: false, message: err?.message || 'Save shortcut failed.' };
+    }
+  }
+
+  public async deleteCustomDownloadPreset(id: string) {
+    try {
+      return await this.apiClient.deleteCustomDownloadPreset(id);
+    } catch {
+      return { success: false };
+    }
+  }
+
+  public searchWingetCatalog(query: string): Promise<{ items: Array<{ id: string; name: string; version: string }>; error?: string }> {
+    return new Promise((resolve) => {
+      const reqId = 'wg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve({ items: [], error: 'Nag-timeout ang WinGet search (walay nitubag nga online PC).' });
+      }, 15000);
+      const cleanup = this.apiClient.onSocketEvent('maintenance:winget:search:res', (data: any) => {
+        if (!data || (data.reqId && data.reqId !== reqId)) return;
+        clearTimeout(timer);
+        cleanup();
+        resolve({ items: data.items || [], error: data.error });
+      });
+      this.apiClient.emitSocket('maintenance:winget:search:req', { reqId, query });
+    });
   }
 
   public async pushClientUpdate(targetPcId: string = 'all'): Promise<{ success: boolean; message: string }> {

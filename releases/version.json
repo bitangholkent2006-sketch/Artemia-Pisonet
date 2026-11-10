@@ -1,7 +1,7 @@
 {
-  "version": "1.0.16",
+  "version": "1.0.17",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-11T01:36:00.000Z",
+  "releaseDate": "2026-11-11T01:48:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Zero-click unattended System Refresh (eliminates UAC/GUI uninstaller popups) with live detailed Deleted Apps & Deleted Files report modal in Admin Dashboard"
+  "changelog": "Advanced App & Game Store Downloader: Smart Website/MediaFire/GDrive link extractor, live WinGet online search & 1-click install, saved custom shop shortcuts, verified ROS Legacy/Steam/Epic/Roblox/Valorant/Chrome links, auto-extract .zip/.rar/.7z + Desktop Shortcut creation"
 }

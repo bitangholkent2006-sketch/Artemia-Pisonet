@@ -54,7 +54,8 @@ export interface PisonetDesktopApi {
     ssdStatus: string;
     activeApp: string;
   }>;
-  downloadFile: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
+  downloadFile: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
+  searchWinget?: (query: string) => Promise<{ items: Array<{ id: string; name: string; version: string }>; error?: string }>;
   onDownloadProgress: (callback: (data: any) => void) => void;
   onCleanAutoDone?: (callback: (data: any) => void) => void;
   onRequestOperatorExit?: (callback: () => void) => void;
@@ -95,6 +96,7 @@ const api: PisonetDesktopApi = {
   getDiskDrives: () => ipcRenderer.invoke('maintenance:get-disk-drives'),
   getHardwareHealth: () => ipcRenderer.invoke('maintenance:get-hardware-health'),
   downloadFile: (payload) => ipcRenderer.invoke('maintenance:download-file', payload),
+  searchWinget: (query) => ipcRenderer.invoke('winget:search', query),
   onDownloadProgress: (callback) => {
     ipcRenderer.on('maintenance:download:progress', (_event, data) => callback(data));
   },
