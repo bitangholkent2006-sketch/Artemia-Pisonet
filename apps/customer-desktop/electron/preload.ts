@@ -31,6 +31,7 @@ export interface PisonetDesktopApi {
   // Maintenance Agent Native APIs
   executeCommand: (command: string, type: 'powershell' | 'cmd') => Promise<{ output: string; exitCode: number; error?: string }>;
   cleanTemp: () => Promise<{ deletedBytes: number; cleanedPaths: string[]; error?: string }>;
+  systemRefresh: (options?: { wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean }) => Promise<{ success: boolean; deletedBytes: number; uninstalledCount: number; cleanedTargets: string[]; error?: string }>;
   updateGame: (gameId: string, command?: string) => Promise<{ status: string; log: string }>;
   listFiles: (targetPath: string) => Promise<{ entries: any[]; error?: string }>;
   deletePath: (targetPath: string) => Promise<{ success: boolean; error?: string }>;
@@ -38,10 +39,26 @@ export interface PisonetDesktopApi {
   killProcess: (pid?: number, name?: string) => Promise<{ success: boolean; error?: string }>;
   captureScreen: (options?: { width?: number; height?: number; quality?: number; skipFallback?: boolean }) => Promise<{ base64Image: string; error?: string }>;
   getDiskDrives: () => Promise<{ drives: any[] }>;
-  getHardwareHealth: () => Promise<{ cpuModel: string; cpuPercent: number; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string; activeApp: string }>;
+  getHardwareHealth: () => Promise<{
+    cpuModel: string;
+    cpuPercent: number;
+    ramTotalGb: number;
+    ramUsedGb: number;
+    ramPercent: number;
+    gpu: string;
+    gpuPercent?: number;
+    gpuStatus: string;
+    ssdModel: string;
+    ssdHealthPercent?: number | null;
+    ssdActivePercent?: number;
+    ssdStatus: string;
+    activeApp: string;
+  }>;
   downloadFile: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
   onDownloadProgress: (callback: (data: any) => void) => void;
   onCleanAutoDone?: (callback: (data: any) => void) => void;
+  onRequestOperatorExit?: (callback: () => void) => void;
+  verifyAndExitOperator?: (payload: { password: string; removeProtection?: boolean }) => Promise<{ success: boolean; error?: string }>;
   sendRemoteInput: (payload: { type: string; xPercent?: number; yPercent?: number; x?: number; y?: number; key?: string; text?: string; delta?: number }) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
   applyClientUpdate: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
   optimizeFps: () => Promise<{ success: boolean; freedRamMb: number; powerPlan: string; boostedGames: string[]; tweaksApplied: string[]; elapsedMs: number; error?: string }>;
@@ -68,6 +85,7 @@ const api: PisonetDesktopApi = {
   // Maintenance APIs
   executeCommand: (command, type) => ipcRenderer.invoke('maintenance:execute-command', command, type),
   cleanTemp: () => ipcRenderer.invoke('maintenance:clean-temp'),
+  systemRefresh: (options) => ipcRenderer.invoke('maintenance:system-refresh', options),
   updateGame: (gameId, command) => ipcRenderer.invoke('maintenance:update-game', gameId, command),
   listFiles: (targetPath) => ipcRenderer.invoke('maintenance:list-files', targetPath),
   deletePath: (targetPath) => ipcRenderer.invoke('maintenance:delete-path', targetPath),
@@ -83,6 +101,10 @@ const api: PisonetDesktopApi = {
   onCleanAutoDone: (callback) => {
     ipcRenderer.on('maintenance:clean:auto-done', (_event, data) => callback(data));
   },
+  onRequestOperatorExit: (callback) => {
+    ipcRenderer.on('ui:request-operator-exit', () => callback());
+  },
+  verifyAndExitOperator: (payload) => ipcRenderer.invoke('operator:verify-and-exit', payload),
   sendRemoteInput: (payload) => ipcRenderer.invoke('maintenance:remote-input', payload),
   applyClientUpdate: (downloadUrl: string) => ipcRenderer.invoke('maintenance:apply-client-update', downloadUrl),
   optimizeFps: () => ipcRenderer.invoke('maintenance:fps-boost'),

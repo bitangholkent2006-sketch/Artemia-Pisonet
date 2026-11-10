@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import * as http from 'http';
 import * as https from 'https';
-import { exec, spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process';
+import { exec, spawn, execFile, ChildProcess, ChildProcessWithoutNullStreams } from 'child_process';
 
 // Prevent Windows & Chromium from suspending or throttling hidden/occluded background timers
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -108,44 +108,104 @@ function notifyServerOffline(): Promise<void> {
   });
 }
 
-// Hardware health cache (GPU, SSD, CPU)
+// Hardware health cache (Real GPU %, SSD SMART Health % / I/O %, CPU)
 let cachedHardwareInfo: {
   gpu?: string;
+  gpuPercent?: number;
   gpuStatus?: string;
   ssdModel?: string;
+  ssdHealthPercent?: number | null;
+  ssdActivePercent?: number;
   ssdStatus?: string;
 } = {};
+let hwRefreshInFlight = false;
+let lastStaticHwFetchAt = 0;
 
 function fetchHardwareInfo() {
   if (process.platform !== 'win32') {
-    cachedHardwareInfo = { gpu: 'Integrated Graphics', gpuStatus: 'OK', ssdModel: 'Primary SSD', ssdStatus: 'OK' };
+    cachedHardwareInfo = {
+      gpu: 'Integrated Graphics',
+      gpuPercent: 0,
+      gpuStatus: '0% Load',
+      ssdModel: 'Primary SSD',
+      ssdHealthPercent: null,
+      ssdActivePercent: 0,
+      ssdStatus: '0% I/O'
+    };
     return;
   }
+  if (hwRefreshInFlight) return;
+  hwRefreshInFlight = true;
+
+  const now = Date.now();
+  const includeStatic = !cachedHardwareInfo.gpu || !cachedHardwareInfo.ssdModel || (now - lastStaticHwFetchAt > 120000);
   const ps = `
-    $gpu = Get-CimInstance Win32_VideoController | Select-Object -Property Name, DriverVersion, Status;
-    $d = Get-CimInstance Win32_DiskDrive | Select-Object -Property Model, Size, Status;
+    $ProgressPreference = 'SilentlyContinue'
+    $ErrorActionPreference = 'SilentlyContinue'
+    $gpuName = $null; $ssdName = $null; $wearHealth = $null
+    ${includeStatic ? `
+    $gpus = @(Get-CimInstance Win32_VideoController | Select-Object -Property Name)
+    $primaryGpu = $gpus | Where-Object { $_.Name -match 'nvidia|geforce|rtx|gtx|radeon|amd|arc' } | Select-Object -First 1
+    if (-not $primaryGpu -and $gpus.Count -gt 0) { $primaryGpu = $gpus[0] }
+    if ($primaryGpu -and $primaryGpu.Name) { $gpuName = $primaryGpu.Name.Trim() }
+    $pdList = @(Get-PhysicalDisk | Select-Object FriendlyName, MediaType, DeviceId)
+    $pdPrimary = $pdList | Where-Object { $_.MediaType -eq 'SSD' } | Select-Object -First 1
+    if (-not $pdPrimary -and $pdList.Count -gt 0) { $pdPrimary = $pdList[0] }
+    if ($pdPrimary -and $pdPrimary.FriendlyName) { $ssdName = $pdPrimary.FriendlyName.Trim() }
+    if (-not $ssdName) {
+      $d = Get-CimInstance Win32_DiskDrive | Select-Object -First 1 -ExpandProperty Model
+      if ($d) { $ssdName = $d.Trim() }
+    }
+    try {
+      $rel = Get-PhysicalDisk | Get-StorageReliabilityCounter | Where-Object { $null -ne $_.Wear } | Select-Object -First 1
+      if ($rel -and $null -ne $rel.Wear) {
+        $wearHealth = [int][Math]::Max(0, [Math]::Min(100, 100 - [double]$rel.Wear))
+      }
+    } catch {}
+    ` : ''}
+    $gpuPct = 0
+    try {
+      $g = (Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples
+      if ($g) {
+        $sum3d = ($g | Where-Object { $_.InstanceName -like '*engtype_3d*' } | Measure-Object -Property CookedValue -Sum).Sum
+        $maxEng = ($g | Group-Object { if ($_.InstanceName -match 'luid_[^_]+_[^_]+_phys_\\d+_eng_\\d+_engtype_[^_]+') { $matches[0] } else { 'other' } } | ForEach-Object { ($_.Group | Measure-Object -Property CookedValue -Sum).Sum } | Measure-Object -Maximum).Maximum
+        $gpuPct = [int][Math]::Round([Math]::Min(100, [Math]::Max([double]$sum3d, [double]$maxEng)))
+      }
+    } catch {}
+    $diskPct = 0
+    try {
+      $dc = (Get-Counter '\\PhysicalDisk(_Total)\\% Disk Time').CounterSamples[0].CookedValue
+      $diskPct = [int][Math]::Round([Math]::Min(100, [Math]::Max(0, [double]$dc)))
+    } catch {}
     [PSCustomObject]@{
-      gpus = @($gpu);
-      disks = @($d);
+      gpu = $gpuName
+      gpuPercent = $gpuPct
+      ssdModel = $ssdName
+      ssdHealthPercent = $wearHealth
+      ssdActivePercent = $diskPct
     } | ConvertTo-Json -Compress
   `;
-  exec(`powershell.exe -NoProfile -Command "${ps.replace(/\r?\n/g, ' ')}"`, (err, stdout) => {
+  const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+  execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { timeout: 6000, windowsHide: true }, (err, stdout) => {
+    hwRefreshInFlight = false;
     if (err || !stdout) return;
     try {
-      const data = JSON.parse(stdout);
-      const gpus = Array.isArray(data.gpus) ? data.gpus : (data.gpus ? [data.gpus] : []);
-      const disks = Array.isArray(data.disks) ? data.disks : (data.disks ? [data.disks] : []);
-
-      let primaryGpu = gpus.find((g: any) => g?.Name && /nvidia|geforce|rtx|gtx|radeon|amd|arc/i.test(g.Name));
-      if (!primaryGpu && gpus.length > 0) primaryGpu = gpus[0];
-
-      let primaryDisk = disks.length > 0 ? disks[0] : null;
+      const parsed = JSON.parse(stdout.trim());
+      if (includeStatic) lastStaticHwFetchAt = now;
+      const gpuPct = typeof parsed.gpuPercent === 'number' ? Math.max(0, Math.min(100, Math.round(parsed.gpuPercent))) : (cachedHardwareInfo.gpuPercent ?? 0);
+      const ssdActivePct = typeof parsed.ssdActivePercent === 'number' ? Math.max(0, Math.min(100, Math.round(parsed.ssdActivePercent))) : (cachedHardwareInfo.ssdActivePercent ?? 0);
+      const healthPct = typeof parsed.ssdHealthPercent === 'number'
+        ? Math.max(0, Math.min(100, Math.round(parsed.ssdHealthPercent)))
+        : (cachedHardwareInfo.ssdHealthPercent ?? null);
 
       cachedHardwareInfo = {
-        gpu: primaryGpu?.Name?.trim() || 'Standard Graphics',
-        gpuStatus: primaryGpu?.Status || 'OK',
-        ssdModel: primaryDisk?.Model?.trim() || 'NVMe/SSD Drive',
-        ssdStatus: primaryDisk?.Status || 'OK'
+        gpu: (parsed.gpu && String(parsed.gpu).trim()) || cachedHardwareInfo.gpu || 'Graphics Adapter',
+        gpuPercent: gpuPct,
+        gpuStatus: `${gpuPct}% Load`,
+        ssdModel: (parsed.ssdModel && String(parsed.ssdModel).trim()) || cachedHardwareInfo.ssdModel || 'Primary SSD',
+        ssdHealthPercent: healthPct,
+        ssdActivePercent: ssdActivePct,
+        ssdStatus: healthPct !== null ? `${healthPct}% Health` : `${ssdActivePct}% I/O`
       };
     } catch {}
   });
@@ -230,10 +290,13 @@ function createTray() {
         },
         { type: 'separator' },
         {
-          label: 'Quit Agent (Operator)',
+          label: 'Quit Agent (Operator Password)',
           click: () => {
-            isQuitting = true;
-            app.quit();
+            try {
+              mainWindow?.show();
+              mainWindow?.focus();
+              mainWindow?.webContents.send('ui:request-operator-exit');
+            } catch {}
           }
         }
       ]);
@@ -377,13 +440,428 @@ function presentOverlayWindow() {
   } catch {}
 }
 
+// ============================================================================
+// KIOSK KEYBOARD + MOUSE BLOCKER, NTFS ANTI-DELETE & WATCHDOG PROTECTION
+// ============================================================================
+const KIOSK_LOCK_CS_SOURCE = `using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+namespace ArtemiaPisonet
+{
+    public class KioskKeyLock
+    {
+        private const int WH_KEYBOARD_LL = 13;
+        private const int WH_MOUSE_LL = 14;
+        private const int WM_KEYDOWN = 0x0100;
+        private const int WM_KEYUP = 0x0101;
+        private const int WM_SYSKEYDOWN = 0x0104;
+        private const int WM_SYSKEYUP = 0x0105;
+        private const int LLKHF_INJECTED = 0x10;
+        private const int LLMHF_INJECTED = 0x01;
+
+        private static LowLevelProc _kbProc = KbHookCallback;
+        private static LowLevelProc _mouseProc = MouseHookCallback;
+        private static IntPtr _kbHook = IntPtr.Zero;
+        private static IntPtr _mouseHook = IntPtr.Zero;
+        private static int _parentPid = 0;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KBDLLHOOKSTRUCT { public int vkCode; public int scanCode; public int flags; public int time; public IntPtr dwExtraInfo; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT { public int x; public int y; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MSLLHOOKSTRUCT { public POINT pt; public uint mouseData; public uint flags; public uint time; public IntPtr dwExtraInfo; }
+
+        public static void Main(string[] args)
+        {
+            if (args != null && args.Length > 0) int.TryParse(args[0], out _parentPid);
+            _kbHook = SetHook(WH_KEYBOARD_LL, _kbProc);
+            _mouseHook = SetHook(WH_MOUSE_LL, _mouseProc);
+
+            System.Windows.Forms.Timer watchdog = null;
+            if (_parentPid > 0)
+            {
+                watchdog = new System.Windows.Forms.Timer();
+                watchdog.Interval = 500;
+                watchdog.Tick += (s, e) =>
+                {
+                    try
+                    {
+                        Process p = Process.GetProcessById(_parentPid);
+                        if (p == null || p.HasExited) Application.ExitThread();
+                    }
+                    catch { Application.ExitThread(); }
+                };
+                watchdog.Start();
+            }
+
+            Application.Run();
+            if (watchdog != null) watchdog.Stop();
+            if (_kbHook != IntPtr.Zero) UnhookWindowsHookEx(_kbHook);
+            if (_mouseHook != IntPtr.Zero) UnhookWindowsHookEx(_mouseHook);
+        }
+
+        private static IntPtr SetHook(int hookType, LowLevelProc proc)
+        {
+            using (Process curProcess = Process.GetCurrentProcess())
+            using (ProcessModule curModule = curProcess.MainModule)
+                return SetWindowsHookEx(hookType, proc, GetModuleHandle(curModule.ModuleName), 0);
+        }
+
+        private delegate IntPtr LowLevelProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+        private static IntPtr KbHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0)
+            {
+                int msg = wParam.ToInt32();
+                if (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP)
+                {
+                    KBDLLHOOKSTRUCT hookStruct = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+                    if ((hookStruct.flags & LLKHF_INJECTED) == 0) return (IntPtr)1;
+                }
+            }
+            return CallNextHookEx(_kbHook, nCode, wParam, lParam);
+        }
+
+        private static IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0)
+            {
+                MSLLHOOKSTRUCT hookStruct = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+                if ((hookStruct.flags & LLMHF_INJECTED) == 0) return (IntPtr)1;
+            }
+            return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelProc lpfn, IntPtr hMod, uint dwThreadId);
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr GetModuleHandle(string lpModuleName);
+    }
+}`;
+
+const artemiaStateDir = path.join(os.homedir(), '.artemia');
+const authorizedExitFlagPath = path.join(artemiaStateDir, 'authorized_exit.flag');
+const otaUpdatingFlagPath = path.join(artemiaStateDir, 'ota_updating.flag');
+const kioskLockExePath = path.join(artemiaStateDir, 'ArtemiaKioskLock_v2.exe');
+const kioskLockCsPath = path.join(artemiaStateDir, 'ArtemiaKioskLock_v2.cs');
+let kioskLockProc: ChildProcess | null = null;
+let kioskBlockerCompileInFlight = false;
+
+function isPackagedClientExe(): boolean {
+  if (process.platform !== 'win32') return false;
+  const exeLower = process.execPath.toLowerCase();
+  return !exeLower.includes('node_modules') && !exeLower.endsWith('electron.exe');
+}
+
+function ensureKioskLockBinary(): Promise<string | null> {
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  if (fs.existsSync(kioskLockExePath)) return Promise.resolve(kioskLockExePath);
+  if (kioskBlockerCompileInFlight) return Promise.resolve(null);
+  kioskBlockerCompileInFlight = true;
+
+  return new Promise((resolve) => {
+    try {
+      if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+      fs.writeFileSync(kioskLockCsPath, KIOSK_LOCK_CS_SOURCE, 'utf8');
+      const cscCandidates = [
+        'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',
+        'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe'
+      ];
+      const csc = cscCandidates.find((p) => fs.existsSync(p));
+      if (!csc) {
+        kioskBlockerCompileInFlight = false;
+        resolve(null);
+        return;
+      }
+      execFile(
+        csc,
+        ['/nologo', '/target:winexe', `/out:${kioskLockExePath}`, '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', kioskLockCsPath],
+        { timeout: 15000, windowsHide: true },
+        (err) => {
+          kioskBlockerCompileInFlight = false;
+          if (!err && fs.existsSync(kioskLockExePath)) {
+            logToFile('[KioskLock] Compiled ArtemiaKioskLock_v2.exe cleanly.');
+            resolve(kioskLockExePath);
+          } else {
+            logToFile('[KioskLock] csc compile failed: ' + (err?.message || 'unknown'));
+            resolve(null);
+          }
+        }
+      );
+    } catch {
+      kioskBlockerCompileInFlight = false;
+      resolve(null);
+    }
+  });
+}
+
+async function startKioskInputBlocker() {
+  if (process.platform !== 'win32') return;
+  if (kioskLockProc && !kioskLockProc.killed && kioskLockProc.exitCode === null) return;
+  const bin = await ensureKioskLockBinary();
+  if (!isStationLocked) return;
+
+  if (bin && fs.existsSync(bin)) {
+    try {
+      const child = spawn(bin, [String(process.pid)], { stdio: 'ignore', windowsHide: true });
+      child.on('exit', () => {
+        if (kioskLockProc === child) kioskLockProc = null;
+      });
+      kioskLockProc = child;
+      logToFile(`[KioskLock] Native keyboard+mouse blocker started (PID ${child.pid})`);
+      return;
+    } catch (e: any) {
+      logToFile('[KioskLock] Spawn error: ' + (e?.message || String(e)));
+    }
+  }
+
+  // Fallback: inline PowerShell Add-Type hook if csc.exe wasn't available
+  try {
+    const ps = `Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'\n${KIOSK_LOCK_CS_SOURCE}\n'@\n[ArtemiaPisonet.KioskKeyLock]::Main(@('${process.pid}'))`;
+    const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded], {
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    child.on('exit', () => {
+      if (kioskLockProc === child) kioskLockProc = null;
+    });
+    kioskLockProc = child;
+    logToFile('[KioskLock] Fallback PowerShell keyboard+mouse blocker started.');
+  } catch {}
+}
+
+function stopKioskInputBlocker() {
+  try {
+    if (kioskLockProc) {
+      kioskLockProc.kill();
+      kioskLockProc = null;
+    }
+  } catch {}
+  if (process.platform === 'win32') {
+    execFile('taskkill', ['/F', '/IM', 'ArtemiaKioskLock_v2.exe'], { windowsHide: true }, () => {});
+  }
+}
+
+function applyInstallProtection() {
+  if (!isPackagedClientExe()) return;
+  const exePath = process.execPath;
+  const exeDir = path.dirname(exePath);
+  const resourcesDir = path.join(exeDir, 'resources');
+  const asarPath = path.join(resourcesDir, 'app.asar');
+  const cmds = [
+    ['icacls', exeDir, '/deny', 'Everyone:(DE,DC)'],
+    ['icacls', exePath, '/deny', 'Everyone:(DE)']
+  ];
+  if (fs.existsSync(resourcesDir)) cmds.push(['icacls', resourcesDir, '/deny', 'Everyone:(DE,DC)']);
+  if (fs.existsSync(asarPath)) cmds.push(['icacls', asarPath, '/deny', 'Everyone:(DE)']);
+  for (const args of cmds) {
+    execFile(args[0], args.slice(1), { windowsHide: true }, () => {});
+  }
+}
+
+function removeInstallProtection(): Promise<void> {
+  if (!isPackagedClientExe()) return Promise.resolve();
+  const exePath = process.execPath;
+  const exeDir = path.dirname(exePath);
+  const resourcesDir = path.join(exeDir, 'resources');
+  const asarPath = path.join(resourcesDir, 'app.asar');
+  const targets = [asarPath, resourcesDir, exePath, exeDir].filter((p) => fs.existsSync(p));
+  return Promise.all(
+    targets.flatMap((t) => [
+      new Promise<void>((res) => execFile('icacls', [t, '/remove:d', 'Everyone'], { windowsHide: true }, () => res())),
+      new Promise<void>((res) => execFile('icacls', [t, '/remove:d', 'Users'], { windowsHide: true }, () => res()))
+    ])
+  ).then(() => {});
+}
+
+function writeFlagFile(flagPath: string) {
+  try {
+    if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+    fs.writeFileSync(flagPath, new Date().toISOString(), 'utf8');
+  } catch {}
+}
+
+function clearFlagFile(flagPath: string) {
+  try {
+    if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);
+  } catch {}
+}
+
+function startGuardianWatchdog() {
+  if (!isPackagedClientExe()) return;
+  try {
+    if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+    const watchdogVbsPath = path.join(artemiaStateDir, 'ArtemiaWatchdog.vbs');
+    const exePath = process.execPath;
+    const exeDir = path.dirname(exePath);
+    const exeName = path.basename(exePath);
+    const vbsStr = (s: string) => `"${s.replace(/"/g, '""')}"`;
+
+    const script = `Option Explicit
+Dim sh, fso, wmi, col, authFlag, otaFlag, exePath, exeDir, exeName, myPid
+Set sh = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
+On Error Resume Next
+sh.Environment("PROCESS").Remove "ELECTRON_RUN_AS_NODE"
+On Error GoTo 0
+authFlag = ${vbsStr(authorizedExitFlagPath)}
+otaFlag = ${vbsStr(otaUpdatingFlagPath)}
+exePath = ${vbsStr(exePath)}
+exeDir = ${vbsStr(exeDir)}
+exeName = ${vbsStr(exeName)}
+myPid = ${process.pid}
+
+Do
+  WScript.Sleep 2500
+  If fso.FileExists(authFlag) Or fso.FileExists(otaFlag) Then
+    Exit Do
+  End If
+  On Error Resume Next
+  Set wmi = GetObject("winmgmts:\\\\.\\root\\cimv2")
+  Set col = wmi.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE Name='" & exeName & "'")
+  If Err.Number = 0 Then
+    If col.Count = 0 Then
+      If Not fso.FileExists(authFlag) And Not fso.FileExists(otaFlag) Then
+        sh.CurrentDirectory = exeDir
+        sh.Run """" & exePath & """", 1, False
+      End If
+      Exit Do
+    End If
+  Else
+    Err.Clear
+  End If
+  On Error GoTo 0
+Loop
+`;
+    fs.writeFileSync(watchdogVbsPath, script, 'utf8');
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.ELECTRON_RUN_AS_NODE;
+    const child = spawn('wscript.exe', ['//B', '//Nologo', watchdogVbsPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: cleanEnv
+    });
+    child.unref();
+    logToFile('[Watchdog] Guardian watchdog active.');
+  } catch {}
+}
+
+function getOperatorVerifierPath(): string {
+  return path.join(app.getPath('userData'), 'operator_lock.json');
+}
+
+function saveOfflineOperatorVerifier(password: string) {
+  try {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(password, salt, 32).toString('hex');
+    fs.writeFileSync(getOperatorVerifierPath(), JSON.stringify({ salt, hash, updatedAt: new Date().toISOString() }), 'utf8');
+  } catch {}
+}
+
+function verifyOfflineOperatorPassword(password: string): boolean {
+  try {
+    const p = getOperatorVerifierPath();
+    if (!fs.existsSync(p)) return false;
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (!parsed?.salt || !parsed?.hash) return false;
+    const derived = crypto.scryptSync(password, parsed.salt, 32);
+    const stored = Buffer.from(parsed.hash, 'hex');
+    return derived.length === stored.length && crypto.timingSafeEqual(derived, stored);
+  } catch {
+    return false;
+  }
+}
+
+async function verifyOperatorPasswordOnlineOrCached(password: string): Promise<{ success: boolean; error?: string }> {
+  const pwd = String(password || '');
+  if (!pwd.trim()) return { success: false, error: 'Palihog isulod ang Operator / Admin Password.' };
+
+  const base = runtimeStationInfo.apiBase || 'https://artemia-pisonet-backend.onrender.com';
+  try {
+    const targetUrl = new URL('/api/v1/auth/verify-operator', base);
+    const bodyStr = JSON.stringify({ password: pwd });
+    const onlineRes = await new Promise<{ status: number; json: any }>((resolve, reject) => {
+      const client = targetUrl.protocol === 'https:' ? https : http;
+      const req = client.request(
+        targetUrl,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
+          timeout: 6000
+        },
+        (res) => {
+          let raw = '';
+          res.on('data', (chunk) => { raw += chunk; });
+          res.on('end', () => {
+            try { resolve({ status: res.statusCode || 500, json: JSON.parse(raw || '{}') }); }
+            catch { resolve({ status: res.statusCode || 500, json: {} }); }
+          });
+        }
+      );
+      req.on('error', reject);
+      req.on('timeout', () => { try { req.destroy(); } catch {} reject(new Error('timeout')); });
+      req.write(bodyStr);
+      req.end();
+    });
+
+    if (onlineRes.status === 200 && onlineRes.json?.success) {
+      saveOfflineOperatorVerifier(pwd);
+      return { success: true };
+    }
+    if (onlineRes.status === 401) {
+      return { success: false, error: onlineRes.json?.message || 'Sayop ang Admin / Operator Password.' };
+    }
+  } catch {
+    // Offline fallback
+  }
+
+  if (verifyOfflineOperatorPassword(pwd)) {
+    return { success: true };
+  }
+  return { success: false, error: 'Dili ma-verify ang password (sayop ang password o walay internet connection).' };
+}
+
+ipcMain.handle('operator:verify-and-exit', async (_event, payload: { password: string; removeProtection?: boolean }) => {
+  const check = await verifyOperatorPasswordOnlineOrCached(payload?.password || '');
+  if (!check.success) {
+    return { success: false, error: check.error || 'Sayop ang password.' };
+  }
+
+  logToFile(`[Operator Exit] Authorized exit triggered (removeProtection=${!!payload?.removeProtection}).`);
+  isQuitting = true;
+  writeFlagFile(authorizedExitFlagPath);
+  stopKioskInputBlocker();
+  if (payload?.removeProtection) {
+    await removeInstallProtection();
+    setAutoStart(false);
+  }
+  try { await notifyServerOffline(); } catch {}
+  setTimeout(() => {
+    app.quit();
+  }, 150);
+  return { success: true };
+});
+
 ipcMain.handle('window:set-lock-mode', (_event, locked: boolean) => {
   isStationLocked = locked;
   if (mainWindow) {
     if (locked) {
       try { mainWindow.setClosable(false); } catch {}
       presentOverlayWindow();
+      startKioskInputBlocker().catch(() => {});
     } else {
+      stopKioskInputBlocker();
       try { mainWindow.setClosable(true); } catch {}
       mainWindow.setFullScreen(false);
       mainWindow.setAlwaysOnTop(false);
@@ -851,6 +1329,240 @@ function performCleanSlate(reason: 'startup' | 'idle' | 'manual' | 'admin' = 'ma
 
 ipcMain.handle('maintenance:clean-temp', async () => {
   return performCleanSlate('manual');
+});
+
+export interface SystemRefreshResult {
+  success: boolean;
+  deletedBytes: number;
+  uninstalledCount: number;
+  cleanedTargets: string[];
+  error?: string;
+}
+
+let isRefreshingSystem = false;
+
+function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean } = {}): Promise<SystemRefreshResult> {
+  if (isRefreshingSystem) {
+    return Promise.resolve({
+      success: false,
+      deletedBytes: 0,
+      uninstalledCount: 0,
+      cleanedTargets: [],
+      error: 'System Refresh is already running.'
+    });
+  }
+  isRefreshingSystem = true;
+  const wipeUserFiles = options.wipeUserFiles !== false;
+  const wipeApps = options.wipeApps !== false;
+  const wipeOtherDrives = options.wipeOtherDrives !== false;
+
+  if (process.platform !== 'win32') {
+    isRefreshingSystem = false;
+    return Promise.resolve({
+      success: true,
+      deletedBytes: 0,
+      uninstalledCount: 0,
+      cleanedTargets: ['Non-Windows simulation']
+    });
+  }
+
+  return new Promise((resolve) => {
+    const exeDir = path.dirname(process.execPath).replace(/'/g, "''");
+    const artemiaData = app.getPath('userData').replace(/'/g, "''");
+    const artemiaDot = path.join(os.homedir(), '.artemia').replace(/'/g, "''");
+    const psScript = `
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = 'SilentlyContinue'
+      $totalBytes = 0
+      $uninstalledCount = 0
+      $cleanedTargets = [System.Collections.Generic.List[string]]::new()
+      $protectDirs = @('${exeDir}'.ToLower(), '${artemiaData}'.ToLower(), '${artemiaDot}'.ToLower())
+
+      function IsProtectedPath([string]$fullPath) {
+        if (-not $fullPath) { return $true }
+        $low = $fullPath.ToLower().TrimEnd('\\')
+        foreach ($p in $protectDirs) {
+          if ($p -and ($low -eq $p -or $p.StartsWith($low + '\\') -or $low.StartsWith($p + '\\'))) { return $true }
+        }
+        return $false
+      }
+
+      # Close user/game processes first (strictly keep Windows, Explorer & Artemia running)
+      $keepProcs = @('artemia customer terminal', 'artemiakiosklock_v2', 'explorer', 'svchost', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'smss', 'dwm', 'sihost', 'ctfmon', 'runtimebroker', 'searchhost', 'startmenuexperiencehost', 'shellexperiencehost', 'taskhostw', 'audiodg', 'conhost', 'powershell', 'wscript', 'cscript', 'cmd', 'idle', 'system', 'registry', 'fontdrvhost')
+      Get-Process | ForEach-Object {
+        try {
+          $n = $_.ProcessName.ToLower()
+          if ($keepProcs -contains $n) { return }
+          $p = $_.Path
+          if ($p -and ($p.ToLower().StartsWith(($env:SystemRoot).ToLower()) -or $p.ToLower().Contains('nvidia') -or $p.ToLower().Contains('amd') -or $p.ToLower().Contains('intel') -or $p.ToLower().Contains('realtek') -or $p.ToLower().Contains('artemia'))) { return }
+          Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        } catch {}
+      }
+
+      ${wipeApps ? `
+      # 1. Silently uninstall 3rd-party Windows desktop programs (preserve Windows updates, Redistributables, Drivers, Artemia)
+      $uninstKeys = @(
+        'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+        'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+        'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
+      )
+      $apps = Get-ItemProperty $uninstKeys -ErrorAction SilentlyContinue | Where-Object {
+        $_.DisplayName -and
+        $_.SystemComponent -ne 1 -and
+        $_.DisplayName -notmatch 'Microsoft Visual C\\+\\+|\\.NET|DirectX|Windows SDK|Update for|Security Update|NVIDIA|AMD Software|Radeon|Intel\\(R\\)|Realtek|Artemia'
+      }
+      foreach ($a in $apps) {
+        try {
+          $cmdStr = if ($a.QuietUninstallString) { $a.QuietUninstallString } else { $a.UninstallString }
+          if (-not $cmdStr) { continue }
+          if ($cmdStr -match 'msiexec' -and $cmdStr -match '\\{[A-Fa-f0-9-]+\\}') {
+            $guid = $matches[0]
+            $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList "/x $guid /qn /norestart" -PassThru -WindowStyle Hidden
+            if ($p -and -not $p.WaitForExit(20000)) { try { $p.Kill() } catch {} }
+            $uninstalledCount++
+          } elseif ($a.QuietUninstallString) {
+            $p = Start-Process -FilePath 'cmd.exe' -ArgumentList ('/c ' + $a.QuietUninstallString) -PassThru -WindowStyle Hidden
+            if ($p -and -not $p.WaitForExit(20000)) { try { $p.Kill() } catch {} }
+            $uninstalledCount++
+          }
+        } catch {}
+      }
+
+      # 2. Remove remaining 3rd-party app/game folders inside Program Files, ProgramData & custom C:\\ folders
+      $systemKeepRegex = '^(microsoft.*|windows.*|common files|internet explorer|reference assemblies|msbuild|modularity|modelfoundry|nvidia.*|amd|ati technologies|intel.*|realtek.*|vulkan.*|package cache|regid\\..*|dotnet|powerShell|artemia.*)$'
+      foreach ($pfRoot in @('C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\ProgramData')) {
+        if (Test-Path $pfRoot) {
+          Get-ChildItem -Path $pfRoot -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+              if ($_.Name -match $systemKeepRegex -or (IsProtectedPath $_.FullName)) { return }
+              if (-not $_.PSIsContainer) { $totalBytes += $_.Length } else {
+                $totalBytes += ((Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
+              }
+              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            } catch {}
+          }
+        }
+      }
+
+      # Custom root folders on C:\\ (e.g. C:\\Games, C:\\Riot Games, C:\\Garena) keeping Windows & system roots
+      $cSysKeep = @('windows','users','program files','program files (x86)','programdata','recovery','perflogs','msocache','config.msi','$recycle.bin','system volume information','oneget','inetpub')
+      Get-ChildItem -Path 'C:\\' -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+          if ($cSysKeep -contains $_.Name.ToLower() -or (IsProtectedPath $_.FullName)) { return }
+          if (-not $_.PSIsContainer) {
+            if ($_.Name.ToLower() -match 'pagefile|hiberfil|swapfile|bootmgr|bootnxt') { return }
+            $totalBytes += $_.Length
+          } else {
+            $totalBytes += ((Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
+          }
+          Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        } catch {}
+      }
+      $cleanedTargets.Add('Installed 3rd-Party Apps & Games')
+      ` : ''}
+
+      ${wipeUserFiles ? `
+      # 3. Wipe ALL user files & Desktop shortcuts across user profile and Public folders
+      $userSubDirs = @('Desktop','Downloads','Documents','Pictures','Videos','Music','Favorites','Saved Games','Links','Contacts','3D Objects')
+      foreach ($sub in $userSubDirs) {
+        $dirPath = Join-Path $env:USERPROFILE $sub
+        if (Test-Path $dirPath) {
+          Get-ChildItem -Path $dirPath -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+              if ($_.Name -eq 'desktop.ini' -or (IsProtectedPath $_.FullName)) { return }
+              if ($_.Name -match '^Artemia') { return }
+              if (-not $_.PSIsContainer) { $totalBytes += $_.Length } else {
+                $totalBytes += ((Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
+              }
+              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            } catch {}
+          }
+        }
+        $pubPath = Join-Path 'C:\\Users\\Public' $sub
+        if (Test-Path $pubPath) {
+          Get-ChildItem -Path $pubPath -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+              if ($_.Name -eq 'desktop.ini' -or (IsProtectedPath $_.FullName) -or $_.Name -match '^Artemia') { return }
+              if (-not $_.PSIsContainer) { $totalBytes += $_.Length } else {
+                $totalBytes += ((Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
+              }
+              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            } catch {}
+          }
+        }
+      }
+      foreach ($bPath in @(
+        (Join-Path $env:LOCALAPPDATA 'Google\\Chrome\\User Data'),
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\\Edge\\User Data'),
+        (Join-Path $env:LOCALAPPDATA 'BraveSoftware\\Brave-Browser\\User Data'),
+        (Join-Path $env:APPDATA 'Mozilla\\Firefox\\Profiles')
+      )) {
+        if (Test-Path $bPath) {
+          $totalBytes += ((Get-ChildItem $bPath -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
+          Remove-Item $bPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+      }
+      Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+      $cleanedTargets.Add('User Files, Desktop, Media & Browsers')
+      ` : ''}
+
+      ${wipeOtherDrives ? `
+      # 4. Wipe secondary data drives (D:, E:, etc.), keeping system & Artemia paths
+      Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -ne 'C:\\' -and $_.Root -match '^[A-Z]:\\\\$' } | ForEach-Object {
+        $drvRoot = $_.Root
+        Get-ChildItem -Path $drvRoot -Force -ErrorAction SilentlyContinue | ForEach-Object {
+          try {
+            if ($_.Name.ToLower() -in @('$recycle.bin','system volume information','recovery','config.msi') -or (IsProtectedPath $_.FullName)) { return }
+            if (-not $_.PSIsContainer) { $totalBytes += $_.Length } else {
+              $totalBytes += ((Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum)
+            }
+            Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+          } catch {}
+        }
+      }
+      $cleanedTargets.Add('Extra Drives & Custom Game Folders')
+      ` : ''}
+
+      [PSCustomObject]@{
+        deletedBytes = [int64]$totalBytes
+        uninstalledCount = [int]$uninstalledCount
+        cleanedTargets = $cleanedTargets
+      } | ConvertTo-Json -Compress
+    `;
+
+    const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { timeout: 180000, maxBuffer: 10 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
+      isRefreshingSystem = false;
+      cachedDiskDrives = [];
+      lastDiskDrivesCheck = 0;
+      let deletedBytes = 0;
+      let uninstalledCount = 0;
+      let cleanedTargets: string[] = [];
+      if (stdout) {
+        try {
+          const m = stdout.match(/\{[\s\S]*\}/);
+          if (m) {
+            const parsed = JSON.parse(m[0]);
+            deletedBytes = Number(parsed.deletedBytes) || 0;
+            uninstalledCount = Number(parsed.uninstalledCount) || 0;
+            if (Array.isArray(parsed.cleanedTargets)) cleanedTargets = parsed.cleanedTargets;
+          }
+        } catch {}
+      }
+      logToFile(`[System Refresh] Complete: freed=${Math.round(deletedBytes / (1024 * 1024))}MB, uninstalled=${uninstalledCount}`);
+      resolve({
+        success: !err || cleanedTargets.length > 0,
+        deletedBytes,
+        uninstalledCount,
+        cleanedTargets,
+        error: err && cleanedTargets.length === 0 ? err.message : undefined
+      });
+    });
+  });
+}
+
+ipcMain.handle('maintenance:system-refresh', async (_event, options: { wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean }) => {
+  return performSystemRefresh(options || {});
 });
 
 export interface FpsBoostResult {
@@ -1710,6 +2422,9 @@ ipcMain.handle('maintenance:get-hardware-health', () => {
   const freeMemGb = Math.round((os.freemem() / (1024 * 1024 * 1024)) * 10) / 10;
   const usedMemGb = Math.round((totalMemGb - freeMemGb) * 10) / 10;
   const ramPercent = Math.round((usedMemGb / totalMemGb) * 100);
+  const gpuPct = cachedHardwareInfo.gpuPercent ?? 0;
+  const ssdActivePct = cachedHardwareInfo.ssdActivePercent ?? 0;
+  const ssdHealthPct = cachedHardwareInfo.ssdHealthPercent ?? null;
 
   return {
     cpuModel,
@@ -1717,10 +2432,13 @@ ipcMain.handle('maintenance:get-hardware-health', () => {
     ramTotalGb: totalMemGb,
     ramUsedGb: usedMemGb,
     ramPercent,
-    gpu: cachedHardwareInfo.gpu || 'Discrete GPU',
-    gpuStatus: cachedHardwareInfo.gpuStatus || 'OK',
+    gpu: cachedHardwareInfo.gpu || 'Graphics Adapter',
+    gpuPercent: gpuPct,
+    gpuStatus: cachedHardwareInfo.gpuStatus || `${gpuPct}% Load`,
     ssdModel: cachedHardwareInfo.ssdModel || 'Primary SSD',
-    ssdStatus: cachedHardwareInfo.ssdStatus || 'OK',
+    ssdHealthPercent: ssdHealthPct,
+    ssdActivePercent: ssdActivePct,
+    ssdStatus: cachedHardwareInfo.ssdStatus || (ssdHealthPct !== null ? `${ssdHealthPct}% Health` : `${ssdActivePct}% I/O`),
     activeApp: cachedActiveApp
   };
 });
@@ -1930,12 +2648,18 @@ async function applyClientUpdate(downloadUrl: string): Promise<{ success: boolea
     const exePath = process.execPath;
     const exeDir = path.dirname(exePath);
     const exeName = path.basename(exePath);
+    const targetResDir = path.dirname(targetAsar);
     const vbsStr = (s: string) => `"${s.replace(/"/g, '""')}"`;
+
+    // Signal Guardian Watchdog to stand down during OTA & unlock any input hook
+    isOtaRestarting = true;
+    writeFlagFile(otaUpdatingFlagPath);
+    stopKioskInputBlocker();
 
     // Use WSH (wscript.exe, Windows GUI subsystem) instead of cmd.exe with detached:true.
     // On Windows, Node's DETACHED_PROCESS flag causes console tools (tasklist|find, powershell) to hang/exit silently.
     const vbsScript = `Option Explicit
-Dim sh, fso, env, logPath, tempAsar, targetAsar, exePath, exeDir, exeName, oldPid
+Dim sh, fso, env, logPath, tempAsar, targetAsar, targetResDir, exePath, exeDir, exeName, oldPid
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 On Error Resume Next
@@ -1946,6 +2670,7 @@ On Error GoTo 0
 logPath = ${vbsStr(otaLogPath)}
 tempAsar = ${vbsStr(tempAsar)}
 targetAsar = ${vbsStr(targetAsar)}
+targetResDir = ${vbsStr(targetResDir)}
 exePath = ${vbsStr(exePath)}
 exeDir = ${vbsStr(exeDir)}
 exeName = ${vbsStr(exeName)}
@@ -2006,6 +2731,14 @@ For w = 1 To 15
   WScript.Sleep 400
 Next
 
+' Temporarily remove NTFS Delete-Deny protection so ASAR overwrite always succeeds
+On Error Resume Next
+sh.Run "icacls """ & exeDir & """ /remove:d Everyone", 0, True
+sh.Run "icacls """ & targetResDir & """ /remove:d Everyone", 0, True
+sh.Run "icacls """ & targetAsar & """ /remove:d Everyone", 0, True
+sh.Run "icacls """ & targetAsar & """ /remove:d Users", 0, True
+On Error GoTo 0
+
 Dim r, copied, copyErr
 copied = False
 copyErr = ""
@@ -2056,7 +2789,6 @@ On Error GoTo 0
     fs.writeFileSync(vbsScriptPath, vbsScript, 'utf8');
 
     // Spawn detached WSH updater silently with clean environment
-    isOtaRestarting = true;
     try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
     const cleanEnv = { ...process.env };
     delete cleanEnv.ELECTRON_RUN_AS_NODE;
@@ -2077,6 +2809,7 @@ On Error GoTo 0
   } catch (err: any) {
     isUpdatingClient = false;
     isOtaRestarting = false;
+    clearFlagFile(otaUpdatingFlagPath);
     try { if (tempAsar && fs.existsSync(tempAsar)) fs.unlinkSync(tempAsar); } catch {}
     logToFile(`[OTA Updater] Error applying client update: ${err?.message || String(err)}`);
     console.error('[OTA Updater] Error applying client update:', err);
@@ -2109,21 +2842,31 @@ if (!gotLock) {
     // Prevent OS power-saving or timer suspension while PC is powered on
     try { powerSaveBlocker.start('prevent-app-suspension'); } catch {}
 
-    // Automatically register auto-start on Windows so pisonet agent runs on power-on
+    // Clear previous shutdown/OTA flags and arm anti-delete + watchdog guards on packaged stations
+    clearFlagFile(authorizedExitFlagPath);
+    clearFlagFile(otaUpdatingFlagPath);
     setAutoStart(true);
+    applyInstallProtection();
+    ensureKioskLockBinary().catch(() => {});
+    startGuardianWatchdog();
+
     fetchHardwareInfo();
+    setInterval(fetchHardwareInfo, 15000);
     getCpuUsagePercent();
     refreshActiveApp();
     setInterval(refreshActiveApp, 12000);
     createWindow();
     createTray();
 
-    // Ensure lock screen stays visible/on top while locked
+    // Ensure lock screen & native keyboard+mouse blocker stay active while locked
     setInterval(() => {
-      if (isStationLocked && mainWindow && (!mainWindow.isVisible() || mainWindow.isMinimized())) {
-        presentOverlayWindow();
+      if (isStationLocked) {
+        if (mainWindow && (!mainWindow.isVisible() || mainWindow.isMinimized())) {
+          presentOverlayWindow();
+        }
+        startKioskInputBlocker().catch(() => {});
       }
-    }, 2000);
+    }, 1500);
 
     // Main-process HTTP heartbeat every 15s (immune to Chromium renderer sleep/occlusion during fullscreen games)
     setTimeout(sendMainHeartbeat, 2000);
@@ -2132,6 +2875,8 @@ if (!gotLock) {
     // Notify backend immediately on Windows OS shutdown / restart so station turns offline instantly
     powerMonitor.on('shutdown', () => {
       isQuitting = true;
+      writeFlagFile(authorizedExitFlagPath);
+      stopKioskInputBlocker();
       try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
       notifyServerOffline();
     });
@@ -2169,6 +2914,7 @@ if (!gotLock) {
 app.on('before-quit', () => {
   logToFile(`app before-quit fired (isQuitting=${isQuitting}, isOtaRestarting=${isOtaRestarting})`);
   isQuitting = true;
+  stopKioskInputBlocker();
   try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
   if (!isOtaRestarting) {
     notifyServerOffline();

@@ -8,18 +8,21 @@ namespace ArtemiaPisonet
     public class KioskKeyLock
     {
         private const int WH_KEYBOARD_LL = 13;
+        private const int WH_MOUSE_LL = 14;
+
         private const int WM_KEYDOWN = 0x0100;
+        private const int WM_KEYUP = 0x0101;
         private const int WM_SYSKEYDOWN = 0x0104;
+        private const int WM_SYSKEYUP = 0x0105;
 
-        private const int VK_TAB = 0x09;
-        private const int VK_ESCAPE = 0x1B;
-        private const int VK_SPACE = 0x20;
-        private const int VK_LWIN = 0x5B;
-        private const int VK_RWIN = 0x5C;
-        private const int VK_F4 = 0x73;
+        private const int LLKHF_INJECTED = 0x10;
+        private const int LLMHF_INJECTED = 0x01;
 
-        private static LowLevelKeyboardProc _proc = HookCallback;
-        private static IntPtr _hookID = IntPtr.Zero;
+        private static LowLevelProc _kbProc = KbHookCallback;
+        private static LowLevelProc _mouseProc = MouseHookCallback;
+        private static IntPtr _kbHook = IntPtr.Zero;
+        private static IntPtr _mouseHook = IntPtr.Zero;
+        private static int _parentPid = 0;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct KBDLLHOOKSTRUCT
@@ -31,78 +34,108 @@ namespace ArtemiaPisonet
             public IntPtr dwExtraInfo;
         }
 
-        public static void Main(string[] args)
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
         {
-            _hookID = SetHook(_proc);
-            Application.Run();
-            UnhookWindowsHookEx(_hookID);
+            public int x;
+            public int y;
         }
 
-        private static IntPtr SetHook(LowLevelKeyboardProc proc)
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MSLLHOOKSTRUCT
+        {
+            public POINT pt;
+            public uint mouseData;
+            public uint flags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        public static void Main(string[] args)
+        {
+            if (args != null && args.Length > 0)
+            {
+                int.TryParse(args[0], out _parentPid);
+            }
+
+            _kbHook = SetHook(WH_KEYBOARD_LL, _kbProc);
+            _mouseHook = SetHook(WH_MOUSE_LL, _mouseProc);
+
+            System.Windows.Forms.Timer watchdog = null;
+            if (_parentPid > 0)
+            {
+                watchdog = new System.Windows.Forms.Timer();
+                watchdog.Interval = 500;
+                watchdog.Tick += (s, e) =>
+                {
+                    try
+                    {
+                        Process p = Process.GetProcessById(_parentPid);
+                        if (p == null || p.HasExited)
+                        {
+                            Application.ExitThread();
+                        }
+                    }
+                    catch
+                    {
+                        Application.ExitThread();
+                    }
+                };
+                watchdog.Start();
+            }
+
+            Application.Run();
+
+            if (watchdog != null) watchdog.Stop();
+            if (_kbHook != IntPtr.Zero) UnhookWindowsHookEx(_kbHook);
+            if (_mouseHook != IntPtr.Zero) UnhookWindowsHookEx(_mouseHook);
+        }
+
+        private static IntPtr SetHook(int hookType, LowLevelProc proc)
         {
             using (Process curProcess = Process.GetCurrentProcess())
             using (ProcessModule curModule = curProcess.MainModule)
             {
-                return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
+                return SetWindowsHookEx(hookType, proc, GetModuleHandle(curModule.ModuleName), 0);
             }
         }
 
-        private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+        private delegate IntPtr LowLevelProc(int nCode, IntPtr wParam, IntPtr lParam);
 
-        private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        private static IntPtr KbHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
             if (nCode >= 0)
             {
                 int msg = wParam.ToInt32();
-                if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
+                if (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP)
                 {
                     KBDLLHOOKSTRUCT hookStruct = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
-                    int vk = hookStruct.vkCode;
-                    bool isAlt = (hookStruct.flags & 0x20) != 0;
-                    bool isCtrl = (GetKeyState(0x11) & 0x8000) != 0;
-
-                    // 1. Block Left & Right Windows Keys (Win, Win+S Search, Win+R Run, Start Menu)
-                    if (vk == VK_LWIN || vk == VK_RWIN)
-                    {
-                        return (IntPtr)1;
-                    }
-
-                    // 2. Block Alt+Tab and Alt+Shift+Tab
-                    if (isAlt && vk == VK_TAB)
-                    {
-                        return (IntPtr)1;
-                    }
-
-                    // 3. Block Alt+Escape
-                    if (isAlt && vk == VK_ESCAPE)
-                    {
-                        return (IntPtr)1;
-                    }
-
-                    // 4. Block Ctrl+Escape (Start Menu)
-                    if (isCtrl && vk == VK_ESCAPE)
-                    {
-                        return (IntPtr)1;
-                    }
-
-                    // 5. Block Alt+F4
-                    if (isAlt && vk == VK_F4)
-                    {
-                        return (IntPtr)1;
-                    }
-
-                    // 6. Block Alt+Space (Window System Menu)
-                    if (isAlt && vk == VK_SPACE)
+                    // Allow remote admin injected input, block ALL physical keyboard presses while locked
+                    if ((hookStruct.flags & LLKHF_INJECTED) == 0)
                     {
                         return (IntPtr)1;
                     }
                 }
             }
-            return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            return CallNextHookEx(_kbHook, nCode, wParam, lParam);
+        }
+
+        private static IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0)
+            {
+                MSLLHOOKSTRUCT hookStruct = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+                // Allow remote admin injected mouse events, block ALL physical mouse movement/clicks/wheel while locked
+                if ((hookStruct.flags & LLMHF_INJECTED) == 0)
+                {
+                    return (IntPtr)1;
+                }
+            }
+            return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
         }
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+        private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelProc lpfn, IntPtr hMod, uint dwThreadId);
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -113,8 +146,5 @@ namespace ArtemiaPisonet
 
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern IntPtr GetModuleHandle(string lpModuleName);
-
-        [DllImport("user32.dll")]
-        private static extern short GetKeyState(int nVirtKey);
     }
 }

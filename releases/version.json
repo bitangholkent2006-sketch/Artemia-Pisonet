@@ -1,7 +1,7 @@
 {
-  "version": "1.0.12",
+  "version": "1.0.13",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-11T00:25:00.000Z",
+  "releaseDate": "2026-11-11T01:05:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Fix Windows OTA self-update relaunch (replace cmd tasklist|find with WSH VBScript updater), fix startup status lock race, and include all v1.0.11 remote control/telemetry/file-manager/game-updater fixes"
+  "changelog": "Full keyboard+mouse lock blocker while locked, Deep System Refresh (wipe apps & user files keeping Windows + Artemia), Anti-Delete NTFS protection + Password-protected Operator Exit + Watchdog, real GPU/SSD/CPU % specs checker, and 1-click Push Update support for all versions"
 }

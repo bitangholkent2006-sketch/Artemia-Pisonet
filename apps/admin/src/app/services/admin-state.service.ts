@@ -583,6 +583,18 @@ export class AdminStateService {
     }
   }
 
+  public async systemRefresh(
+    targetPcId: string = 'all',
+    options: { wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean } = {}
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await this.apiClient.systemRefresh(targetPcId, options);
+      return { success: res.success, message: res.message };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'System refresh dispatch failed.' };
+    }
+  }
+
   public async executeRemoteCommand(targetPcId: string, command: string, shell: 'powershell' | 'cmd' = 'powershell'): Promise<{ success: boolean; message: string }> {
     try {
       const res = await this.apiClient.executeRemoteCommand(targetPcId, command, shell);
@@ -642,6 +654,14 @@ export class AdminStateService {
 
   public onFpsBoostResult(callback: (data: any) => void): () => void {
     return this.apiClient.onSocketEvent('maintenance:fps-boost:result', callback);
+  }
+
+  public onSystemRefreshResult(callback: (data: any) => void): () => void {
+    return this.apiClient.onSocketEvent('maintenance:system-refresh:result', callback);
+  }
+
+  public onClientUpdateStatus(callback: (data: any) => void): () => void {
+    return this.apiClient.onSocketEvent('maintenance:client-update:status', callback);
   }
 
   public async getClientUpdateInfo() {

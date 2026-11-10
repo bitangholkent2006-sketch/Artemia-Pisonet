@@ -22,8 +22,12 @@ export interface PC {
   ramTotalGb?: number;
   gpu?: string;
   gpuStatus?: string;
+  gpuPercent?: number;
   ssdModel?: string;
   ssdStatus?: string;
+  ssdHealthPercent?: number;
+  ssdActivePercent?: number;
+  clientVersion?: string;
   diskUsage?: DriveDiskInfo[];
   uptimeSeconds?: number;
   lastCleanedAt?: string;

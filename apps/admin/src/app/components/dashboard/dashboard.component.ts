@@ -124,6 +124,13 @@ import { PC, PCStatus } from '@pisonet/shared';
           <button class="btn btn-sm btn-warning" (click)="bulkCleanJunk()" title="Wipe downloads, browser history/logins, and temp junk across all stations">
             🧹 Clean Slate (All PCs)
           </button>
+          <button
+            class="btn btn-sm btn-danger-subtle"
+            (click)="openRefreshModal('all')"
+            title="Deep System Refresh: Wipe all user files, apps & games, keeping only Windows OS & Artemia"
+          >
+            ♻️ Deep Refresh (All PCs)
+          </button>
           <button class="btn btn-sm btn-secondary" (click)="openBatchCommandModal()">
             💻 Run Fleet Script
           </button>
@@ -232,9 +239,9 @@ import { PC, PCStatus } from '@pisonet/shared';
                     {{ pc.cpuModel || pc.specs || 'Core Processor' }}
                   </div>
                   <div class="hw-meta">
-                    <span class="hw-sub" *ngIf="pc.ramTotalGb">RAM: {{ pc.ramUsedGb }}GB / {{ pc.ramTotalGb }}GB ({{ pc.ramPercent }}%)</span>
-                    <span class="hw-sub" *ngIf="!pc.ramTotalGb">{{ pc.ramPercent ? pc.ramPercent + '% RAM Used' : '16GB RAM' }}</span>
-                    <span class="hw-badge ok" *ngIf="pc.status !== 'offline'">● OK</span>
+                    <span class="hw-sub" *ngIf="pc.ramTotalGb">RAM: {{ pc.ramUsedGb }}GB / {{ pc.ramTotalGb }}GB ({{ pc.ramPercent ?? 0 }}%)</span>
+                    <span class="hw-sub" *ngIf="!pc.ramTotalGb">{{ (pc.ramPercent ?? 0) }}% RAM Used</span>
+                    <span class="hw-badge" *ngIf="pc.status !== 'offline'" [ngClass]="getPercentBadgeClass(pc.cpuPercent ?? 0)">● {{ pc.cpuPercent ?? 0 }}% CPU</span>
                   </div>
                 </div>
               </div>
@@ -245,9 +252,9 @@ import { PC, PCStatus } from '@pisonet/shared';
                 <div class="hw-details">
                   <div class="hw-title" [title]="pc.gpu">{{ pc.gpu }}</div>
                   <div class="hw-meta">
-                    <span class="hw-sub">Graphics Adapter</span>
-                    <span class="hw-badge" [ngClass]="{'ok': pc.gpuStatus === 'OK', 'warn': pc.gpuStatus && pc.gpuStatus !== 'OK'}">
-                      ● {{ pc.gpuStatus || 'OK' }}
+                    <span class="hw-sub">GPU Engine Load</span>
+                    <span class="hw-badge" [ngClass]="getPercentBadgeClass(pc.gpuPercent ?? 0)">
+                      ● {{ getGpuBadgeText(pc) }}
                     </span>
                   </div>
                 </div>
@@ -259,9 +266,10 @@ import { PC, PCStatus } from '@pisonet/shared';
                 <div class="hw-details">
                   <div class="hw-title" [title]="pc.ssdModel">{{ pc.ssdModel }}</div>
                   <div class="hw-meta">
-                    <span class="hw-sub">SSD Storage</span>
-                    <span class="hw-badge" [ngClass]="{'ok': pc.ssdStatus === 'OK', 'warn': pc.ssdStatus && pc.ssdStatus !== 'OK'}">
-                      ● {{ pc.ssdStatus || 'OK' }}
+                    <span class="hw-sub" *ngIf="pc.ssdHealthPercent != null">SSD Health ({{ pc.ssdActivePercent ?? 0 }}% I/O)</span>
+                    <span class="hw-sub" *ngIf="pc.ssdHealthPercent == null">SSD Disk ({{ getDrivePercent(pc, 'C') }}% Used)</span>
+                    <span class="hw-badge" [ngClass]="getSsdBadgeClass(pc)">
+                      ● {{ getSsdBadgeText(pc) }}
                     </span>
                   </div>
                 </div>
@@ -347,6 +355,13 @@ import { PC, PCStatus } from '@pisonet/shared';
                   title="Clean Slate: Wipe downloads, browser logins/history & temp files"
                 >
                   🧹 Clean
+                </button>
+                <button
+                  class="btn btn-sm btn-subtle danger"
+                  (click)="openRefreshModal(pc)"
+                  title="Deep System Refresh: Papason tanang user apps & files (Windows + Artemia ray mabilin)"
+                >
+                  ♻️ Refresh
                 </button>
                 <button
                   class="btn btn-sm btn-subtle danger"
@@ -492,6 +507,64 @@ import { PC, PCStatus } from '@pisonet/shared';
               (click)="saveRenamePc()"
             >
               {{ isSavingRename ? 'Saving...' : '💾 Save Name' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: Deep System Refresh (Wipe All User Apps & Files, Keep OS + Artemia) -->
+      <div *ngIf="refreshModalTarget !== null" class="modal-backdrop" (click)="closeRefreshModal()">
+        <div class="modal-dialog" style="max-width: 500px; border-color: rgba(244, 63, 94, 0.5);" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.4rem;">♻️</span>
+              <h3 class="modal-title-text" style="color: #fda4af;">
+                {{ refreshModalTarget === 'all' ? 'Deep Refresh: TANANG Online PCs' : 'Deep Refresh: ' + refreshModalTarget.name }}
+              </h3>
+            </div>
+            <button class="btn btn-sm btn-secondary" (click)="closeRefreshModal()">✕</button>
+          </div>
+
+          <div class="modal-body">
+            <div style="background: rgba(225, 29, 72, 0.12); border: 1px solid rgba(244, 63, 94, 0.35); border-radius: 10px; padding: 12px; font-size: 0.82rem; color: #fecdd3; margin-bottom: 14px; line-height: 1.5;">
+              ⚠️ <strong>Pahibalo:</strong> Tangtangon ani ang mga <strong>3rd-party apps, games, ug user files</strong> aron mobalik sa limpyo nga Windows system + <strong>Artemia Customer Terminal</strong> lang. Pabilin nga intact ang Windows OS, drivers, ug Artemia agent.
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; font-size: 0.84rem; color: #cbd5e1;">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" [(ngModel)]="refreshOptions.wipeUserFiles" />
+                <span>Wipe tanan User Files (Desktop, Downloads, Docs, Media, Browsers)</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" [(ngModel)]="refreshOptions.wipeApps" />
+                <span>Uninstall &amp; Delete 3rd-Party Apps/Games (Program Files, C:\Games)</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" [(ngModel)]="refreshOptions.wipeOtherDrives" />
+                <span>Limpyohan apil ang uban Drives (D:, E:, excluding Artemia)</span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">I-type ang <strong style="color:#fb7185;">REFRESH</strong> aron ma-confirm:</label>
+              <input
+                type="text"
+                class="form-input"
+                [(ngModel)]="refreshConfirmWord"
+                (keydown.enter)="executeSystemRefresh()"
+                placeholder="REFRESH"
+              />
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-secondary" (click)="closeRefreshModal()">Cancel</button>
+            <button
+              class="btn btn-danger"
+              [disabled]="refreshConfirmWord.trim().toUpperCase() !== 'REFRESH' || isSendingRefresh || (!refreshOptions.wipeUserFiles && !refreshOptions.wipeApps && !refreshOptions.wipeOtherDrives)"
+              (click)="executeSystemRefresh()"
+            >
+              {{ isSendingRefresh ? 'Nagpadala...' : '♻️ Confirm Deep Refresh' }}
             </button>
           </div>
         </div>
@@ -1282,6 +1355,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
   renameDisplayName: string = '';
   isSavingRename: boolean = false;
 
+  refreshModalTarget: PC | 'all' | null = null;
+  refreshConfirmWord: string = '';
+  isSendingRefresh: boolean = false;
+  refreshOptions = {
+    wipeUserFiles: true,
+    wipeApps: true,
+    wipeOtherDrives: true
+  };
+
   messagePresets: string[] = [
     'Palihog hinay-hinay sa keyboard ug mouse.',
     'System maintenance update will begin in 10 minutes.',
@@ -1294,6 +1376,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private noticeTimer: any = null;
   private cleanSub: (() => void) | null = null;
   private fpsBoostSub?: () => void;
+  private refreshSub?: () => void;
+  private otaStatusSub?: () => void;
 
   constructor(public adminState: AdminStateService) {}
 
@@ -1329,12 +1413,36 @@ export class DashboardComponent implements OnInit, OnDestroy {
       const games = data.boostedGames && data.boostedGames.length > 0 ? ` • Boosted: ${data.boostedGames.join(', ')}` : '';
       this.showNotice(`⚡ [FPS Boost Complete] ${pcLabel}: Nabawi ang ${freedMb} MB RAM • ${plan} Activated${games}!`, 'success');
     });
+
+    this.refreshSub = this.adminState.onSystemRefreshResult((data: any) => {
+      const pcLabel = data.pcName || data.pcId?.toUpperCase() || 'Station';
+      if (data.success === false) {
+        this.showNotice(`⚠️ [Deep Refresh Failed] ${pcLabel}: ${data.error || 'Refresh error'}`, 'warn');
+        return;
+      }
+      const freedMb = data.deletedBytes ? (data.deletedBytes / (1024 * 1024)).toFixed(1) : '0';
+      const uninstalled = data.uninstalledCount || 0;
+      this.showNotice(`♻️ [Deep Refresh Complete] ${pcLabel}: Freed ${freedMb} MB • ${uninstalled} apps removed (System & Artemia preserved)!`, 'success');
+    });
+
+    this.otaStatusSub = this.adminState.onClientUpdateStatus((data: any) => {
+      const pcLabel = data.pcName || data.pcId?.toUpperCase() || 'Station';
+      if (data.status === 'error' || data.error) {
+        this.showNotice(`⚠️ [OTA Update Error] ${pcLabel}: ${data.error || 'Update failed'}`, 'warn');
+      } else if (data.status === 'restarting') {
+        this.showNotice(`🔄 [OTA Update] ${pcLabel}: Na-download na ang bag-ong app.asar, nag-restart na karon...`, 'success');
+      } else if (data.status === 'downloading') {
+        this.showNotice(`⬇️ [OTA Update] ${pcLabel}: Nag-download sa bag-ong app.asar...`, 'info');
+      }
+    });
   }
 
   ngOnDestroy() {
     this.sub.unsubscribe();
     if (this.cleanSub) this.cleanSub();
     if (this.fpsBoostSub) this.fpsBoostSub();
+    if (this.refreshSub) this.refreshSub();
+    if (this.otaStatusSub) this.otaStatusSub();
     if (this.noticeTimer) clearTimeout(this.noticeTimer);
   }
 
@@ -1402,6 +1510,65 @@ export class DashboardComponent implements OnInit, OnDestroy {
   getDrivePercent(pc: PC, drive: string): number {
     const d = pc.diskUsage?.find(item => item.drive.toUpperCase().startsWith(drive.toUpperCase()));
     return d?.usedPercent ?? 0;
+  }
+
+  getPercentBadgeClass(percent: number): string {
+    if (percent >= 90) return 'danger';
+    if (percent >= 75) return 'warn';
+    return 'ok';
+  }
+
+  getGpuBadgeText(pc: PC): string {
+    if (typeof pc.gpuPercent === 'number') return `${pc.gpuPercent}% Load`;
+    if (pc.gpuStatus && pc.gpuStatus !== 'OK' && pc.gpuStatus.includes('%')) return pc.gpuStatus;
+    return '0% Load';
+  }
+
+  getSsdBadgeClass(pc: PC): string {
+    if (typeof pc.ssdHealthPercent === 'number') {
+      if (pc.ssdHealthPercent < 40) return 'danger';
+      if (pc.ssdHealthPercent < 70) return 'warn';
+      return 'ok';
+    }
+    return this.getPercentBadgeClass(pc.ssdActivePercent ?? 0);
+  }
+
+  getSsdBadgeText(pc: PC): string {
+    if (typeof pc.ssdHealthPercent === 'number') return `${pc.ssdHealthPercent}% Health`;
+    if (typeof pc.ssdActivePercent === 'number') return `${pc.ssdActivePercent}% I/O`;
+    if (pc.ssdStatus && pc.ssdStatus !== 'OK' && pc.ssdStatus.includes('%')) return pc.ssdStatus;
+    return `${this.getDrivePercent(pc, 'C')}% Used`;
+  }
+
+  // Deep System Refresh Modal & Action
+  openRefreshModal(target: PC | 'all') {
+    this.refreshModalTarget = target;
+    this.refreshConfirmWord = '';
+    this.refreshOptions = { wipeUserFiles: true, wipeApps: true, wipeOtherDrives: true };
+  }
+
+  closeRefreshModal() {
+    this.refreshModalTarget = null;
+    this.refreshConfirmWord = '';
+  }
+
+  async executeSystemRefresh() {
+    if (!this.refreshModalTarget || this.isSendingRefresh) return;
+    if (this.refreshConfirmWord.trim().toUpperCase() !== 'REFRESH') return;
+    const targetId = this.refreshModalTarget === 'all' ? 'all' : this.refreshModalTarget.id;
+    const targetLabel = this.refreshModalTarget === 'all' ? 'TANANG online PCs' : this.refreshModalTarget.name;
+    this.isSendingRefresh = true;
+    try {
+      const res = await this.adminState.systemRefresh(targetId, this.refreshOptions);
+      if (res.success) {
+        this.showNotice(`♻️ Deep System Refresh dispatched ngadto sa ${targetLabel}! Palihog paghulat og 1-2 minutos samtang nag-limpyo sa apps ug files.`, 'info');
+        this.closeRefreshModal();
+      } else {
+        this.showNotice(`⚠️ ${res.message}`, 'warn');
+      }
+    } finally {
+      this.isSendingRefresh = false;
+    }
   }
 
   // Bulk Fleet Actions

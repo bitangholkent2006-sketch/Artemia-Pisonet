@@ -48,6 +48,16 @@ authRoutes.post('/login', async (c) => {
   return c.json({ success: false, message: custRes.error || staffRes.error || 'Authentication failed' }, 401);
 });
 
+authRoutes.post('/verify-operator', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { password, username } = body;
+  const result = await AuthService.verifyOperatorPassword(password, username);
+  if (!result.success) {
+    return c.json({ success: false, message: result.error }, 401);
+  }
+  return c.json({ success: true, verifiedBy: result.verifiedBy });
+});
+
 authRoutes.post('/change-password', requireAuth, async (c) => {
   const user = c.get('user');
   const body = await c.req.json();

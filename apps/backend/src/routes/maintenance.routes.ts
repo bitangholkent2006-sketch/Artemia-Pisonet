@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { requireStaff } from '../middleware/auth.middleware';
-import { broadcastRealtimeEvent, tryGetIO } from '../socket/socket-server';
+import { broadcastRealtimeEvent, dispatchClientOtaToTargets, tryGetIO } from '../socket/socket-server';
 import { getCollections } from '../database/connection';
 import { PcService } from '../services/pc.service';
 import { getLatestAsarInfo, getLatestReleaseInfo } from '../config/releases';
@@ -224,6 +224,33 @@ maintenanceRoutes.get('/client-update-info', requireStaff, async (c) => {
   });
 });
 
+// Trigger Deep System Refresh (Wipe All User Files & 3rd-Party Apps/Games while preserving Windows + Artemia)
+maintenanceRoutes.post('/system-refresh', requireStaff, async (c) => {
+  const staff = c.get('user');
+  const body = await c.req.json().catch(() => ({}));
+  const { targetPcId = 'all', targetPcIds, wipeUserFiles = true, wipeApps = true, wipeOtherDrives = true } = body;
+  const targets = Array.isArray(targetPcIds) && targetPcIds.length > 0 ? targetPcIds : [targetPcId];
+
+  const payload = {
+    reqId: 'refresh_' + Date.now(),
+    targetPcId: targets.includes('all') ? 'all' : targets[0],
+    targetPcIds: targets,
+    wipeUserFiles: wipeUserFiles !== false,
+    wipeApps: wipeApps !== false,
+    wipeOtherDrives: wipeOtherDrives !== false,
+    sender: staff?.fullName || staff?.username || 'Admin',
+    timestamp: new Date().toISOString()
+  };
+
+  dispatchAgentEvent('agent:system-refresh:run', payload, targetPcId, targetPcIds);
+
+  return c.json({
+    success: true,
+    message: `System Refresh dispatched to ${targets.includes('all') ? 'all online stations' : targets.join(', ')}.`,
+    payload
+  });
+});
+
 // OTA Client Updater: Dispatch instant app.asar push update to stations
 maintenanceRoutes.post('/push-client-update', requireStaff, async (c) => {
   const staff = c.get('user');
@@ -252,12 +279,17 @@ maintenanceRoutes.post('/push-client-update', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  dispatchAgentEvent('agent:client-update:run', payload, targetPcId, targetPcIds);
+  const { sentDirect, sentLegacyBridge } = await dispatchClientOtaToTargets(payload, targets);
+  // Fallback emit if no matching sockets returned (e.g. unit/dev env)
+  if (sentDirect === 0 && sentLegacyBridge === 0) {
+    dispatchAgentEvent('agent:client-update:run', payload, targetPcId, targetPcIds);
+  }
 
   return c.json({
     success: true,
-    message: `OTA Update push dispatched to ${targets.includes('all') ? 'all online stations' : targets.join(', ')}. Stations will download new app.asar and restart.`,
-    payload
+    message: `OTA Update v${version} dispatched to ${targets.includes('all') ? 'all online stations' : targets.join(', ')} (${sentDirect} direct WSH, ${sentLegacyBridge} legacy bridge).`,
+    payload,
+    dispatched: { sentDirect, sentLegacyBridge }
   });
 });
 

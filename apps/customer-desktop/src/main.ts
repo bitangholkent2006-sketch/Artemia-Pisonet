@@ -32,6 +32,7 @@ interface WindowWithDesktop extends Window {
     // Maintenance Native Bridge
     executeCommand: (cmd: string, type: 'powershell' | 'cmd') => Promise<{ output: string; exitCode: number; error?: string }>;
     cleanTemp: () => Promise<{ deletedBytes: number; cleanedPaths: string[]; error?: string }>;
+    systemRefresh?: (options?: { wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean }) => Promise<{ success: boolean; deletedBytes: number; uninstalledCount: number; cleanedTargets: string[]; error?: string }>;
     updateGame: (gameId: string, cmd?: string) => Promise<{ status: string; log: string }>;
     listFiles: (targetPath: string) => Promise<{ entries: any[]; error?: string }>;
     deletePath: (targetPath: string) => Promise<{ success: boolean; error?: string }>;
@@ -39,10 +40,12 @@ interface WindowWithDesktop extends Window {
     killProcess: (pid?: number, name?: string) => Promise<{ success: boolean; error?: string }>;
     captureScreen: (options?: { width?: number; height?: number; quality?: number; skipFallback?: boolean }) => Promise<{ base64Image: string; error?: string }>;
     getDiskDrives: () => Promise<{ drives: any[] }>;
-    getHardwareHealth?: () => Promise<{ cpuModel: string; cpuPercent: number; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string; activeApp: string }>;
+    getHardwareHealth?: () => Promise<{ cpuModel: string; cpuPercent: number; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuPercent?: number; gpuStatus: string; ssdModel: string; ssdHealthPercent?: number | null; ssdActivePercent?: number; ssdStatus: string; activeApp: string }>;
     downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
     onDownloadProgress?: (callback: (data: any) => void) => void;
     onCleanAutoDone?: (callback: (data: any) => void) => void;
+    onRequestOperatorExit?: (callback: () => void) => void;
+    verifyAndExitOperator?: (payload: { password: string; removeProtection?: boolean }) => Promise<{ success: boolean; error?: string }>;
     sendRemoteInput?: (payload: any) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
     applyClientUpdate?: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
     optimizeFps?: () => Promise<{ success: boolean; freedRamMb: number; powerPlan: string; boostedGames: string[]; tweaksApplied: string[]; elapsedMs: number; error?: string }>;
@@ -50,7 +53,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.12';
+const CLIENT_AGENT_VERSION = '1.0.13';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -112,16 +115,19 @@ class StationMaintenanceAgent {
   private lastOtaTriggerAt = 0;
 
   private telemetry = {
-    cpuPercent: 14,
-    ramPercent: 42,
+    cpuPercent: 0,
+    ramPercent: 0,
     cpuModel: '',
     ramUsedGb: 0,
     ramTotalGb: 16,
     gpu: '',
-    gpuStatus: 'OK',
+    gpuPercent: 0,
+    gpuStatus: '0% Load',
     ssdModel: '',
-    ssdStatus: 'OK',
-    diskUsedGb: 320,
+    ssdHealthPercent: null as number | null,
+    ssdActivePercent: 0,
+    ssdStatus: '0% I/O',
+    diskUsedGb: 0,
     diskTotalGb: 500,
     diskUsage: [] as any[],
     activeApp: 'Desktop Idle'
@@ -854,6 +860,40 @@ class StationMaintenanceAgent {
         });
       });
 
+      // 2b. Deep System Refresh Relay (Wipe All User Files & 3rd-Party Apps while keeping OS + Artemia)
+      this.socket.on('agent:system-refresh:run', async (payload: { reqId?: string; targetPcId?: string; wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean }) => {
+        if (!this.matchesThisStation(payload.targetPcId)) {
+          return;
+        }
+        this.logMessage('[System Refresh] Executing deep wipe of user files & 3rd-party apps/games (keeping system & Artemia)...');
+        let res: { success: boolean; deletedBytes: number; uninstalledCount: number; cleanedTargets: string[]; error?: string };
+        if (desktopWindow.pisonetDesktop?.systemRefresh) {
+          res = await desktopWindow.pisonetDesktop.systemRefresh({
+            wipeUserFiles: payload.wipeUserFiles,
+            wipeApps: payload.wipeApps,
+            wipeOtherDrives: payload.wipeOtherDrives
+          });
+        } else {
+          res = { success: false, deletedBytes: 0, uninstalledCount: 0, cleanedTargets: [], error: 'Desktop runtime required' };
+        }
+        const freedMb = (res.deletedBytes / (1024 * 1024)).toFixed(1);
+        this.logMessage(`[System Refresh] Done. Freed ${freedMb} MB, uninstalled ${res.uninstalledCount} apps.`);
+        this.showToast(`♻️ System Refresh Complete: Freed ${freedMb} MB!`, res.success ? 'success' : 'error', 6);
+        await this.refreshHardwareHealth();
+
+        this.socket?.emit('agent:system-refresh:result', {
+          reqId: payload.reqId,
+          pcId: this.dbPcId || this.pcId || payload.targetPcId,
+          pcName: this.pcName,
+          success: res.success,
+          deletedBytes: res.deletedBytes,
+          uninstalledCount: res.uninstalledCount,
+          cleanedTargets: res.cleanedTargets,
+          error: res.error,
+          timestamp: new Date().toISOString()
+        });
+      });
+
       // 3. Game Auto-Updater Relay
       this.socket.on('agent:game:update', async (payload: { gameId?: string; gameKey?: string; command?: string; updateCommand?: string; targetPcId?: string; targetPcIds?: string[] }) => {
         const game = payload.gameId || payload.gameKey || 'game';
@@ -1230,11 +1270,14 @@ class StationMaintenanceAgent {
           if (hw.activeApp) this.telemetry.activeApp = hw.activeApp;
           this.telemetry.ramTotalGb = hw.ramTotalGb || this.telemetry.ramTotalGb;
           this.telemetry.ramUsedGb = hw.ramUsedGb || this.telemetry.ramUsedGb;
-          this.telemetry.ramPercent = hw.ramPercent || this.telemetry.ramPercent;
+          this.telemetry.ramPercent = hw.ramPercent ?? this.telemetry.ramPercent;
           this.telemetry.gpu = hw.gpu || this.telemetry.gpu;
-          this.telemetry.gpuStatus = hw.gpuStatus || this.telemetry.gpuStatus;
+          if (typeof hw.gpuPercent === 'number') this.telemetry.gpuPercent = hw.gpuPercent;
+          this.telemetry.gpuStatus = hw.gpuStatus || `${this.telemetry.gpuPercent}% Load`;
           this.telemetry.ssdModel = hw.ssdModel || this.telemetry.ssdModel;
-          this.telemetry.ssdStatus = hw.ssdStatus || this.telemetry.ssdStatus;
+          if (hw.ssdHealthPercent !== undefined) this.telemetry.ssdHealthPercent = hw.ssdHealthPercent;
+          if (typeof hw.ssdActivePercent === 'number') this.telemetry.ssdActivePercent = hw.ssdActivePercent;
+          this.telemetry.ssdStatus = hw.ssdStatus || (this.telemetry.ssdHealthPercent !== null ? `${this.telemetry.ssdHealthPercent}% Health` : `${this.telemetry.ssdActivePercent}% I/O`);
         }
       } catch {}
     }
@@ -1390,8 +1433,30 @@ class StationMaintenanceAgent {
           display: none; flex-direction: column; align-items: center; justify-content: center;
           text-align: center; padding: 32px; backdrop-filter: blur(20px);
           animation: fadeIn 0.3s ease;
+          cursor: none; user-select: none;
         }
         .lock-overlay.visible { display: flex; }
+        .operator-exit-backdrop {
+          position: fixed; inset: 0; z-index: 100005; background: rgba(2, 6, 23, 0.85);
+          backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; padding: 20px;
+        }
+        .operator-exit-backdrop.visible { display: flex; }
+        .operator-exit-card {
+          background: #0f172a; border: 1px solid #334155; border-radius: 16px;
+          padding: 24px; width: 100%; max-width: 420px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+        }
+        .operator-exit-title { font-size: 1.15rem; font-weight: 800; color: #f8fafc; margin-bottom: 6px; }
+        .operator-exit-sub { font-size: 0.82rem; color: #94a3b8; line-height: 1.5; margin-bottom: 14px; }
+        .operator-exit-input {
+          width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #334155;
+          background: #020617; color: #f8fafc; font-size: 0.95rem; margin-bottom: 10px; outline: none;
+        }
+        .operator-exit-input:focus { border-color: #38bdf8; }
+        .operator-exit-error { color: #fb7185; font-size: 0.8rem; min-height: 18px; margin-bottom: 10px; font-weight: 600; }
+        .operator-exit-actions { display: flex; flex-direction: column; gap: 8px; }
+        .btn-op-exit { background: #dc2626; border: none; color: #fff; padding: 10px 14px; border-radius: 10px; font-weight: 700; cursor: pointer; }
+        .btn-op-unlock { background: #b45309; border: none; color: #fff; padding: 9px 14px; border-radius: 10px; font-weight: 700; cursor: pointer; font-size: 0.82rem; }
+        .btn-op-cancel { background: #1e293b; border: 1px solid #334155; color: #cbd5e1; padding: 8px 14px; border-radius: 10px; font-weight: 600; cursor: pointer; }
         .lock-icon-box {
           width: 96px; height: 96px; border-radius: 24px;
           background: rgba(245, 158, 11, 0.15); border: 2px solid rgba(245, 158, 11, 0.5);
@@ -1590,12 +1655,29 @@ class StationMaintenanceAgent {
         <div class="lock-icon-box">🔒</div>
         <div class="lock-title">STATION MAINTENANCE LOCKED</div>
         <div class="lock-subtitle">
-          Ang kini nga computer temporaryong gi-lock sa administrator alang sa system maintenance, storage cleaning, o game updates. Palihog paabuta nga i-unlock sa counter.
+          Ang kini nga computer temporaryong gi-lock sa administrator (Naka-block ang keyboard ug mouse). Palihog paabuta nga i-unlock sa admin sa counter.
         </div>
         <div class="lock-station-pill">
           <span>🖥️ Terminal Station:</span>
           <span id="lock-station-tag" style="color:#fff; font-weight:900;">${this.pcName}</span>
-          <span style="color:#f59e0b; margin-left:8px;">● LOCKED</span>
+          <span style="color:#f59e0b; margin-left:8px;">● INPUT BLOCKED</span>
+        </div>
+      </div>
+
+      <!-- OPERATOR EXIT / UNLOCK PROTECTION MODAL -->
+      <div id="operator-exit-backdrop" class="operator-exit-backdrop">
+        <div class="operator-exit-card">
+          <div class="operator-exit-title">🔐 Operator Exit Verification</div>
+          <div class="operator-exit-sub">
+            Protektado ang Artemia Customer Terminal aron dili ma-exit o ma-delete sa customer. Isulod ang <strong>Admin / Operator Password</strong> aron mo-padayon.
+          </div>
+          <input id="operator-exit-password" type="password" class="operator-exit-input" placeholder="Admin / Operator Password..." autocomplete="current-password" />
+          <div id="operator-exit-error" class="operator-exit-error"></div>
+          <div class="operator-exit-actions">
+            <button id="btn-op-verify-quit" class="btn-op-exit">🚪 Verify &amp; Exit Agent</button>
+            <button id="btn-op-verify-unprotect" class="btn-op-unlock">🔓 Unlock Delete Protection &amp; Exit (For Uninstall)</button>
+            <button id="btn-op-cancel" class="btn-op-cancel">Cancel</button>
+          </div>
         </div>
       </div>
 
@@ -1655,6 +1737,7 @@ class StationMaintenanceAgent {
         <div class="quick-actions">
           <button class="btn-action" id="btn-clean-local">🧹 Clean Slate Now (Wipe Downloads, Logins & Junk)</button>
           <button class="btn-action" id="btn-change-id">⚙️ Change Station PC ID</button>
+          <button class="btn-action" id="btn-operator-exit" style="border-color:rgba(244,63,94,0.4); color:#fda4af;">🔐 Operator Exit / Unlock</button>
         </div>
       </div>
     `;
@@ -1697,6 +1780,58 @@ class StationMaintenanceAgent {
       if (next && next.trim()) {
         localStorage.setItem('artemia_station_id', next.trim().toLowerCase());
         window.location.reload();
+      }
+    });
+
+    const openOperatorExitModal = () => {
+      const backdrop = document.getElementById('operator-exit-backdrop');
+      const input = document.getElementById('operator-exit-password') as HTMLInputElement | null;
+      const errEl = document.getElementById('operator-exit-error');
+      if (errEl) errEl.innerText = '';
+      if (input) input.value = '';
+      backdrop?.classList.add('visible');
+      setTimeout(() => input?.focus(), 60);
+    };
+
+    const closeOperatorExitModal = () => {
+      document.getElementById('operator-exit-backdrop')?.classList.remove('visible');
+    };
+
+    const submitOperatorExit = async (removeProtection: boolean) => {
+      const input = document.getElementById('operator-exit-password') as HTMLInputElement | null;
+      const errEl = document.getElementById('operator-exit-error');
+      const pwd = input?.value || '';
+      if (!pwd.trim()) {
+        if (errEl) errEl.innerText = 'Palihog isulod ang Admin / Operator Password.';
+        return;
+      }
+      if (!desktopWindow.pisonetDesktop?.verifyAndExitOperator) {
+        if (errEl) errEl.innerText = 'Desktop agent required.';
+        return;
+      }
+      if (errEl) errEl.innerText = 'Nag-verify sa password...';
+      const res = await desktopWindow.pisonetDesktop.verifyAndExitOperator({ password: pwd, removeProtection });
+      if (!res?.success && errEl) {
+        errEl.innerText = res?.error || 'Sayop ang password.';
+      }
+    };
+
+    document.getElementById('btn-operator-exit')?.addEventListener('click', openOperatorExitModal);
+    document.getElementById('btn-op-cancel')?.addEventListener('click', closeOperatorExitModal);
+    document.getElementById('btn-op-verify-quit')?.addEventListener('click', () => submitOperatorExit(false));
+    document.getElementById('btn-op-verify-unprotect')?.addEventListener('click', () => submitOperatorExit(true));
+    document.getElementById('operator-exit-password')?.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') submitOperatorExit(false);
+    });
+    if (desktopWindow.pisonetDesktop?.onRequestOperatorExit) {
+      desktopWindow.pisonetDesktop.onRequestOperatorExit(() => {
+        if (!this.isLocked) openOperatorExitModal();
+      });
+    }
+    window.addEventListener('keydown', (ev) => {
+      if (ev.ctrlKey && ev.altKey && ev.shiftKey && ev.key.toLowerCase() === 'q' && !this.isLocked) {
+        ev.preventDefault();
+        openOperatorExitModal();
       }
     });
   }

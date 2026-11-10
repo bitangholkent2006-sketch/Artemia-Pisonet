@@ -92,6 +92,31 @@ export class AuthService {
     return { success: true, token, user: safeUser };
   }
 
+  public static async verifyOperatorPassword(password: string, username?: string): Promise<{
+    success: boolean;
+    verifiedBy?: string;
+    error?: string;
+  }> {
+    if (!password || !String(password).trim()) {
+      return { success: false, error: 'Operator password is required.' };
+    }
+    const collections = getCollections();
+    const filter: Record<string, any> = {
+      role: { $in: ['admin', 'staff'] },
+      status: { $ne: 'suspended' }
+    };
+    if (username && username.trim()) {
+      filter.username = username.trim().toLowerCase();
+    }
+    const staffUsers = await collections.users.find(filter).toArray();
+    for (const user of staffUsers) {
+      if (user.passwordHash && await AuthService.comparePassword(password, user.passwordHash)) {
+        return { success: true, verifiedBy: user.username };
+      }
+    }
+    return { success: false, error: 'Sayop ang Operator / Admin Password.' };
+  }
+
   public static async loginCustomer(username: string, pass: string): Promise<{
     success: boolean;
     token?: string;

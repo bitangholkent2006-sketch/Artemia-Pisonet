@@ -374,6 +374,16 @@ export class ApiClientService {
     });
   }
 
+  public async systemRefresh(
+    targetPcId: string = 'all',
+    options: { wipeUserFiles?: boolean; wipeApps?: boolean; wipeOtherDrives?: boolean } = {}
+  ) {
+    return this.request<{ success: boolean; message: string; payload?: any }>('/api/v1/maintenance/system-refresh', {
+      method: 'POST',
+      body: JSON.stringify({ targetPcId, ...options })
+    });
+  }
+
   public async triggerGameUpdate(targetPcId: string = 'all', gameKey: string, updateCommand?: string, targetPcIds?: string[]) {
     return this.request<{ success: boolean; message: string }>('/api/v1/maintenance/game-update', {
       method: 'POST',

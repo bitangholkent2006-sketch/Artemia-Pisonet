@@ -52,6 +52,121 @@ function joinAllStationRooms(authSocket: AuthenticatedSocket, rawId: string, raw
   authSocket.join('fleet');
 }
 
+function buildServerWshOtaCommand(downloadUrl: string): string {
+  const ps = `
+$proc = Get-Process -Name "Artemia Customer Terminal" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $proc -or -not $proc.Path) { exit 0 }
+$exePath = $proc.Path
+$targetDir = Split-Path $exePath
+$targetAsar = Join-Path $targetDir "resources\\app.asar"
+$tempAsar = Join-Path $env:TEMP ("app_" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".asar")
+$flagDir = Join-Path $env:USERPROFILE ".artemia"
+New-Item -ItemType Directory -Force -Path $flagDir | Out-Null
+$otaFlag = Join-Path $flagDir "ota_updating.flag"
+Set-Content -Path $otaFlag -Value (Get-Date).ToString("o") -Force
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+try {
+  $runKey = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+  if (Test-Path $runKey) {
+    Set-ItemProperty -Path $runKey -Name "Artemia Fleet Station Agent" -Value ('"' + $exePath + '"') -ErrorAction SilentlyContinue
+  }
+} catch {}
+try {
+  Invoke-WebRequest -Uri "${downloadUrl}" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 25
+} catch {
+  Invoke-WebRequest -Uri "https://raw.githubusercontent.com/bitangholkent2006-sketch/Artemia-Pisonet/artemia-pisonet/releases/app.asar" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 25
+}
+if ((Test-Path $tempAsar) -and ((Get-Item $tempAsar).Length -gt 100000)) {
+  $vbsPath = Join-Path $env:TEMP ("artemia_ota_" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".vbs")
+  $exeName = Split-Path $exePath -Leaf
+  $q = [char]34
+  $vbsLines = @(
+    'Dim sh, fso, wmi, col, p, r',
+    ('Set sh = CreateObject(' + $q + 'WScript.Shell' + $q + ')'),
+    ('Set fso = CreateObject(' + $q + 'Scripting.FileSystemObject' + $q + ')'),
+    'On Error Resume Next',
+    ('sh.Environment(' + $q + 'PROCESS' + $q + ').Remove ' + $q + 'ELECTRON_RUN_AS_NODE' + $q),
+    ('Set wmi = GetObject(' + $q + 'winmgmts:\\\\.\\root\\cimv2' + $q + ')'),
+    ('Set col = wmi.ExecQuery(' + $q + 'SELECT ProcessId FROM Win32_Process WHERE Name=' + "'" + $exeName + "'" + $q + ')'),
+    'If Err.Number = 0 Then',
+    '  For Each p In col : p.Terminate : Next',
+    'Else',
+    '  Err.Clear',
+    ('  sh.Run ' + $q + 'taskkill /F /IM ' + $q + $q + $exeName + $q + $q + $q + ', 0, True'),
+    'End If',
+    'WScript.Sleep 1000',
+    ('sh.Run ' + $q + 'icacls ' + $q + $q + $targetAsar + $q + $q + ' /remove:d Everyone' + $q + ', 0, True'),
+    ('sh.Run ' + $q + 'icacls ' + $q + $q + $targetAsar + $q + $q + ' /remove:d Users' + $q + ', 0, True'),
+    'For r = 1 To 20',
+    '  Err.Clear',
+    ('  fso.CopyFile ' + $q + $tempAsar + $q + ', ' + $q + $targetAsar + $q + ', True'),
+    '  If Err.Number = 0 Then Exit For',
+    '  WScript.Sleep 400',
+    'Next',
+    ('If fso.FileExists(' + $q + $tempAsar + $q + ') Then fso.DeleteFile ' + $q + $tempAsar + $q + ', True'),
+    'WScript.Sleep 600',
+    ('sh.CurrentDirectory = ' + $q + $targetDir + $q),
+    ('sh.Run ' + $q + $q + $q + $exePath + $q + $q + $q + ', 1, False'),
+    'fso.DeleteFile WScript.ScriptFullName, True'
+  )
+  Set-Content -Path $vbsPath -Value $vbsLines -Encoding ASCII -Force
+  Start-Process -FilePath "wscript.exe" -ArgumentList ('//B //Nologo ' + $q + $vbsPath + $q) -WindowStyle Hidden
+}
+`;
+  const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+  return `powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
+}
+
+export async function dispatchClientOtaToTargets(
+  payload: { reqId: string; targetPcId: string; targetPcIds: string[]; version: string; sizeBytes: number; downloadUrl: string; sender: string; timestamp: string },
+  targets: string[]
+): Promise<{ sentDirect: number; sentLegacyBridge: number }> {
+  if (!io) return { sentDirect: 0, sentLegacyBridge: 0 };
+
+  const roomNames = (targets.includes('all') || targets.includes('fleet'))
+    ? ['fleet']
+    : targets.flatMap((tid) => {
+        const t = String(tid || '').toLowerCase().trim();
+        if (!t) return [];
+        const clean = t.replace(/^pc-/, '');
+        return [`pc:${t}`, `pc:${clean}`, `pc:pc-${clean}`];
+      });
+
+  const seenSocketIds = new Set<string>();
+  let sentDirect = 0;
+  let sentLegacyBridge = 0;
+  const legacyCmd = buildServerWshOtaCommand(payload.downloadUrl);
+
+  for (const room of roomNames) {
+    const sockets = await io.in(room).fetchSockets();
+    for (const s of sockets) {
+      if (seenSocketIds.has(s.id)) continue;
+      seenSocketIds.add(s.id);
+      if (s.data?.authType === 'staff') continue;
+
+      const ver = s.data?.clientVersion ? String(s.data.clientVersion).trim() : '';
+      const targetId = s.data?.pcId || payload.targetPcId;
+      if (ver && compareSemver(ver, '1.0.12') >= 0) {
+        s.emit('agent:client-update:run', {
+          ...payload,
+          targetPcId: targets.includes('all') ? 'all' : targetId
+        });
+        sentDirect++;
+      } else {
+        s.emit('agent:command:run', {
+          id: 'push_ota_cmd_' + Date.now(),
+          targetPcId: targetId,
+          command: legacyCmd,
+          shell: 'cmd'
+        });
+        sentLegacyBridge++;
+      }
+    }
+  }
+
+  return { sentDirect, sentLegacyBridge };
+}
+
 function scheduleAutoOtaIfOutdated(authSocket: AuthenticatedSocket, pc: { id: string; name: string }, clientVersion?: string) {
   const latestVersion = getLatestClientVersion();
   const normalizedClientVer = clientVersion ? String(clientVersion).trim() : '';
@@ -85,65 +200,10 @@ function scheduleAutoOtaIfOutdated(authSocket: AuthenticatedSocket, pc: { id: st
         timestamp: new Date().toISOString()
       });
     } else {
-      const ps = `
-$proc = Get-Process -Name "Artemia Customer Terminal" -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $proc -or -not $proc.Path) { exit 0 }
-$exePath = $proc.Path
-$targetDir = Split-Path $exePath
-$targetAsar = Join-Path $targetDir "resources\\app.asar"
-$tempAsar = Join-Path $env:TEMP ("app_" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".asar")
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-try {
-  $runKey = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-  if (Test-Path $runKey) {
-    Set-ItemProperty -Path $runKey -Name "Artemia Fleet Station Agent" -Value ('"' + $exePath + '"') -ErrorAction SilentlyContinue
-  }
-} catch {}
-try {
-  Invoke-WebRequest -Uri "${downloadUrl}" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 25
-} catch {
-  Invoke-WebRequest -Uri "https://raw.githubusercontent.com/bitangholkent2006-sketch/Artemia-Pisonet/artemia-pisonet/releases/app.asar" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 25
-}
-if ((Test-Path $tempAsar) -and ((Get-Item $tempAsar).Length -gt 100000)) {
-  $vbsPath = Join-Path $env:TEMP ("artemia_ota_" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".vbs")
-  $exeName = Split-Path $exePath -Leaf
-  $q = [char]34
-  $vbsLines = @(
-    'Dim sh, fso, wmi, col, p, r',
-    ('Set sh = CreateObject(' + $q + 'WScript.Shell' + $q + ')'),
-    ('Set fso = CreateObject(' + $q + 'Scripting.FileSystemObject' + $q + ')'),
-    'On Error Resume Next',
-    ('sh.Environment(' + $q + 'PROCESS' + $q + ').Remove ' + $q + 'ELECTRON_RUN_AS_NODE' + $q),
-    ('Set wmi = GetObject(' + $q + 'winmgmts:\\\\.\\root\\cimv2' + $q + ')'),
-    ('Set col = wmi.ExecQuery(' + $q + 'SELECT ProcessId FROM Win32_Process WHERE Name=' + "'" + $exeName + "'" + $q + ')'),
-    'If Err.Number = 0 Then',
-    '  For Each p In col : p.Terminate : Next',
-    'Else',
-    '  Err.Clear',
-    ('  sh.Run ' + $q + 'taskkill /F /IM ' + $q + $q + $exeName + $q + $q + $q + ', 0, True'),
-    'End If',
-    'WScript.Sleep 1000',
-    'For r = 1 To 20',
-    '  Err.Clear',
-    ('  fso.CopyFile ' + $q + $tempAsar + $q + ', ' + $q + $targetAsar + $q + ', True'),
-    '  If Err.Number = 0 Then Exit For',
-    '  WScript.Sleep 400',
-    'Next',
-    ('If fso.FileExists(' + $q + $tempAsar + $q + ') Then fso.DeleteFile ' + $q + $tempAsar + $q + ', True'),
-    'WScript.Sleep 600',
-    ('sh.CurrentDirectory = ' + $q + $targetDir + $q),
-    ('sh.Run ' + $q + $q + $q + $exePath + $q + $q + $q + ', 1, False'),
-    'fso.DeleteFile WScript.ScriptFullName, True'
-  )
-  Set-Content -Path $vbsPath -Value $vbsLines -Encoding ASCII -Force
-  Start-Process -FilePath "wscript.exe" -ArgumentList ('//B //Nologo ' + $q + $vbsPath + $q) -WindowStyle Hidden
-}
-`;
-      const encoded = Buffer.from(ps, 'utf16le').toString('base64');
       authSocket.emit('agent:command:run', {
         id: 'auto_ota_cmd_' + Date.now(),
         targetPcId: pc.id,
-        command: `powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
+        command: buildServerWshOtaCommand(downloadUrl),
         shell: 'cmd'
       });
     }
@@ -342,8 +402,12 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
             if (data.telemetry.ramTotalGb != null) updateFields.ramTotalGb = data.telemetry.ramTotalGb;
             if (data.telemetry.gpu != null) updateFields.gpu = data.telemetry.gpu;
             if (data.telemetry.gpuStatus != null) updateFields.gpuStatus = data.telemetry.gpuStatus;
+            if (data.telemetry.gpuPercent != null) updateFields.gpuPercent = data.telemetry.gpuPercent;
             if (data.telemetry.ssdModel != null) updateFields.ssdModel = data.telemetry.ssdModel;
             if (data.telemetry.ssdStatus != null) updateFields.ssdStatus = data.telemetry.ssdStatus;
+            if (data.telemetry.ssdHealthPercent != null) updateFields.ssdHealthPercent = data.telemetry.ssdHealthPercent;
+            if (data.telemetry.ssdActivePercent != null) updateFields.ssdActivePercent = data.telemetry.ssdActivePercent;
+            if (data.clientVersion || authSocket.data.clientVersion) updateFields.clientVersion = data.clientVersion || authSocket.data.clientVersion;
 
             const cleanIdentifier = String(targetId).trim().toUpperCase();
             const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
@@ -382,8 +446,12 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
           if (data.ramTotalGb != null) updateFields.ramTotalGb = data.ramTotalGb;
           if (data.gpu != null) updateFields.gpu = data.gpu;
           if (data.gpuStatus != null) updateFields.gpuStatus = data.gpuStatus;
+          if (data.gpuPercent != null) updateFields.gpuPercent = data.gpuPercent;
           if (data.ssdModel != null) updateFields.ssdModel = data.ssdModel;
           if (data.ssdStatus != null) updateFields.ssdStatus = data.ssdStatus;
+          if (data.ssdHealthPercent != null) updateFields.ssdHealthPercent = data.ssdHealthPercent;
+          if (data.ssdActivePercent != null) updateFields.ssdActivePercent = data.ssdActivePercent;
+          if (authSocket.data.clientVersion) updateFields.clientVersion = authSocket.data.clientVersion;
 
           const cleanIdentifier = String(targetId).trim().toUpperCase();
           const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
@@ -436,6 +504,14 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
     authSocket.on('agent:clean:result', (result: any) => {
       io?.to('staff').emit('maintenance:clean:result', result);
+    });
+
+    authSocket.on('maintenance:system-refresh:run', (payload: any) => {
+      emitToPcTarget('agent:system-refresh:run', payload, payload.targetPcId || payload.pcId);
+    });
+
+    authSocket.on('agent:system-refresh:result', (result: any) => {
+      io?.to('staff').emit('maintenance:system-refresh:result', result);
     });
 
     authSocket.on('maintenance:game:update', (payload: any) => {

@@ -114,8 +114,11 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
                   <span>{{ pc.connectionState | uppercase }}</span>
                 </span>
               </td>
-              <td style="font-size:0.78rem; color:var(--text-dim); max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                {{ pc.specs || 'Standard' }}
+              <td style="font-size:0.78rem; color:var(--text-dim); max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                <div>{{ pc.specs || 'Standard' }}</div>
+                <div *ngIf="pc.status !== 'offline'" style="font-size:0.72rem; color:#38bdf8; margin-top:2px;">
+                  CPU {{ pc.cpuPercent ?? 0 }}% • RAM {{ pc.ramPercent ?? 0 }}% • GPU {{ pc.gpuPercent ?? 0 }}% • SSD {{ pc.ssdHealthPercent != null ? pc.ssdHealthPercent + '% Health' : (pc.ssdActivePercent ?? 0) + '% I/O' }}
+                </div>
               </td>
               <td style="text-align:right;">
                 <div style="display:inline-flex; gap:6px;">
