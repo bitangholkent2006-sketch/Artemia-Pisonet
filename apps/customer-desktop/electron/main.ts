@@ -119,7 +119,56 @@ let cachedHardwareInfo: {
   ssdStatus?: string;
 } = {};
 let hwRefreshInFlight = false;
+let staticHwInFlight = false;
 let lastStaticHwFetchAt = 0;
+
+function fetchStaticHardwareSpecs() {
+  if (process.platform !== 'win32' || staticHwInFlight) return;
+  const now = Date.now();
+  if (cachedHardwareInfo.gpu && cachedHardwareInfo.ssdModel && now - lastStaticHwFetchAt < 120000) return;
+  staticHwInFlight = true;
+
+  const ps = `
+    $ProgressPreference = 'SilentlyContinue'
+    $ErrorActionPreference = 'SilentlyContinue'
+    $gpuName = $null; $ssdName = $null; $wearHealth = $null
+    $gpus = @(Get-CimInstance Win32_VideoController | Select-Object -Property Name)
+    $primaryGpu = $gpus | Where-Object { $_.Name -match 'nvidia|geforce|rtx|gtx|radeon|amd|arc' } | Select-Object -First 1
+    if (-not $primaryGpu -and $gpus.Count -gt 0) { $primaryGpu = $gpus[0] }
+    if ($primaryGpu -and $primaryGpu.Name) { $gpuName = $primaryGpu.Name.Trim() }
+    $d = Get-CimInstance Win32_DiskDrive | Select-Object -First 1 -ExpandProperty Model
+    if ($d) { $ssdName = $d.Trim() }
+    try {
+      $rel = Get-PhysicalDisk | Get-StorageReliabilityCounter | Where-Object { $null -ne $_.Wear } | Select-Object -First 1
+      if ($rel -and $null -ne $rel.Wear) {
+        $wearHealth = [int][Math]::Max(0, [Math]::Min(100, 100 - [double]$rel.Wear))
+      }
+    } catch {}
+    [PSCustomObject]@{ gpu = $gpuName; ssdModel = $ssdName; ssdHealthPercent = $wearHealth } | ConvertTo-Json -Compress
+  `;
+  const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+  execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { timeout: 20000, windowsHide: true }, (err, stdout) => {
+    staticHwInFlight = false;
+    if (err || !stdout) return;
+    try {
+      const m = stdout.match(/\{[\s\S]*\}/);
+      if (!m) return;
+      const parsed = JSON.parse(m[0]);
+      lastStaticHwFetchAt = Date.now();
+      const healthPct = typeof parsed.ssdHealthPercent === 'number'
+        ? Math.max(0, Math.min(100, Math.round(parsed.ssdHealthPercent)))
+        : (cachedHardwareInfo.ssdHealthPercent ?? null);
+      const activePct = cachedHardwareInfo.ssdActivePercent ?? 0;
+      cachedHardwareInfo = {
+        ...cachedHardwareInfo,
+        gpu: (parsed.gpu && String(parsed.gpu).trim()) || cachedHardwareInfo.gpu,
+        ssdModel: (parsed.ssdModel && String(parsed.ssdModel).trim()) || cachedHardwareInfo.ssdModel,
+        ssdHealthPercent: healthPct,
+        ssdStatus: healthPct !== null ? `${healthPct}% Health` : `${activePct}% I/O`
+      };
+    } catch {}
+  });
+}
 
 function fetchHardwareInfo() {
   if (process.platform !== 'win32') {
@@ -134,75 +183,47 @@ function fetchHardwareInfo() {
     };
     return;
   }
+  fetchStaticHardwareSpecs();
   if (hwRefreshInFlight) return;
   hwRefreshInFlight = true;
 
-  const now = Date.now();
-  const includeStatic = !cachedHardwareInfo.gpu || !cachedHardwareInfo.ssdModel || (now - lastStaticHwFetchAt > 120000);
   const ps = `
     $ProgressPreference = 'SilentlyContinue'
     $ErrorActionPreference = 'SilentlyContinue'
-    $gpuName = $null; $ssdName = $null; $wearHealth = $null
-    ${includeStatic ? `
-    $gpus = @(Get-CimInstance Win32_VideoController | Select-Object -Property Name)
-    $primaryGpu = $gpus | Where-Object { $_.Name -match 'nvidia|geforce|rtx|gtx|radeon|amd|arc' } | Select-Object -First 1
-    if (-not $primaryGpu -and $gpus.Count -gt 0) { $primaryGpu = $gpus[0] }
-    if ($primaryGpu -and $primaryGpu.Name) { $gpuName = $primaryGpu.Name.Trim() }
-    $pdList = @(Get-PhysicalDisk | Select-Object FriendlyName, MediaType, DeviceId)
-    $pdPrimary = $pdList | Where-Object { $_.MediaType -eq 'SSD' } | Select-Object -First 1
-    if (-not $pdPrimary -and $pdList.Count -gt 0) { $pdPrimary = $pdList[0] }
-    if ($pdPrimary -and $pdPrimary.FriendlyName) { $ssdName = $pdPrimary.FriendlyName.Trim() }
-    if (-not $ssdName) {
-      $d = Get-CimInstance Win32_DiskDrive | Select-Object -First 1 -ExpandProperty Model
-      if ($d) { $ssdName = $d.Trim() }
-    }
-    try {
-      $rel = Get-PhysicalDisk | Get-StorageReliabilityCounter | Where-Object { $null -ne $_.Wear } | Select-Object -First 1
-      if ($rel -and $null -ne $rel.Wear) {
-        $wearHealth = [int][Math]::Max(0, [Math]::Min(100, 100 - [double]$rel.Wear))
-      }
-    } catch {}
-    ` : ''}
-    $gpuPct = 0
-    try {
-      $g = (Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples
+    $gpuPct = 0; $diskPct = 0
+    $counters = (Get-Counter -Counter @('\\GPU Engine(*)\\Utilization Percentage', '\\PhysicalDisk(_Total)\\% Disk Time')).CounterSamples
+    if ($counters) {
+      $g = $counters | Where-Object { $_.Path -like '*gpu engine*' }
       if ($g) {
         $sum3d = ($g | Where-Object { $_.InstanceName -like '*engtype_3d*' } | Measure-Object -Property CookedValue -Sum).Sum
         $maxEng = ($g | Group-Object { if ($_.InstanceName -match 'luid_[^_]+_[^_]+_phys_\\d+_eng_\\d+_engtype_[^_]+') { $matches[0] } else { 'other' } } | ForEach-Object { ($_.Group | Measure-Object -Property CookedValue -Sum).Sum } | Measure-Object -Maximum).Maximum
         $gpuPct = [int][Math]::Round([Math]::Min(100, [Math]::Max([double]$sum3d, [double]$maxEng)))
       }
-    } catch {}
-    $diskPct = 0
-    try {
-      $dc = (Get-Counter '\\PhysicalDisk(_Total)\\% Disk Time').CounterSamples[0].CookedValue
-      $diskPct = [int][Math]::Round([Math]::Min(100, [Math]::Max(0, [double]$dc)))
-    } catch {}
-    [PSCustomObject]@{
-      gpu = $gpuName
-      gpuPercent = $gpuPct
-      ssdModel = $ssdName
-      ssdHealthPercent = $wearHealth
-      ssdActivePercent = $diskPct
-    } | ConvertTo-Json -Compress
+      $d = $counters | Where-Object { $_.Path -like '*physicaldisk*' } | Select-Object -First 1
+      if ($d) {
+        $diskPct = [int][Math]::Round([Math]::Min(100, [Math]::Max(0, [double]$d.CookedValue)))
+      }
+    }
+    [PSCustomObject]@{ gpuPercent = $gpuPct; ssdActivePercent = $diskPct } | ConvertTo-Json -Compress
   `;
   const encoded = Buffer.from(ps, 'utf16le').toString('base64');
-  execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { timeout: 6000, windowsHide: true }, (err, stdout) => {
+  execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { timeout: 10000, windowsHide: true }, (err, stdout) => {
     hwRefreshInFlight = false;
     if (err || !stdout) return;
     try {
-      const parsed = JSON.parse(stdout.trim());
-      if (includeStatic) lastStaticHwFetchAt = now;
+      const m = stdout.match(/\{[\s\S]*\}/);
+      if (!m) return;
+      const parsed = JSON.parse(m[0]);
       const gpuPct = typeof parsed.gpuPercent === 'number' ? Math.max(0, Math.min(100, Math.round(parsed.gpuPercent))) : (cachedHardwareInfo.gpuPercent ?? 0);
       const ssdActivePct = typeof parsed.ssdActivePercent === 'number' ? Math.max(0, Math.min(100, Math.round(parsed.ssdActivePercent))) : (cachedHardwareInfo.ssdActivePercent ?? 0);
-      const healthPct = typeof parsed.ssdHealthPercent === 'number'
-        ? Math.max(0, Math.min(100, Math.round(parsed.ssdHealthPercent)))
-        : (cachedHardwareInfo.ssdHealthPercent ?? null);
+      const healthPct = cachedHardwareInfo.ssdHealthPercent ?? null;
 
       cachedHardwareInfo = {
-        gpu: (parsed.gpu && String(parsed.gpu).trim()) || cachedHardwareInfo.gpu || 'Graphics Adapter',
+        ...cachedHardwareInfo,
+        gpu: cachedHardwareInfo.gpu || 'Graphics Adapter',
         gpuPercent: gpuPct,
         gpuStatus: `${gpuPct}% Load`,
-        ssdModel: (parsed.ssdModel && String(parsed.ssdModel).trim()) || cachedHardwareInfo.ssdModel || 'Primary SSD',
+        ssdModel: cachedHardwareInfo.ssdModel || 'Primary SSD',
         ssdHealthPercent: healthPct,
         ssdActivePercent: ssdActivePct,
         ssdStatus: healthPct !== null ? `${healthPct}% Health` : `${ssdActivePct}% I/O`
