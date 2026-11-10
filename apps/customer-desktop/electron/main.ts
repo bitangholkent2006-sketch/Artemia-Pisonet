@@ -3063,7 +3063,7 @@ function findMainExeInDirectory(dir: string, depth = 0): string | null {
   return null;
 }
 
-const SYSTEM_JUNK_APP_REGEX = /unins|uninst|uninstall|remove|repair|readme|license|eula|changelog|documentation|manual|release\s*notes|what'?s\s*new|\bhelp\b|support\s*center|feedback|crash|reporter|redist|vcredist|dxsetup|directx|dotnet|sdk\b|powershell|command\s*prompt|\bcmd\.exe|registry\s*editor|regedit|task\s*manager|event\s*viewer|resource\s*monitor|performance\s*monitor|services\.msc|computer\s*management|defrag|recovery|windows\s*security|windows\s*backup|artemia|speech\s*recognition|narrator|magnifier|steps\s*recorder|live\s*captions|voice\s*access/i;
+const SYSTEM_JUNK_APP_REGEX = /unins|uninst|uninstall|remove|repair|readme|license|eula|changelog|documentation|manual|release\s*notes|what'?s\s*new|\bhelp\b|support\s*center|feedback|crash|reporter|redist|vcredist|dxsetup|directx|dotnet|sdk\b|powershell|command\s*prompt|\bcmd\.exe|registry\s*editor|regedit|task\s*manager|event\s*viewer|resource\s*monitor|performance\s*monitor|services\.msc|computer\s*management|defrag|recovery|windows\s*security|windows\s*backup|artemia|speech\s*recognition|narrator|magnifier|steps\s*recorder|live\s*captions|voice\s*access|language\s*preferences|configuration\s*tools|reset\s*utility|\bonedrive\b|sticky\s*notes|\binstaller\b|cert\s*kit|performance\s*(analyzer|recorder|toolkit)|gpuview/i;
 
 function categorizeAppEntry(name: string, targetPath: string, source: string): LocalLauncherCategory {
   if (source === 'system') return 'Files & System';
@@ -3119,13 +3119,18 @@ function loadIconDataUrlFromCache(iconPngPath?: string): string | undefined {
   return undefined;
 }
 
-async function migrateAndCleanDesktopShortcuts(): Promise<{ movedCount: number; error?: string }> {
-  if (process.platform !== 'win32') return { movedCount: 0 };
-  try {
-    if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
-    if (!fs.existsSync(desktopBackupDir)) fs.mkdirSync(desktopBackupDir, { recursive: true });
+let migrateDesktopInFlight: Promise<{ movedCount: number; error?: string }> | null = null;
 
-    const existing = loadMigratedShortcuts();
+function migrateAndCleanDesktopShortcuts(): Promise<{ movedCount: number; error?: string }> {
+  if (process.platform !== 'win32') return Promise.resolve({ movedCount: 0 });
+  if (migrateDesktopInFlight) return migrateDesktopInFlight;
+
+  migrateDesktopInFlight = (async () => {
+    try {
+      if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+      if (!fs.existsSync(desktopBackupDir)) fs.mkdirSync(desktopBackupDir, { recursive: true });
+
+      const existing = loadMigratedShortcuts();
     const ps = `
       $ErrorActionPreference = 'SilentlyContinue'
       $backupDir = '${desktopBackupDir.replace(/'/g, "''")}'
@@ -3204,10 +3209,15 @@ async function migrateAndCleanDesktopShortcuts(): Promise<{ movedCount: number; 
       fs.writeFileSync(migratedShortcutsFilePath, JSON.stringify(Array.from(byOrig.values()), null, 2), 'utf8');
       logToFile(`[Launcher] Migrated and removed ${newlyMoved.length} desktop shortcut(s) into Game Launcher vault.`);
     }
-    return { movedCount: newlyMoved.length };
-  } catch (err: any) {
-    return { movedCount: 0, error: err?.message || String(err) };
-  }
+      return { movedCount: newlyMoved.length };
+    } catch (err: any) {
+      return { movedCount: 0, error: err?.message || String(err) };
+    }
+  })().finally(() => {
+    migrateDesktopInFlight = null;
+  });
+
+  return migrateDesktopInFlight;
 }
 
 async function restoreMigratedDesktopShortcuts(): Promise<{ restoredCount: number; error?: string }> {
@@ -3526,7 +3536,11 @@ async function runDeepSystemAppScan(): Promise<{
       if (raw?.source !== 'system' && SYSTEM_JUNK_APP_REGEX.test(name + ' ' + target)) continue;
       if (hiddenSet.has(name.toLowerCase())) continue;
 
-      const normKey = name.toLowerCase().replace(/\s*\(64-bit\)|\s*\(x64\)|\s*\(x86\)|\.exe$/gi, '').replace(/[^a-z0-9]+/g, '');
+      const normKey = name
+        .toLowerCase()
+        .replace(/^microsoft\s+/i, '')
+        .replace(/\s*\(64-bit\)|\s*\(x64\)|\s*\(x86\)|\.exe$/gi, '')
+        .replace(/[^a-z0-9]+/g, '');
       if (!normKey || seenKeys.has(normKey)) continue;
       seenKeys.add(normKey);
 
