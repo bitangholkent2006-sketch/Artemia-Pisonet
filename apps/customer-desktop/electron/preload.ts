@@ -44,6 +44,7 @@ export interface PisonetDesktopApi {
   sendRemoteInput: (payload: { type: string; xPercent?: number; yPercent?: number; x?: number; y?: number; key?: string; text?: string; delta?: number }) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
   applyClientUpdate: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
   optimizeFps: () => Promise<{ success: boolean; freedRamMb: number; powerPlan: string; boostedGames: string[]; tweaksApplied: string[]; elapsedMs: number; error?: string }>;
+  syncRuntime: (data: { apiBase: string; pcId: string; hardwareId?: string; macAddress?: string }) => Promise<boolean>;
 }
 
 const api: PisonetDesktopApi = {
@@ -83,7 +84,8 @@ const api: PisonetDesktopApi = {
   },
   sendRemoteInput: (payload) => ipcRenderer.invoke('maintenance:remote-input', payload),
   applyClientUpdate: (downloadUrl: string) => ipcRenderer.invoke('maintenance:apply-client-update', downloadUrl),
-  optimizeFps: () => ipcRenderer.invoke('maintenance:fps-boost')
+  optimizeFps: () => ipcRenderer.invoke('maintenance:fps-boost'),
+  syncRuntime: (data) => ipcRenderer.invoke('system:sync-runtime', data)
 };
 
 contextBridge.exposeInMainWorld('pisonetDesktop', api);

@@ -8,17 +8,44 @@ import { AuditService } from './audit.service';
 
 export class PcService {
   private static watchdogInterval: NodeJS.Timeout | null = null;
-  public static readonly HEARTBEAT_TIMEOUT_MS = 45000; // 45 seconds without heartbeat = offline (stable against network jitter & load)
+  private static ioInstance: any = null;
+  public static readonly HEARTBEAT_TIMEOUT_MS = 60000; // 60 seconds without heartbeat & no live socket = offline
+
+  public static setIoInstance(io: any): void {
+    PcService.ioInstance = io;
+  }
+
+  public static isStationSocketConnected(pc: Pick<DbPC, 'id' | 'identifier' | 'name'>): boolean {
+    const io = PcService.ioInstance;
+    if (!io?.sockets?.adapter?.rooms) return false;
+    const keys = [pc.id, pc.identifier, pc.name].filter(Boolean);
+    for (const k of keys) {
+      const lower = String(k).toLowerCase().trim();
+      const clean = lower.replace(/^pc-/, '').replace(/[^a-z0-9_-]/g, '-');
+      if ((io.sockets.adapter.rooms.get(`pc:${lower}`)?.size || 0) > 0) return true;
+      if (clean && (io.sockets.adapter.rooms.get(`pc:${clean}`)?.size || 0) > 0) return true;
+      if (clean && (io.sockets.adapter.rooms.get(`pc:pc-${clean}`)?.size || 0) > 0) return true;
+    }
+    return false;
+  }
 
   public static async listPcs(): Promise<DbPC[]> {
     const collections = getCollections();
     const pcs = await collections.pcs.find({}).sort({ id: 1 }).toArray();
     const now = Date.now();
     const stalePcs: string[] = [];
+    const alivePcs: string[] = [];
 
-    // Dynamically evaluate offline state if a station hasn't checked in
+    // Dynamically evaluate online/offline state using BOTH live WebSocket room presence & heartbeats
     pcs.forEach((pc) => {
-      if (pc.status !== 'offline') {
+      if (PcService.isStationSocketConnected(pc)) {
+        // Live Socket.IO connection is active — station is definitely ON & connected
+        if (pc.status === 'offline') {
+          pc.status = pc.activeSessionId ? 'in-use' : 'available';
+        }
+        pc.connectionState = 'connected';
+        alivePcs.push(pc.id);
+      } else if (pc.status !== 'offline') {
         const lastHb = pc.lastHeartbeat ? new Date(pc.lastHeartbeat).getTime() : 0;
         if (now - lastHb > PcService.HEARTBEAT_TIMEOUT_MS) {
           pc.status = 'offline';
@@ -28,10 +55,17 @@ export class PcService {
       }
     });
 
+    if (alivePcs.length > 0) {
+      collections.pcs.updateMany(
+        { id: { $in: alivePcs } },
+        { $set: { lastHeartbeat: new Date(now), connectionState: 'connected', updatedAt: new Date(now) } }
+      ).catch(() => {});
+    }
+
     if (stalePcs.length > 0) {
       collections.pcs.updateMany(
         { id: { $in: stalePcs } },
-        { $set: { status: 'offline', connectionState: 'disconnected', updatedAt: new Date() } }
+        { $set: { status: 'offline', connectionState: 'disconnected', updatedAt: new Date(now) } }
       ).catch(() => {});
     }
 
@@ -232,12 +266,32 @@ export class PcService {
     staffId = 'system'
   ): Promise<DbPC | null> {
     const collections = getCollections();
+    const cleanUpdates: Partial<Pick<DbPC, 'name' | 'identifier' | 'ipAddress' | 'macAddress' | 'specs'>> = {};
+    if (updates.name != null && String(updates.name).trim()) cleanUpdates.name = String(updates.name).trim();
+    if (updates.identifier != null && String(updates.identifier).trim()) cleanUpdates.identifier = String(updates.identifier).trim().toUpperCase();
+    if (updates.ipAddress != null && String(updates.ipAddress).trim()) cleanUpdates.ipAddress = String(updates.ipAddress).trim();
+    if (updates.macAddress != null && String(updates.macAddress).trim()) cleanUpdates.macAddress = String(updates.macAddress).trim().toUpperCase();
+    if (updates.specs != null) cleanUpdates.specs = String(updates.specs).trim();
+
     await collections.pcs.updateOne(
       { id: pcId },
-      { $set: { ...updates, updatedAt: new Date() } }
+      { $set: { ...cleanUpdates, updatedAt: new Date() } }
     );
-    await AuditService.log('PC_UPDATE', `Updated settings for PC: ${pcId}`, staffId, 'Staff', 'staff', pcId, 'pc');
-    return collections.pcs.findOne({ id: pcId });
+    await AuditService.log('PC_UPDATE', `Updated settings for PC: ${pcId}${cleanUpdates.name ? ` (Renamed to "${cleanUpdates.name}")` : ''}`, staffId, 'Staff', 'staff', pcId, 'pc');
+    const updated = await collections.pcs.findOne({ id: pcId });
+    if (updated) {
+      const { deviceKeyHash: _, _id: __, ...safePc } = updated;
+      try {
+        const { broadcastRealtimeEvent } = await import('../socket/socket-server');
+        broadcastRealtimeEvent('pc:updated', safePc, 'staff');
+        broadcastRealtimeEvent(
+          'pc:identity:sync',
+          { pcId: safePc.id, name: safePc.name, identifier: safePc.identifier, hardwareId: safePc.hardwareId },
+          `pc:${safePc.id.toLowerCase()}`
+        );
+      } catch {}
+    }
+    return updated;
   }
 
   public static async togglePcStatus(
@@ -381,12 +435,65 @@ export class PcService {
     return true;
   }
 
+  public static async markStationExplicitOffline(
+    pcIdOrIdent: string,
+    hardwareId?: string,
+    macAddress?: string
+  ): Promise<boolean> {
+    const collections = getCollections();
+    const cleanHardwareId = hardwareId?.trim();
+    const cleanMac = macAddress?.trim().toUpperCase();
+
+    let pc: DbPC | null = null;
+    if (cleanHardwareId) {
+      pc = await collections.pcs.findOne({ hardwareId: cleanHardwareId });
+    }
+    if (!pc && cleanMac && cleanMac !== 'AUTO-DISCOVERED' && cleanMac !== '00:00:00:00:00:00') {
+      pc = await collections.pcs.findOne({ macAddress: cleanMac });
+    }
+    if (!pc && pcIdOrIdent) {
+      const cleanIdentifier = String(pcIdOrIdent).trim().toUpperCase();
+      const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+      pc = await collections.pcs.findOne({
+        $or: [
+          { id: pcIdOrIdent },
+          { id: cleanId },
+          { id: `pc-${cleanId}` },
+          { identifier: cleanIdentifier },
+          { name: cleanIdentifier }
+        ]
+      });
+    }
+
+    if (!pc) return false;
+    if (pc.status === 'offline' && pc.connectionState === 'disconnected') return true;
+
+    const { broadcastRealtimeEvent } = await import('../socket/socket-server');
+    const { SessionService } = await import('./session.service');
+
+    if (pc.activeSessionId) {
+      console.log(`[Offline] Auto-pausing active session ${pc.activeSessionId} on offline station ${pc.name}`);
+      await SessionService.pauseSession(pc.activeSessionId, 'system', 'system', undefined, undefined, 'offline');
+    }
+
+    const now = new Date();
+    await collections.pcs.updateOne(
+      { _id: pc._id },
+      { $set: { status: 'offline', connectionState: 'disconnected', updatedAt: now } }
+    );
+
+    const { deviceKeyHash: _, _id: __, ...safePc } = pc;
+    broadcastRealtimeEvent('pc:status-changed', { pcId: pc.id, status: 'offline', activeCustomerName: null });
+    broadcastRealtimeEvent('pc:status', { pcId: pc.id, status: 'offline' });
+    broadcastRealtimeEvent('pc:updated', { ...safePc, status: 'offline', connectionState: 'disconnected', updatedAt: now }, 'staff');
+    return true;
+  }
+
   /**
    * Continuous Heartbeat Watchdog
-   * Checks every 5 seconds. If a PC has not sent a heartbeat for > 15 seconds
-   * (e.g. computer powered off, shut down, app closed, internet disconnected),
-   * immediately auto-pauses any active session to preserve customer time,
-   * sets the status to 'offline', and broadcasts real-time events to all dashboards.
+   * Checks every 5 seconds. Never marks a PC offline while it holds an active
+   * Socket.IO room connection. Only transitions to offline when BOTH socket is
+   * disconnected AND HTTP/Socket heartbeat is older than HEARTBEAT_TIMEOUT_MS.
    */
   public static startHeartbeatWatchdog(): void {
     if (PcService.watchdogInterval) return;
@@ -395,7 +502,7 @@ export class PcService {
       try {
         const collections = getCollections();
         const threshold = new Date(Date.now() - PcService.HEARTBEAT_TIMEOUT_MS);
-        
+
         const deadPcs = await collections.pcs.find({
           status: { $ne: 'offline' },
           $or: [
@@ -406,32 +513,25 @@ export class PcService {
 
         if (deadPcs.length === 0) return;
 
-        const { broadcastRealtimeEvent } = await import('../socket/socket-server');
-        const { SessionService } = await import('./session.service');
-
         for (const pc of deadPcs) {
-          console.log(`[HeartbeatWatchdog] Station ${pc.name} (${pc.id}) missed heartbeat (>45s). Transitioning to OFFLINE.`);
-          
-          if (pc.activeSessionId) {
-            console.log(`[HeartbeatWatchdog] Auto-pausing session ${pc.activeSessionId} on offline station ${pc.name}`);
-            await SessionService.pauseSession(pc.activeSessionId, 'system', 'system', undefined, undefined, 'offline');
+          if (PcService.isStationSocketConnected(pc)) {
+            // Live socket connection proves PC is still powered on and online; refresh heartbeat!
+            await collections.pcs.updateOne(
+              { _id: pc._id },
+              { $set: { lastHeartbeat: new Date(), connectionState: 'connected', updatedAt: new Date() } }
+            );
+            continue;
           }
 
-          await collections.pcs.updateOne(
-            { _id: pc._id },
-            { $set: { status: 'offline', connectionState: 'disconnected', updatedAt: new Date() } }
-          );
-
-          broadcastRealtimeEvent('pc:status-changed', { pcId: pc.id, status: 'offline', activeCustomerName: null });
-          broadcastRealtimeEvent('pc:status', { pcId: pc.id, status: 'offline' });
-          broadcastRealtimeEvent('pc:updated', { ...pc, status: 'offline', connectionState: 'disconnected' }, 'staff');
+          console.log(`[HeartbeatWatchdog] Station ${pc.name} (${pc.id}) disconnected & missed heartbeat (>60s). Transitioning to OFFLINE.`);
+          await PcService.markStationExplicitOffline(pc.id);
         }
       } catch (err) {
         console.warn('[HeartbeatWatchdog] Watchdog cycle error:', err);
       }
     }, 5000);
 
-    console.log('[HeartbeatWatchdog] Automated station offline detection active (45s threshold, 5s poll).');
+    console.log('[HeartbeatWatchdog] Automated station offline detection active (60s unreachable threshold + live socket check).');
   }
 
   public static stopHeartbeatWatchdog(): void {

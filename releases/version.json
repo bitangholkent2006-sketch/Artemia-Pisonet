@@ -1,7 +1,7 @@
 {
-  "version": "1.0.5",
+  "version": "1.0.6",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-09T20:25:00.000Z",
+  "releaseDate": "2026-11-10T20:54:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "1-Click Fleet FPS Booster: Flush working set RAM (1GB-3GB freed), Ultimate Performance power plan, game priority elevation, DNS latency flush, and background service silencer"
+  "changelog": "All-PC Screen Stream (Persistent Fast GDI Worker), Anti-Offline Socket & HTTP Keepalive + Instant Shutdown Detection, Editable Display Name Sync, Auto-OTA v1.0.6 Upgrade"
 }

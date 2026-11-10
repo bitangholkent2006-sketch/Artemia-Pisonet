@@ -45,9 +45,11 @@ interface WindowWithDesktop extends Window {
     sendRemoteInput?: (payload: any) => Promise<{ success: boolean; x?: number; y?: number; error?: string }>;
     applyClientUpdate?: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
     optimizeFps?: () => Promise<{ success: boolean; freedRamMb: number; powerPlan: string; boostedGames: string[]; tweaksApplied: string[]; elapsedMs: number; error?: string }>;
+    syncRuntime?: (data: { apiBase: string; pcId: string; hardwareId?: string; macAddress?: string }) => Promise<boolean>;
   };
 }
 
+const CLIENT_AGENT_VERSION = '1.0.6';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -404,9 +406,17 @@ class StationMaintenanceAgent {
         name: this.pcName,
         specs: this.specs,
         macAddress: this.macAddress,
-        hardwareId: this.hardwareId
+        hardwareId: this.hardwareId,
+        clientVersion: CLIENT_AGENT_VERSION
       });
     }
+
+    desktopWindow.pisonetDesktop?.syncRuntime?.({
+      apiBase: this.apiBase,
+      pcId: this.dbPcId || this.pcId,
+      hardwareId: this.hardwareId,
+      macAddress: this.macAddress
+    }).catch(() => {});
 
     // Initial check from backend public endpoint
     this.checkInitialStatus();
@@ -443,8 +453,18 @@ class StationMaintenanceAgent {
           this.dbPcId = current.id.toLowerCase();
           this.pcId = current.id.toLowerCase();
           this.identifier = (current.identifier || this.pcName).toUpperCase();
-          this.pcName = (current.name || this.pcName).toUpperCase();
+          this.pcName = (current.name || this.pcName).trim();
           localStorage.setItem('artemia_station_id', this.dbPcId);
+          desktopWindow.pisonetDesktop?.syncRuntime?.({
+            apiBase: this.apiBase,
+            pcId: this.dbPcId,
+            hardwareId: this.hardwareId,
+            macAddress: this.macAddress
+          }).catch(() => {});
+          const titleSub = document.querySelector('.station-sub');
+          if (titleSub) {
+            titleSub.innerHTML = `Station ID: <strong style="color:#38bdf8">${this.pcName}</strong> ${this.specs ? `<span style="font-size:0.75rem; color:#64748b; margin-left:8px;">(${this.specs})</span>` : ''}`;
+          }
           this.logMessage(`Station matched in Fleet Database: ID=${current.id}, Name=${this.pcName}`);
           if (current.status === 'locked') {
             this.setLockedState(true);
@@ -636,14 +656,8 @@ class StationMaintenanceAgent {
           name: this.pcName,
           specs: this.specs,
           macAddress: this.macAddress,
-          hardwareId: this.hardwareId
-        });
-        this.socket?.emit('pc:auto-discover', {
-          pcId: activeId,
-          name: this.pcName,
-          specs: this.specs,
-          macAddress: this.macAddress,
-          hardwareId: this.hardwareId
+          hardwareId: this.hardwareId,
+          clientVersion: CLIENT_AGENT_VERSION
         });
         this.socket?.emit('pc:heartbeat', {
           pcId: activeId,
@@ -652,6 +666,12 @@ class StationMaintenanceAgent {
           hardwareId: this.hardwareId
         });
         this.socket?.emit('maintenance:agent:ready', { pcId: activeId });
+        desktopWindow.pisonetDesktop?.syncRuntime?.({
+          apiBase: this.apiBase,
+          pcId: activeId,
+          hardwareId: this.hardwareId,
+          macAddress: this.macAddress
+        }).catch(() => {});
         this.logMessage(`Connected to Artemia Fleet Server (${this.apiBase})`);
         this.checkInitialStatus();
       });
@@ -663,12 +683,18 @@ class StationMaintenanceAgent {
           }
           this.dbPcId = data.pcId.toLowerCase();
           this.pcId = data.pcId.toLowerCase();
-          if (data.name) this.pcName = data.name.toUpperCase();
+          if (data.name) this.pcName = data.name.trim();
           if (data.identifier) this.identifier = data.identifier;
           localStorage.setItem('artemia_station_id', this.dbPcId);
           if (desktopWindow.pisonetDesktop?.saveStationIdentity) {
             desktopWindow.pisonetDesktop.saveStationIdentity({ stationId: this.dbPcId, name: this.pcName }).catch(() => {});
           }
+          desktopWindow.pisonetDesktop?.syncRuntime?.({
+            apiBase: this.apiBase,
+            pcId: this.dbPcId,
+            hardwareId: this.hardwareId,
+            macAddress: this.macAddress
+          }).catch(() => {});
 
           const titleSub = document.querySelector('.station-sub');
           if (titleSub) {

@@ -1317,6 +1317,42 @@ export interface StationDownloadState {
       display: flex;
       align-items: center;
     }
+    @media (max-width: 768px) {
+      .game-updater-container {
+        padding: 4px 2px;
+      }
+      .page-title {
+        font-size: 1.15rem;
+      }
+      .mode-tabs {
+        width: 100%;
+        display: flex;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .mode-tab {
+        flex: 1 0 auto;
+        font-size: 0.78rem;
+        padding: 8px 10px;
+      }
+      .station-pills-wrap {
+        gap: 6px;
+      }
+      .station-cards-grid,
+      .ota-details-grid,
+      .catalog-grid {
+        grid-template-columns: 1fr;
+      }
+      .ota-station-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        padding: 12px;
+      }
+      .ota-st-action {
+        justify-content: flex-end;
+      }
+    }
   `]
 })
 export class GameUpdaterComponent implements OnInit, OnDestroy {

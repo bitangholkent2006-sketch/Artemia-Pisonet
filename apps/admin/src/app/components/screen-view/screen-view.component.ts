@@ -744,7 +744,7 @@ export interface ClickRipple {
     /* Mobile Phone Responsive Adjustments */
     @media (max-width: 768px) {
       .screen-view-container {
-        padding: 8px;
+        padding: 4px 2px;
       }
       .page-header-row {
         flex-direction: column;
@@ -753,10 +753,10 @@ export interface ClickRipple {
         margin-bottom: 10px;
       }
       .page-title {
-        font-size: 1.25rem;
+        font-size: 1.15rem;
       }
       .page-subtitle {
-        font-size: 0.8rem;
+        font-size: 0.78rem;
       }
       .header-actions {
         width: 100%;
@@ -768,11 +768,39 @@ export interface ClickRipple {
         flex: 1 1 100%;
         justify-content: center;
         padding: 10px;
-        font-size: 0.85rem;
+        font-size: 0.84rem;
       }
       .stream-rate-select {
-        flex: 1;
+        flex: 1 1 auto;
+        min-width: 0;
         justify-content: space-between;
+        padding: 6px 10px;
+      }
+      .stream-rate-select .rate-label {
+        display: none;
+      }
+      .stream-rate-select select {
+        width: 100%;
+        min-width: 0;
+        font-size: 0.78rem;
+      }
+      .header-actions .btn {
+        flex: 1 1 auto;
+        justify-content: center;
+        padding: 8px 10px;
+        font-size: 0.78rem;
+      }
+      .monitor-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 10px 12px;
+      }
+      .anydesk-active-banner {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        padding: 10px 12px;
       }
       .station-selector-card {
         padding: 8px 10px;
@@ -810,6 +838,13 @@ export interface ClickRipple {
         padding: 6px 10px;
         font-size: 0.78rem;
       }
+      .mobile-text-strip {
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .mobile-text-input {
+        min-width: 100%;
+      }
       .monitor-viewport {
         min-height: 220px;
         touch-action: none;
@@ -828,6 +863,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   private sub!: Subscription;
   private streamTimer: any = null;
   private streamPingTimer: any = null;
+  private streamFallbackTimer: any = null;
   private streamSub?: () => void;
   private quickCaptureTimer: any = null;
   private longPressTimer: any = null;
@@ -1010,6 +1046,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     }
   }
 
+  private lastStreamFrameAt = 0;
+
   private handleStreamFrame(data: { pcId: string; frame: string; timestamp?: number }) {
     if (!data?.frame || !this.selectedPc) return;
     if (!this.matchesStation(this.selectedPc, data.pcId)) return;
@@ -1021,6 +1059,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       this.screenImages[this.selectedPc.name.toLowerCase()] = data.frame;
     }
     this.lastCapturedTime = new Date();
+    this.lastStreamFrameAt = Date.now();
     this.isCapturing = false;
   }
 
@@ -1041,7 +1080,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     });
 
     if (this.selectedPcId && this.streamIntervalMs > 0) {
-      this.startStreaming();
+      this.startStreaming(false);
     } else if (this.selectedPcId) {
       this.captureCurrentScreen();
     }
@@ -1052,7 +1091,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (this.streamSub) {
       this.streamSub();
     }
-    this.stopStreaming();
+    this.stopStreaming(true);
     this.removeGlobalKeyListeners();
     if (this.quickCaptureTimer) {
       clearTimeout(this.quickCaptureTimer);
@@ -1067,16 +1106,25 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   selectStation(pcId: string) {
-    if (this.selectedPc) {
-      this.adminState.stopScreenStream(this.selectedPc.id);
+    const prevId = this.selectedPc?.id;
+    if (prevId && prevId !== pcId) {
+      this.adminState.stopScreenStream(prevId);
     }
+    this.stopStreaming(false);
     this.selectedPcId = pcId;
     this.inFlightCapture = false;
+    this.lastStreamFrameAt = 0;
+
+    if (this.selectedPc?.status === 'offline') {
+      this.isCapturing = false;
+      return;
+    }
+
     this.isCapturing = !this.currentScreenImage;
     if (this.quickCaptureTimer) clearTimeout(this.quickCaptureTimer);
 
     if (this.streamIntervalMs > 0) {
-      this.startStreaming();
+      this.startStreaming(false);
     } else {
       this.captureCurrentScreen();
     }
@@ -1121,44 +1169,68 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   onStreamRateChange() {
     if (this.streamIntervalMs > 0) {
-      this.startStreaming();
+      this.startStreaming(false);
     } else {
-      this.stopStreaming();
+      this.stopStreaming(true);
     }
   }
 
-  startStreaming() {
-    this.stopStreaming();
+  startStreaming(emitStopPrev: boolean = false) {
+    this.stopStreaming(emitStopPrev);
     if (!this.selectedPc || this.streamIntervalMs <= 0) return;
+
+    if (this.selectedPc.status === 'offline') {
+      this.isCapturing = false;
+      return;
+    }
 
     const targetId = this.selectedPc.id;
     this.isCapturing = !this.currentScreenImage;
+    this.lastStreamFrameAt = 0;
     this.adminState.startScreenStream(targetId, this.streamIntervalMs, 960, 540, 50);
+
+    // Fire an immediate single-frame snapshot simultaneously so older/slow agents display immediately
+    if (!this.currentScreenImage) {
+      this.captureCurrentScreen();
+    }
 
     // Keepalive ping every 4s to prevent client watchdog timeout
     this.streamPingTimer = setInterval(() => {
-      if (this.selectedPc && this.streamIntervalMs > 0) {
+      if (this.selectedPc && this.streamIntervalMs > 0 && this.selectedPc.status !== 'offline') {
         this.adminState.pingScreenStream(this.selectedPc.id);
       }
     }, 4000);
+
+    // Fallback monitor: if no live stream frames arrived in 2.5s, re-request stream + pull snapshot
+    this.streamFallbackTimer = setInterval(() => {
+      if (!this.selectedPc || this.streamIntervalMs <= 0 || this.selectedPc.status === 'offline') return;
+      if (Date.now() - this.lastStreamFrameAt > 2800) {
+        this.adminState.startScreenStream(this.selectedPc.id, this.streamIntervalMs, 960, 540, 50);
+        this.captureCurrentScreen();
+      }
+    }, 2800);
   }
 
-  stopStreaming() {
+  stopStreaming(emitStopToRemote: boolean = true) {
     if (this.streamPingTimer) {
       clearInterval(this.streamPingTimer);
       this.streamPingTimer = null;
+    }
+    if (this.streamFallbackTimer) {
+      clearInterval(this.streamFallbackTimer);
+      this.streamFallbackTimer = null;
     }
     if (this.streamTimer) {
       clearInterval(this.streamTimer);
       this.streamTimer = null;
     }
-    if (this.selectedPc) {
+    if (emitStopToRemote && this.selectedPc) {
       this.adminState.stopScreenStream(this.selectedPc.id);
     }
   }
 
   scheduleQuickCapture(delayMs: number = 250) {
-    if (this.streamIntervalMs > 0) {
+    if (this.streamIntervalMs > 0 && Date.now() - this.lastStreamFrameAt < 2500) {
       // Stream is continuously pushing frames, no slow polling needed
       return;
     }
@@ -1172,10 +1244,12 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (!this.selectedPc || this.inFlightCapture) return;
     const targetId = this.selectedPc.id;
     this.inFlightCapture = true;
-    this.isCapturing = true;
+    if (!this.currentScreenImage) {
+      this.isCapturing = true;
+    }
     try {
       const img = await this.adminState.captureScreen(targetId);
-      if (img) {
+      if (img && this.matchesStation(this.selectedPc, targetId)) {
         this.screenImages[targetId] = img;
         this.screenImages[targetId.toLowerCase()] = img;
         if (this.selectedPc?.name) {

@@ -334,6 +334,46 @@ import { PC } from '@pisonet/shared';
       border: 1px solid #374151;
       color: #e5e7eb;
     }
+    @media (max-width: 768px) {
+      .terminal-page-container {
+        padding: 4px 2px;
+      }
+      .page-title {
+        font-size: 1.15rem;
+      }
+      .control-panel {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+      }
+      .target-pills, .shell-pills {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+      .target-pill, .shell-pill {
+        flex-shrink: 0;
+      }
+      .preset-buttons {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+      .preset-btn {
+        flex-shrink: 0;
+      }
+      .terminal-body {
+        padding: 12px;
+        font-size: 0.78rem;
+      }
+      .prompt-form {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .prompt-input {
+        min-width: 0;
+      }
+    }
   `]
 })
 export class RemoteTerminalComponent implements OnInit, OnDestroy, OnChanges {

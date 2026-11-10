@@ -528,6 +528,47 @@ import { PC, FileEntry } from '@pisonet/shared';
       padding: 8px 12px;
       border-radius: 6px;
     }
+    @media (max-width: 768px) {
+      .file-manager-container {
+        padding: 4px 2px;
+      }
+      .page-title {
+        font-size: 1.15rem;
+      }
+      .station-pills {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        width: 100%;
+        padding-bottom: 6px;
+      }
+      .station-pill {
+        flex-shrink: 0;
+      }
+      .browser-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .drive-buttons, .path-controls {
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .file-table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .file-table th, .file-table td {
+        padding: 10px 8px;
+        font-size: 0.78rem;
+        white-space: nowrap;
+      }
+      .modal-dialog {
+        width: calc(100% - 24px) !important;
+        max-width: calc(100vw - 24px) !important;
+        margin: 12px;
+        padding: 16px;
+      }
+    }
   `]
 })
 export class FileManagerComponent implements OnInit, OnDestroy, OnChanges {

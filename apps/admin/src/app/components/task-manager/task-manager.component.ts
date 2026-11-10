@@ -398,6 +398,36 @@ import { PC, ProcessEntry } from '@pisonet/shared';
       padding: 40px;
       color: #64748b;
     }
+    @media (max-width: 768px) {
+      .task-manager-container {
+        padding: 4px 2px;
+      }
+      .page-title {
+        font-size: 1.15rem;
+      }
+      .station-pills {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        width: 100%;
+        padding-bottom: 6px;
+      }
+      .station-pill {
+        flex-shrink: 0;
+      }
+      .search-box-wrapper, .search-input {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .process-table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .process-table th, .process-table td {
+        padding: 10px 8px;
+        font-size: 0.78rem;
+        white-space: nowrap;
+      }
+    }
   `]
 })
 export class TaskManagerComponent implements OnInit, OnDestroy, OnChanges {

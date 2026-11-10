@@ -206,6 +206,13 @@ export class ApiClientService {
     });
   }
 
+  public async updatePc(pcId: string, updates: Partial<PC>) {
+    return this.request<{ success: boolean; data: PC; message?: string }>(`/api/v1/pcs/${pcId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates)
+    });
+  }
+
   public async togglePcStatus(pcId: string, status: PCStatus) {
     return this.request<{ success: boolean; data: PC }>(`/api/v1/pcs/${pcId}/status`, {
       method: 'POST',

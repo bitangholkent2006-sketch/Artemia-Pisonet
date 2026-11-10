@@ -180,8 +180,18 @@ import { PC, PCStatus } from '@pisonet/shared';
         >
           <!-- Card Header -->
           <div class="pc-card-header">
-            <div>
-              <div class="pc-name-title">{{ pc.name }}</div>
+            <div style="min-width: 0; flex: 1;">
+              <div class="pc-name-row">
+                <span class="pc-name-title" [title]="pc.name">{{ pc.name }}</span>
+                <button
+                  type="button"
+                  class="btn-edit-name"
+                  (click)="openRenameModal(pc)"
+                  title="I-edit ang Display Name aron mailhan asa dapit ni nga PC"
+                >
+                  ✏️ Rename
+                </button>
+              </div>
               <div class="pc-identifier-sub">{{ pc.identifier }} • {{ pc.ipAddress }}</div>
             </div>
 
@@ -420,6 +430,62 @@ import { PC, PCStatus } from '@pisonet/shared';
           </div>
         </div>
       </div>
+
+      <!-- Modal: Rename PC Display Name -->
+      <div *ngIf="renameModalPc" class="modal-backdrop" (click)="closeRenameModal()">
+        <div class="modal-dialog" style="max-width: 440px;" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.3rem;">✏️</span>
+              <h3 class="modal-title-text">Edit PC Display Name</h3>
+            </div>
+            <button class="btn btn-sm btn-secondary" (click)="closeRenameModal()">✕</button>
+          </div>
+
+          <div class="modal-body">
+            <p style="font-size: 0.82rem; color: #94a3b8; margin-bottom: 12px; line-height: 1.45;">
+              Hatagi ug klaro nga pangalan o puwesto kining <strong>{{ renameModalPc.identifier }}</strong> ({{ renameModalPc.id }}) aron dili na ka magtagna-tagna asa dapit ni nga PC.
+            </p>
+
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label class="form-label">Bag-ong Display Name *</label>
+              <input
+                type="text"
+                class="form-input"
+                [(ngModel)]="renameDisplayName"
+                (keydown.enter)="saveRenamePc()"
+                placeholder="e.g. PC-04 (Atubangan sa Pultahan)"
+                autofocus
+              />
+            </div>
+
+            <div class="form-group" style="margin-bottom: 4px;">
+              <label class="form-label">Quick Label Presets</label>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                <button
+                  type="button"
+                  class="preset-btn"
+                  *ngFor="let label of ['PC-01', 'PC-02', 'PC-03', 'PC-04', 'PC-05', 'PC-06', 'Counter Laptop']"
+                  (click)="renameDisplayName = label"
+                >
+                  {{ label }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-secondary" (click)="closeRenameModal()">Cancel</button>
+            <button
+              class="btn btn-primary"
+              [disabled]="!renameDisplayName.trim() || isSavingRename"
+              (click)="saveRenamePc()"
+            >
+              {{ isSavingRename ? 'Saving...' : '💾 Save Name' }}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   `,
   styles: [`
@@ -595,18 +661,46 @@ import { PC, PCStatus } from '@pisonet/shared';
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
+      gap: 10px;
       margin-bottom: 14px;
     }
+    .pc-name-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
     .pc-name-title {
-      font-size: 1.2rem;
+      font-size: 1.15rem;
       font-weight: 800;
+      color: #fff;
+      word-break: break-word;
+    }
+    .btn-edit-name {
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: #38bdf8;
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      transition: all 0.18s ease;
+    }
+    .btn-edit-name:hover {
+      background: rgba(56, 189, 248, 0.25);
+      border-color: #38bdf8;
       color: #fff;
     }
     .pc-identifier-sub {
-      font-size: 0.75rem;
+      font-size: 0.74rem;
       color: #94a3b8;
       font-family: monospace;
-      margin-top: 2px;
+      margin-top: 3px;
+      word-break: break-all;
     }
     .status-badge {
       display: flex;
@@ -995,6 +1089,170 @@ import { PC, PCStatus } from '@pisonet/shared';
       opacity: 0.8;
     }
     .banner-close-btn:hover { opacity: 1; }
+
+    /* ======================================================================
+       Mobile & Small Screen Layout Overhaul
+       ====================================================================== */
+    @media (max-width: 768px) {
+      .dashboard-container {
+        padding: 4px 2px;
+      }
+      .kpi-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .kpi-card {
+        padding: 10px 12px;
+        gap: 10px;
+        border-radius: 10px;
+      }
+      .kpi-card:last-child {
+        grid-column: span 2;
+      }
+      .kpi-icon-box {
+        width: 36px;
+        height: 36px;
+        flex-shrink: 0;
+      }
+      .kpi-icon-box svg {
+        width: 18px;
+        height: 18px;
+      }
+      .kpi-value {
+        font-size: 1.2rem;
+      }
+      .kpi-label {
+        font-size: 0.64rem;
+        margin-top: 2px;
+      }
+      .bulk-action-bar {
+        padding: 12px;
+        gap: 10px;
+        margin-bottom: 16px;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .bulk-label {
+        font-size: 0.8rem;
+      }
+      .bulk-buttons {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        width: 100%;
+      }
+      .bulk-buttons .btn,
+      .bulk-buttons a.btn {
+        width: 100%;
+        min-height: 38px;
+        justify-content: center;
+        text-align: center;
+        padding: 8px 6px;
+        font-size: 0.72rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .bulk-buttons a.btn {
+        grid-column: span 2;
+      }
+      .section-header-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .section-title {
+        font-size: 1.1rem;
+        flex-wrap: wrap;
+      }
+      .section-subtitle {
+        font-size: 0.78rem;
+      }
+      .fleet-controls-wrapper {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .table-search-wrapper {
+        width: 100%;
+      }
+      .table-search-input {
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 0.84rem;
+      }
+      .filter-pills {
+        width: 100%;
+        overflow-x: auto;
+        justify-content: space-between;
+        -webkit-overflow-scrolling: touch;
+      }
+      .filter-pill {
+        flex: 1;
+        text-align: center;
+        white-space: nowrap;
+        padding: 6px 8px;
+        font-size: 0.74rem;
+      }
+      .pc-cards-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .pc-card {
+        padding: 14px;
+        border-radius: 12px;
+      }
+      .pc-card-header {
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .pc-name-title {
+        font-size: 1.04rem;
+      }
+      .pc-quick-modules {
+        grid-template-columns: repeat(5, 1fr);
+        gap: 5px;
+        margin-bottom: 10px;
+      }
+      .module-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        padding: 7px 2px;
+        font-size: 0.66rem;
+        line-height: 1.2;
+      }
+      .action-grid-buttons {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+      }
+      .action-grid-buttons .btn-subtle {
+        padding: 9px 8px;
+        font-size: 0.76rem;
+        justify-content: center;
+        width: 100%;
+      }
+      .modal-dialog {
+        width: calc(100% - 24px) !important;
+        max-width: calc(100vw - 24px) !important;
+        margin: 12px;
+        max-height: 90vh;
+        overflow-y: auto;
+        padding: 16px;
+      }
+      .modal-footer {
+        flex-wrap: wrap;
+      }
+      .modal-footer .btn {
+        flex: 1;
+        justify-content: center;
+      }
+    }
   `]
 })
 export class DashboardComponent implements OnInit, OnDestroy {
@@ -1009,6 +1267,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
   messageModalTarget: PC | 'all' | null = null;
   announcementText: string = '';
   isSendingMessage: boolean = false;
+
+  renameModalPc: PC | null = null;
+  renameDisplayName: string = '';
+  isSavingRename: boolean = false;
 
   messagePresets: string[] = [
     'Palihog hinay-hinay sa keyboard ug mouse.',
@@ -1264,5 +1526,33 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.isSendingMessage = false;
     this.showNotice(`📢 Announcement gipadala ngadto sa ${targetName}!`, 'success');
     this.closeMessageModal();
+  }
+
+  openRenameModal(pc: PC) {
+    this.renameModalPc = pc;
+    this.renameDisplayName = pc.name || '';
+  }
+
+  closeRenameModal() {
+    this.renameModalPc = null;
+    this.renameDisplayName = '';
+  }
+
+  async saveRenamePc() {
+    if (!this.renameModalPc || !this.renameDisplayName.trim() || this.isSavingRename) return;
+    const pc = this.renameModalPc;
+    const newName = this.renameDisplayName.trim();
+    this.isSavingRename = true;
+    try {
+      const res = await this.adminState.updatePc(pc.id, { name: newName });
+      if (res.success) {
+        this.showNotice(`✏️ Nailisan na ang pangalan sa station ngadto sa "${newName}"!`, 'success');
+        this.closeRenameModal();
+      } else {
+        this.showNotice(`⚠️ ${res.error || 'Failed to rename PC'}`, 'warn');
+      }
+    } finally {
+      this.isSavingRename = false;
+    }
   }
 }

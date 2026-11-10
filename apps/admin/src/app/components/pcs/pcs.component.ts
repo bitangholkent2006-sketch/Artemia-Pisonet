@@ -225,6 +225,25 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
       opacity: 0.5;
       cursor: not-allowed;
     }
+    @media (max-width: 768px) {
+      .data-table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border-radius: 10px;
+      }
+      .data-table th, .data-table td {
+        padding: 10px 8px;
+        font-size: 0.78rem;
+        white-space: nowrap;
+      }
+      .modal-dialog {
+        width: calc(100% - 24px) !important;
+        max-width: calc(100vw - 24px) !important;
+        margin: 12px;
+        max-height: 90vh;
+        overflow-y: auto;
+      }
+    }
   `]
 })
 export class PcsComponent implements OnInit, OnDestroy {
@@ -314,15 +333,19 @@ export class PcsComponent implements OnInit, OnDestroy {
     this.editSpecs = pc.specs || '';
   }
 
-  confirmEditPc() {
-    if (!this.editPc) return;
-    this.adminState.updatePc(this.editPc.id, {
-      name: this.editName,
-      identifier: this.editIdentifier,
-      ipAddress: this.editIp,
-      macAddress: this.editMac,
-      specs: this.editSpecs
-    });
+  async confirmEditPc() {
+    if (!this.editPc || !this.editName.trim()) return;
+    const target = this.editPc;
     this.editPc = null;
+    const res = await this.adminState.updatePc(target.id, {
+      name: this.editName.trim(),
+      identifier: this.editIdentifier.trim(),
+      ipAddress: this.editIp.trim(),
+      macAddress: this.editMac.trim(),
+      specs: this.editSpecs.trim()
+    });
+    if (!res.success && res.error) {
+      alert('Failed to update PC: ' + res.error);
+    }
   }
 }

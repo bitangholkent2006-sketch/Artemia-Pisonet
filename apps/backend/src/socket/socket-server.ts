@@ -1,5 +1,7 @@
 import { Server as HttpServer } from 'http';
 import { Server as SocketIOServer, Socket } from 'socket.io';
+import fs from 'fs';
+import path from 'path';
 import { config } from '../config/env';
 import { AuthService } from '../services/auth.service';
 import { PcService } from '../services/pc.service';
@@ -13,10 +15,124 @@ export interface AuthenticatedSocket extends Socket {
     role?: string;
     pcId?: string;
     pcIdentifier?: string;
+    clientVersion?: string;
+    explicitOffline?: boolean;
   };
 }
 
 let io: SocketIOServer | null = null;
+const autoOtaCooldown = new Map<string, number>();
+
+function getLatestClientVersion(): string {
+  const candidates = [
+    path.resolve(process.cwd(), 'releases/version.json'),
+    path.resolve(__dirname, '../../releases/version.json'),
+    path.resolve(__dirname, '../../../releases/version.json')
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (parsed?.version) return String(parsed.version).trim();
+      }
+    } catch {}
+  }
+  return '1.0.6';
+}
+
+function joinAllStationRooms(authSocket: AuthenticatedSocket, rawId: string, rawName: string, pc: { id: string; identifier: string; name: string }) {
+  const rooms = new Set<string>();
+  const addId = (val?: string) => {
+    if (!val) return;
+    const lower = val.toLowerCase().trim();
+    const clean = lower.replace(/^pc-/, '').replace(/[^a-z0-9_-]/g, '-');
+    rooms.add(`pc:${lower}`);
+    if (clean) {
+      rooms.add(`pc:${clean}`);
+      rooms.add(`pc:pc-${clean}`);
+    }
+  };
+  addId(rawId);
+  addId(rawName);
+  addId(pc.id);
+  addId(pc.identifier);
+  addId(pc.name);
+
+  for (const r of rooms) {
+    authSocket.join(r);
+  }
+  authSocket.join('fleet');
+}
+
+function scheduleAutoOtaIfOutdated(authSocket: AuthenticatedSocket, pc: { id: string; name: string }, clientVersion?: string) {
+  const latestVersion = getLatestClientVersion();
+  const normalizedClientVer = clientVersion ? String(clientVersion).trim() : '';
+  if (normalizedClientVer === latestVersion) return;
+
+  const now = Date.now();
+  const lastAttempt = autoOtaCooldown.get(pc.id) || 0;
+  // 10-minute cooldown per PC to avoid update loops
+  if (now - lastAttempt < 10 * 60 * 1000) return;
+  autoOtaCooldown.set(pc.id, now);
+
+  setTimeout(() => {
+    if (!authSocket.connected) return;
+    const downloadUrl = 'https://artemia-pisonet-backend.onrender.com/download/client/app.asar';
+    console.log(`[Auto-OTA] Station ${pc.name} (${pc.id}) running version "${normalizedClientVer || 'legacy-v1.0.0'}". Pushing v${latestVersion}...`);
+
+    if (normalizedClientVer) {
+      // Modern agent >= 1.0.2 understands agent:client-update:run natively
+      authSocket.emit('agent:client-update:run', {
+        reqId: 'auto_ota_' + Date.now(),
+        targetPcId: pc.id,
+        version: latestVersion,
+        downloadUrl,
+        sender: 'Auto-Sync',
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      // Legacy v1.0.0 agent lacks agent:client-update:run, upgrade seamlessly via agent:command:run
+      const ps = `
+$proc = Get-Process -Name "Artemia Customer Terminal" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $proc -or -not $proc.Path) { exit 0 }
+$exePath = $proc.Path
+$targetDir = Split-Path $exePath
+$targetAsar = Join-Path $targetDir "resources\\app.asar"
+$tempAsar = Join-Path $env:TEMP ("app_" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".asar")
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+try {
+  Invoke-WebRequest -Uri "${downloadUrl}" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 20
+} catch {
+  Invoke-WebRequest -Uri "https://raw.githubusercontent.com/bitangholkent2006-sketch/Artemia-Pisonet/artemia-pisonet/releases/app.asar" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 20
+}
+if ((Test-Path $tempAsar) -and ((Get-Item $tempAsar).Length -gt 150000)) {
+  $batPath = Join-Path $env:TEMP ("artemia_ota_" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".bat")
+  $q = [char]34
+  $lines = @(
+    "@echo off",
+    "timeout /t 2 /nobreak >nul",
+    "taskkill /F /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
+    "timeout /t 2 /nobreak >nul",
+    "copy /Y $($q)$tempAsar$($q) $($q)$targetAsar$($q)",
+    "timeout /t 1 /nobreak >nul",
+    "start $($q)$($q) $($q)$exePath$($q)",
+    "del /f /q $($q)$tempAsar$($q) >nul 2>&1",
+    "del $($q)%~f0$($q)"
+  )
+  Set-Content -Path $batPath -Value $lines -Encoding ASCII -Force
+  Start-Process -FilePath "cmd.exe" -ArgumentList "/c $($q)$batPath$($q)" -WindowStyle Hidden
+}
+`;
+      const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+      authSocket.emit('agent:command:run', {
+        id: 'auto_ota_cmd_' + Date.now(),
+        targetPcId: pc.id,
+        command: `powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
+        shell: 'cmd'
+      });
+    }
+  }, 3500);
+}
 
 export function initSocketServer(httpServer: HttpServer): SocketIOServer {
   const allowedOrigins = [...config.adminOrigin, ...config.electronOrigin];
@@ -34,9 +150,11 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       methods: ['GET', 'POST'],
       credentials: true
     },
-    pingInterval: 15000,
-    pingTimeout: 10000
+    pingInterval: 10000,
+    pingTimeout: 12000
   });
+
+  PcService.setIoInstance(io);
 
   // Socket Authentication & Room Authorization Middleware
   io.use(async (socket: Socket, next) => {
@@ -103,14 +221,13 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     }
 
     if (pcId) {
-      authSocket.join(`pc:${pcId}`);
+      authSocket.join(`pc:${pcId.toLowerCase()}`);
       authSocket.join('fleet');
       // Immediately register PC heartbeat and mark connected
       PcService.recordHeartbeat(pcId).catch(() => {});
     }
 
-    // PC Join & Auto-Discovery (Plug and Play - No manual registration required)
-    authSocket.on('pc:join', async (data: { pcId: string; name?: string; specs?: string; ipAddress?: string; macAddress?: string; hardwareId?: string }) => {
+    const handleStationRegister = async (data: { pcId?: string; name?: string; specs?: string; ipAddress?: string; macAddress?: string; hardwareId?: string; clientVersion?: string }) => {
       const rawId = (data?.pcId || pcId || 'pc-01').toLowerCase();
       const rawName = data?.name || rawId.toUpperCase();
       const pc = await PcService.autoDiscoverOrRegisterPc(
@@ -121,33 +238,31 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
         data?.macAddress,
         data?.hardwareId
       );
-      authSocket.join(`pc:${rawId}`);
-      authSocket.join(`pc:${rawName.toLowerCase()}`);
-      authSocket.join(`pc:${pc.id.toLowerCase()}`);
-      authSocket.join(`pc:${pc.identifier.toLowerCase()}`);
-      authSocket.join('fleet');
+      joinAllStationRooms(authSocket, rawId, rawName, pc);
       authSocket.data.pcId = pc.id;
+      authSocket.data.pcIdentifier = pc.identifier;
+      authSocket.data.clientVersion = data?.clientVersion;
+      authSocket.data.explicitOffline = false;
       authSocket.emit('pc:identity:sync', { pcId: pc.id, name: pc.name, identifier: pc.identifier, hardwareId: pc.hardwareId });
+      scheduleAutoOtaIfOutdated(authSocket, pc, data?.clientVersion);
+    };
+
+    // PC Join & Auto-Discovery (Plug and Play - No manual registration required)
+    authSocket.on('pc:join', async (data: any) => {
+      await handleStationRegister(data || {});
     });
 
-    authSocket.on('pc:auto-discover', async (data: { pcId: string; name?: string; specs?: string; macAddress?: string; hardwareId?: string }) => {
-      const rawId = (data?.pcId || 'pc-01').toLowerCase();
-      const rawName = data?.name || rawId.toUpperCase();
-      const pc = await PcService.autoDiscoverOrRegisterPc(
-        rawId,
-        rawName,
-        socket.handshake.address?.replace('::ffff:', '') || '127.0.0.1',
-        data?.specs,
-        data?.macAddress,
-        data?.hardwareId
-      );
-      authSocket.join(`pc:${rawId}`);
-      authSocket.join(`pc:${rawName.toLowerCase()}`);
-      authSocket.join(`pc:${pc.id.toLowerCase()}`);
-      authSocket.join(`pc:${pc.identifier.toLowerCase()}`);
-      authSocket.join('fleet');
-      authSocket.data.pcId = pc.id;
-      authSocket.emit('pc:identity:sync', { pcId: pc.id, name: pc.name, identifier: pc.identifier, hardwareId: pc.hardwareId });
+    authSocket.on('pc:auto-discover', async (data: any) => {
+      await handleStationRegister(data || {});
+    });
+
+    // Explicit Shutdown / Exit notification from station (transitions offline immediately)
+    authSocket.on('pc:going-offline', async (data?: { pcId?: string; hardwareId?: string; macAddress?: string }) => {
+      authSocket.data.explicitOffline = true;
+      const targetId = authSocket.data.pcId || data?.pcId || pcId;
+      if (targetId || data?.hardwareId) {
+        await PcService.markStationExplicitOffline(targetId || '', data?.hardwareId, data?.macAddress);
+      }
     });
 
     // PC Terminal Heartbeat Event & Telemetry
@@ -415,59 +530,50 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     authSocket.on('disconnect', () => {
+      if (authSocket.data.explicitOffline) return;
       const targetPcId = authSocket.data.pcId || pcId;
       if (targetPcId && io) {
         setTimeout(async () => {
           if (!io) return;
-          const roomSockets = io.sockets.adapter.rooms.get(`pc:${targetPcId}`)?.size || 0;
-          if (roomSockets === 0) {
-            try {
-              const { getCollections } = await import('../database/connection');
-              const collections = getCollections();
-              const cleanIdentifier = String(targetPcId).trim().toUpperCase();
-              const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-              const pc = await collections.pcs.findOne({
-                $or: [
-                  { id: targetPcId },
-                  { id: cleanId },
-                  { id: `pc-${cleanId}` },
-                  { identifier: cleanIdentifier },
-                  { name: cleanIdentifier }
-                ]
-              });
-              if (pc && pc.status !== 'offline') {
-                // If PC is still actively heartbeating, do not mark offline (transient socket reconnect)
-                const lastHb = pc.lastHeartbeat ? new Date(pc.lastHeartbeat).getTime() : 0;
-                if (Date.now() - lastHb < 45000) {
-                  return;
-                }
+          try {
+            const { getCollections } = await import('../database/connection');
+            const collections = getCollections();
+            const cleanIdentifier = String(targetPcId).trim().toUpperCase();
+            const cleanId = cleanIdentifier.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+            const pc = await collections.pcs.findOne({
+              $or: [
+                { id: targetPcId },
+                { id: cleanId },
+                { id: `pc-${cleanId}` },
+                { identifier: cleanIdentifier },
+                { name: cleanIdentifier }
+              ]
+            });
+            if (!pc || pc.status === 'offline') return;
 
-                // If PC was toggled by staff in the last 10 seconds, preserve the staff action
-                const recentlyUpdated = pc.updatedAt && (Date.now() - new Date(pc.updatedAt).getTime() < 10000);
-                if (recentlyUpdated && pc.status === 'available') {
-                  console.log(`[Socket] PC ${targetPcId} was recently set to available by staff. Keeping station available.`);
-                  return;
-                }
-
-                console.log(`[Socket] PC ${targetPcId} disconnected and heartbeat stale. Transitioning to offline.`);
-                if (pc.activeSessionId) {
-                  console.log(`[Socket] Auto-pausing active session ${pc.activeSessionId} on disconnected PC ${targetPcId}`);
-                  await SessionService.pauseSession(pc.activeSessionId, 'system', 'system', undefined, undefined, 'offline');
-                } else {
-                  await collections.pcs.updateOne(
-                    { _id: pc._id },
-                    { $set: { connectionState: 'disconnected', status: 'offline', updatedAt: new Date() } }
-                  );
-                  broadcastRealtimeEvent('pc:status-changed', { pcId: pc.id, status: 'offline', activeCustomerName: null });
-                  broadcastRealtimeEvent('pc:status', { pcId: pc.id, status: 'offline' });
-                  broadcastRealtimeEvent('pc:updated', { ...pc, status: 'offline', connectionState: 'disconnected' }, 'staff');
-                }
-              }
-            } catch (err) {
-              console.warn('[Socket] Disconnect handling error for PC:', targetPcId, err);
+            // If ANY live socket is currently in the station's rooms, PC is definitely online!
+            if (PcService.isStationSocketConnected(pc)) {
+              return;
             }
+
+            // If PC sent an HTTP or Socket heartbeat within the last 25 seconds, keep it online
+            const lastHb = pc.lastHeartbeat ? new Date(pc.lastHeartbeat).getTime() : 0;
+            if (Date.now() - lastHb < 25000) {
+              return;
+            }
+
+            // If PC was toggled by staff in the last 10 seconds, preserve the staff action
+            const recentlyUpdated = pc.updatedAt && (Date.now() - new Date(pc.updatedAt).getTime() < 10000);
+            if (recentlyUpdated && pc.status === 'available') {
+              return;
+            }
+
+            console.log(`[Socket] PC ${pc.name} (${pc.id}) disconnected and unreachable. Transitioning to offline.`);
+            await PcService.markStationExplicitOffline(pc.id);
+          } catch (err) {
+            console.warn('[Socket] Disconnect handling error for PC:', targetPcId, err);
           }
-        }, 20000);
+        }, 12000);
       }
     });
   });
@@ -490,6 +596,10 @@ export function getIO(): SocketIOServer {
   if (!io) {
     throw new Error('Socket.IO not initialized.');
   }
+  return io;
+}
+
+export function tryGetIO(): SocketIOServer | null {
   return io;
 }
 

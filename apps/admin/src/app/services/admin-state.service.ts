@@ -466,9 +466,24 @@ export class AdminStateService {
     }
   }
 
-  public updatePc(pcId: string, updates: Partial<PC>) {
-    const staffId = this.state.activeAuth.currentUser?.id || 'admin-master-01';
-    return this.rawStateService.updatePc(pcId, updates, staffId);
+  public async updatePc(pcId: string, updates: Partial<PC>): Promise<{ success: boolean; pc?: PC; error?: string }> {
+    try {
+      // Optimistic local state update so UI feels instant
+      const pc = this.state.pcs.find((p) => p.id === pcId);
+      if (pc) {
+        Object.assign(pc, updates);
+      }
+      const res = await this.apiClient.updatePc(pcId, updates);
+      if (res.success) {
+        await this.syncFromBackend();
+        return { success: true, pc: res.data };
+      }
+      await this.syncFromBackend();
+      return { success: false, error: res.message || 'Failed to update PC details.' };
+    } catch (err: any) {
+      await this.syncFromBackend();
+      return { success: false, error: err.message || 'Failed to update PC details.' };
+    }
   }
 
   public async togglePcStatus(pcId: string, newStatus: PCStatus): Promise<{ success: boolean; error?: string }> {

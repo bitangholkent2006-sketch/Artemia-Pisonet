@@ -13,6 +13,8 @@ pcRoutes.get('/public', async (c) => {
     id: pc.id,
     name: pc.name,
     identifier: pc.identifier,
+    hardwareId: pc.hardwareId,
+    macAddress: pc.macAddress,
     specs: pc.specs,
     status: pc.status,
     activeCustomerId: pc.activeCustomerId,
@@ -21,12 +23,51 @@ pcRoutes.get('/public', async (c) => {
   return c.json({ success: true, data: publicPcs });
 });
 
+// Device HTTP Heartbeat Keepalive (Backup from Electron Main Process so PC never falsely drops offline)
+pcRoutes.post('/heartbeat', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { pcId, hardwareId, macAddress } = body;
+  if (!pcId && !hardwareId && !macAddress) {
+    return c.json({ success: false, message: 'pcId or hardwareId required' }, 400);
+  }
+  const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
+  await PcService.recordHeartbeat(pcId || hardwareId || 'pc-01', ip, macAddress, hardwareId);
+  return c.json({ success: true });
+});
+
+// Device Explicit Shutdown / Offline Notification (Marks station offline immediately on PC power off)
+pcRoutes.post('/offline', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { pcId, hardwareId, macAddress } = body;
+  if (!pcId && !hardwareId && !macAddress) {
+    return c.json({ success: false, message: 'pcId or hardwareId required' }, 400);
+  }
+  await PcService.markStationExplicitOffline(pcId || '', hardwareId, macAddress);
+  return c.json({ success: true });
+});
+
 // List all PCs (Authenticated)
 pcRoutes.get('/', requireAuth, async (c) => {
   const pcs = await PcService.listPcs();
   // Strip sensitive device key hashes before returning to clients
   const safePcs = pcs.map(({ deviceKeyHash: _, _id: __, ...rest }) => rest);
   return c.json({ success: true, data: safePcs });
+});
+
+// Wipe all PCs from the fleet (Admin only - MUST be registered before DELETE /:id)
+pcRoutes.delete('/wipe-all', requireStaff, async (c) => {
+  try {
+    const { getCollections } = await import('../database/connection');
+    const collections = getCollections();
+    const result = await collections.pcs.deleteMany({});
+    return c.json({
+      success: true,
+      message: `Fleet wiped! Deleted ${result.deletedCount} PC station(s) from database. Fleet is now a clean slate.`,
+      deletedCount: result.deletedCount
+    });
+  } catch (err: any) {
+    return c.json({ success: false, message: err.message || 'Wipe failed' }, 500);
+  }
 });
 
 // Get single PC
@@ -67,16 +108,27 @@ pcRoutes.post('/', requireStaff, async (c) => {
   }
 });
 
-// Update PC hardware specs or name (Staff or Admin)
+// Update PC hardware specs or display name (Staff or Admin)
 pcRoutes.patch('/:id', requireStaff, async (c) => {
   const staff = c.get('user');
   const id = c.req.param('id');
   if (!id) {
     return c.json({ success: false, message: 'PC station ID required' }, 400);
   }
-  const body = await c.req.json();
+  const body = await c.req.json().catch(() => ({}));
+  const updates: any = {};
+  if (typeof body.name === 'string') {
+    if (!body.name.trim()) {
+      return c.json({ success: false, message: 'Display name cannot be empty.' }, 400);
+    }
+    updates.name = body.name.trim();
+  }
+  if (typeof body.identifier === 'string' && body.identifier.trim()) updates.identifier = body.identifier.trim();
+  if (typeof body.ipAddress === 'string' && body.ipAddress.trim()) updates.ipAddress = body.ipAddress.trim();
+  if (typeof body.macAddress === 'string' && body.macAddress.trim()) updates.macAddress = body.macAddress.trim();
+  if (typeof body.specs === 'string') updates.specs = body.specs.trim();
 
-  const updated = await PcService.updatePc(id, body, staff.id);
+  const updated = await PcService.updatePc(id, updates, staff.id);
   if (!updated) {
     return c.json({ success: false, message: 'PC not found' }, 404);
   }
@@ -168,22 +220,6 @@ pcRoutes.post('/message', requireStaff, async (c) => {
       : 'Announcement broadcast to all PC terminals.',
     data: payload
   });
-});
-
-// Wipe all PCs from the fleet (Admin only - for clean slate)
-pcRoutes.delete('/wipe-all', requireStaff, async (c) => {
-  try {
-    const { getCollections } = await import('../database/connection');
-    const collections = getCollections();
-    const result = await collections.pcs.deleteMany({});
-    return c.json({
-      success: true,
-      message: `Fleet wiped! Deleted ${result.deletedCount} PC station(s) from database. Fleet is now a clean slate.`,
-      deletedCount: result.deletedCount
-    });
-  } catch (err: any) {
-    return c.json({ success: false, message: err.message || 'Wipe failed' }, 500);
-  }
 });
 
 // Send Announcement to specific PC by ID

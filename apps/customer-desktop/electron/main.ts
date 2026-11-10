@@ -1,9 +1,17 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage, screen, powerMonitor } from 'electron';
+import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage, screen, powerMonitor, powerSaveBlocker } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { exec, spawn, execFile } from 'child_process';
+import * as http from 'http';
+import * as https from 'https';
+import { exec, spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process';
+
+// Prevent Windows & Chromium from suspending or throttling hidden/occluded background timers
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 
 function logToFile(msg: string) {
   try {
@@ -18,8 +26,72 @@ logToFile('Starting main.ts. PID: ' + process.pid + ', execPath: ' + process.exe
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+let isOtaRestarting = false;
 let isStationLocked = false;
 let isAnnouncementActive = false;
+
+let runtimeStationInfo = {
+  apiBase: 'https://artemia-pisonet-backend.onrender.com',
+  pcId: '',
+  hardwareId: '',
+  macAddress: ''
+};
+
+function postJsonKeepalive(endpointPath: string, payload: Record<string, any>): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      const targetUrl = new URL(endpointPath, runtimeStationInfo.apiBase || 'https://artemia-pisonet-backend.onrender.com');
+      const bodyStr = JSON.stringify(payload);
+      const client = targetUrl.protocol === 'https:' ? https : http;
+      const req = client.request(
+        targetUrl,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(bodyStr)
+          },
+          timeout: 3000
+        },
+        (res) => {
+          res.resume();
+          resolve();
+        }
+      );
+      req.on('error', () => resolve());
+      req.on('timeout', () => {
+        try { req.destroy(); } catch {}
+        resolve();
+      });
+      req.write(bodyStr);
+      req.end();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+function sendMainHeartbeat() {
+  const id = getStationIdentity();
+  const payload = {
+    pcId: runtimeStationInfo.pcId || id.customStationId || process.env.COMPUTERNAME || os.hostname(),
+    hardwareId: runtimeStationInfo.hardwareId || id.hardwareId,
+    macAddress: runtimeStationInfo.macAddress || id.macAddress
+  };
+  postJsonKeepalive('/api/v1/pcs/heartbeat', payload).catch(() => {});
+}
+
+let offlineNotified = false;
+function notifyServerOffline(): Promise<void> {
+  if (offlineNotified || isOtaRestarting) return Promise.resolve();
+  offlineNotified = true;
+  const id = getStationIdentity();
+  return postJsonKeepalive('/api/v1/pcs/offline', {
+    pcId: runtimeStationInfo.pcId || id.customStationId || process.env.COMPUTERNAME || os.hostname(),
+    hardwareId: runtimeStationInfo.hardwareId || id.hardwareId,
+    macAddress: runtimeStationInfo.macAddress || id.macAddress
+  });
+}
 
 // Hardware health cache (GPU, SSD, CPU)
 let cachedHardwareInfo: {
@@ -421,6 +493,16 @@ ipcMain.handle('system:save-station-identity', (_event, data: { stationId?: stri
   } catch {
     return false;
   }
+});
+
+ipcMain.handle('system:sync-runtime', (_event, data: { apiBase?: string; pcId?: string; hardwareId?: string; macAddress?: string }) => {
+  if (data?.apiBase) runtimeStationInfo.apiBase = data.apiBase;
+  if (data?.pcId) runtimeStationInfo.pcId = data.pcId;
+  if (data?.hardwareId) runtimeStationInfo.hardwareId = data.hardwareId;
+  if (data?.macAddress) runtimeStationInfo.macAddress = data.macAddress;
+  offlineNotified = false;
+  sendMainHeartbeat();
+  return true;
 });
 
 ipcMain.handle('system:set-autostart', (_event, enable: boolean) => {
@@ -1045,67 +1127,209 @@ ipcMain.handle('maintenance:kill-process', async (_event, pid?: number, name?: s
   });
 });
 
-// 8. Capture Screen (Instant Desktop Screenshot with Strict Timeout & GDI Fallback)
+// 8. Capture Screen (Fast desktopCapturer + Zero-Spawn Persistent GDI Worker Fallback)
+let desktopCapturerFailures = 0;
+let desktopCapturerCooldownUntil = 0;
+let gdiWorkerProc: ChildProcessWithoutNullStreams | null = null;
+let gdiWorkerQueue: Promise<string> = Promise.resolve('');
+let gdiPendingResolve: ((line: string) => void) | null = null;
+let gdiStdoutBuffer = '';
+const GDI_WORKER_PS1 = path.join(os.tmpdir(), 'artemia_gdi_stream.ps1');
+const GDI_FRAME_OUT = path.join(os.tmpdir(), 'artemia_gdi_frame.jpg');
+
+function ensureGdiWorker(): ChildProcessWithoutNullStreams | null {
+  if (gdiWorkerProc && !gdiWorkerProc.killed && gdiWorkerProc.exitCode === null) {
+    return gdiWorkerProc;
+  }
+  try {
+    const workerScript = `Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$jpegFmt = [System.Drawing.Imaging.ImageFormat]::Jpeg
+while ($true) {
+  $line = [Console]::In.ReadLine()
+  if ($null -eq $line -or $line -eq 'EXIT') { break }
+  $parts = $line -split '\\|'
+  $outPath = $parts[0]
+  $w = [int]$parts[1]
+  if ($w -lt 320) { $w = 960 }
+  try {
+    $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $h = [int][Math]::Round($b.Height * $w / [Math]::Max(1, $b.Width))
+    $orig = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+    $go = [System.Drawing.Graphics]::FromImage($orig)
+    $go.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+    $bmp = New-Object System.Drawing.Bitmap $w, $h
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.DrawImage($orig, 0, 0, $w, $h)
+    $bmp.Save($outPath, $jpegFmt)
+    $g.Dispose()
+    $bmp.Dispose()
+    $go.Dispose()
+    $orig.Dispose()
+    [Console]::Out.WriteLine("OK")
+    [Console]::Out.Flush()
+  } catch {
+    [Console]::Out.WriteLine("ERR")
+    [Console]::Out.Flush()
+  }
+}
+`;
+    fs.writeFileSync(GDI_WORKER_PS1, workerScript, 'utf8');
+    gdiStdoutBuffer = '';
+    const proc = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', GDI_WORKER_PS1], {
+      windowsHide: true
+    });
+    proc.stdout.on('data', (chunk) => {
+      gdiStdoutBuffer += chunk.toString();
+      const idx = gdiStdoutBuffer.indexOf('\n');
+      if (idx !== -1) {
+        const line = gdiStdoutBuffer.slice(0, idx).trim();
+        gdiStdoutBuffer = gdiStdoutBuffer.slice(idx + 1);
+        if (gdiPendingResolve) {
+          const resolveFn = gdiPendingResolve;
+          gdiPendingResolve = null;
+          resolveFn(line);
+        }
+      }
+    });
+    proc.on('exit', () => {
+      if (gdiWorkerProc === proc) gdiWorkerProc = null;
+      if (gdiPendingResolve) {
+        const resolveFn = gdiPendingResolve;
+        gdiPendingResolve = null;
+        resolveFn('ERR');
+      }
+    });
+    proc.on('error', () => {
+      if (gdiWorkerProc === proc) gdiWorkerProc = null;
+    });
+    gdiWorkerProc = proc;
+    return proc;
+  } catch {
+    return null;
+  }
+}
+
+function captureViaPersistentGdi(width: number): Promise<string> {
+  const runCapture = async (): Promise<string> => {
+    const proc = ensureGdiWorker();
+    if (!proc) return '';
+
+    const status = await new Promise<string>((resolve) => {
+      const timer = setTimeout(() => {
+        if (gdiPendingResolve === done) gdiPendingResolve = null;
+        // Restart hung worker so next frame doesn't stall
+        try { proc.kill(); } catch {}
+        if (gdiWorkerProc === proc) gdiWorkerProc = null;
+        resolve('TIMEOUT');
+      }, 3000);
+
+      const done = (line: string) => {
+        clearTimeout(timer);
+        resolve(line);
+      };
+      gdiPendingResolve = done;
+      try {
+        proc.stdin.write(`${GDI_FRAME_OUT}|${width}\n`);
+      } catch {
+        clearTimeout(timer);
+        gdiPendingResolve = null;
+        resolve('ERR');
+      }
+    });
+
+    if (status === 'OK' && fs.existsSync(GDI_FRAME_OUT)) {
+      try {
+        const buf = fs.readFileSync(GDI_FRAME_OUT);
+        if (buf.length > 500) {
+          return `data:image/jpeg;base64,${buf.toString('base64')}`;
+        }
+      } catch {}
+    }
+    return '';
+  };
+
+  gdiWorkerQueue = gdiWorkerQueue.then(runCapture, runCapture);
+  return gdiWorkerQueue;
+}
+
 ipcMain.handle('maintenance:capture-screen', async (_event, options?: { width?: number; height?: number; quality?: number; skipFallback?: boolean }) => {
   const width = Math.min(1920, Math.max(320, options?.width || 960));
   const height = Math.min(1080, Math.max(180, options?.height || 540));
   const quality = Math.min(100, Math.max(20, options?.quality || 50));
   const skipFallback = options?.skipFallback ?? false;
 
-  try {
-    // 1. Fast Chromium desktopCapturer with optimized JPEG compression (~20KB per frame)
-    // Produces lightweight frames for zero-lag continuous streaming
-    const capturerPromise = (async () => {
-      const sources = await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { width, height }
-      });
-      if (sources.length > 0 && sources[0].thumbnail) {
-        const thumb = sources[0].thumbnail;
-        if (typeof thumb.toJPEG === 'function') {
-          const buf = thumb.toJPEG(quality);
-          return `data:image/jpeg;base64,${buf.toString('base64')}`;
+  // 1. Fast Chromium desktopCapturer (skipped automatically during 60s cooldown if hardware fails/returns empty)
+  if (Date.now() > desktopCapturerCooldownUntil) {
+    try {
+      const capturerPromise = (async () => {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen'],
+          thumbnailSize: { width, height }
+        });
+        if (sources.length > 0 && sources[0].thumbnail && !sources[0].thumbnail.isEmpty()) {
+          const thumb = sources[0].thumbnail;
+          if (typeof thumb.toJPEG === 'function') {
+            const buf = thumb.toJPEG(quality);
+            return `data:image/jpeg;base64,${buf.toString('base64')}`;
+          }
+          return thumb.toDataURL();
         }
-        return thumb.toDataURL();
-      }
-      return '';
-    })();
+        return '';
+      })();
 
-    const timeoutLimit = skipFallback ? 1500 : 2500;
-    const timeoutPromise = new Promise<string>((resolve) => setTimeout(() => resolve(''), timeoutLimit));
-    const base64 = await Promise.race([capturerPromise, timeoutPromise]);
-    if (base64 && base64.length > 500) {
-      return { base64Image: base64 };
+      const timeoutLimit = skipFallback ? 900 : 1800;
+      const timeoutPromise = new Promise<string>((resolve) => setTimeout(() => resolve(''), timeoutLimit));
+      const base64 = await Promise.race([capturerPromise, timeoutPromise]);
+      if (base64 && base64.length > 500) {
+        desktopCapturerFailures = 0;
+        return { base64Image: base64 };
+      }
+    } catch (err: any) {
+      console.warn('[ScreenCapture] desktopCapturer skipped:', err?.message);
     }
-  } catch (err: any) {
-    console.warn('[ScreenCapture] desktopCapturer skipped:', err?.message);
+
+    desktopCapturerFailures++;
+    if (desktopCapturerFailures >= 2) {
+      desktopCapturerCooldownUntil = Date.now() + 60000;
+    }
   }
 
-  // 2. Resilient Fallback: PowerShell GDI Screen Capture directly to %TEMP% JPEG
-  try {
-    const tempFile = path.join(os.tmpdir(), `artemia_screen_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.jpg`);
-    const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $w = ${width}; $h = [int][Math]::Round($b.Height * $w / $b.Width); $bmp = New-Object System.Drawing.Bitmap $w, $h; $g = [System.Drawing.Graphics]::FromImage($bmp); $orig = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $go = [System.Drawing.Graphics]::FromImage($orig); $go.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $g.DrawImage($orig, 0, 0, $w, $h); $bmp.Save('${tempFile.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Jpeg); $go.Dispose(); $orig.Dispose(); $g.Dispose(); $bmp.Dispose();`;
-    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  // 2. High-Speed Persistent PowerShell GDI Capture Worker (~25ms per frame, zero process spawn delay)
+  if (process.platform === 'win32') {
+    try {
+      const workerBase64 = await captureViaPersistentGdi(width);
+      if (workerBase64) {
+        return { base64Image: workerBase64 };
+      }
+    } catch {}
 
-    const fileBase64 = await new Promise<string>((resolve) => {
-      exec(`powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`, { timeout: 4500 }, () => {
-        if (fs.existsSync(tempFile)) {
-          try {
-            const buf = fs.readFileSync(tempFile);
-            fs.unlinkSync(tempFile);
-            resolve(`data:image/jpeg;base64,${buf.toString('base64')}`);
-            return;
-          } catch {}
-        }
-        resolve('');
+    // 3. Last-Resort One-Shot GDI Fallback
+    try {
+      const tempFile = path.join(os.tmpdir(), `artemia_screen_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.jpg`);
+      const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $w = ${width}; $h = [int][Math]::Round($b.Height * $w / $b.Width); $bmp = New-Object System.Drawing.Bitmap $w, $h; $g = [System.Drawing.Graphics]::FromImage($bmp); $orig = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $go = [System.Drawing.Graphics]::FromImage($orig); $go.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $g.DrawImage($orig, 0, 0, $w, $h); $bmp.Save('${tempFile.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Jpeg); $go.Dispose(); $orig.Dispose(); $g.Dispose(); $bmp.Dispose();`;
+      const encoded = Buffer.from(script, 'utf16le').toString('base64');
+
+      const fileBase64 = await new Promise<string>((resolve) => {
+        exec(`powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`, { timeout: 4500 }, () => {
+          if (fs.existsSync(tempFile)) {
+            try {
+              const buf = fs.readFileSync(tempFile);
+              fs.unlinkSync(tempFile);
+              resolve(`data:image/jpeg;base64,${buf.toString('base64')}`);
+              return;
+            } catch {}
+          }
+          resolve('');
+        });
       });
-    });
 
-    if (fileBase64) {
-      return { base64Image: fileBase64 };
+      if (fileBase64) {
+        return { base64Image: fileBase64 };
+      }
+    } catch (err: any) {
+      console.error('[ScreenCapture] GDI Fallback failed:', err);
     }
-  } catch (err: any) {
-    console.error('[ScreenCapture] GDI Fallback failed:', err);
   }
 
   return { base64Image: '', error: 'Screen capture currently unavailable on station.' };
@@ -1465,11 +1689,13 @@ exit
 
     fs.writeFileSync(batchScriptPath, batchScript, 'utf8');
 
-    // Spawn detached updater batch script
+    // Spawn detached updater batch script silently
+    isOtaRestarting = true;
+    try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
     const child = spawn('cmd.exe', ['/c', batchScriptPath], {
       detached: true,
       stdio: 'ignore',
-      windowsHide: false
+      windowsHide: true
     });
     child.unref();
 
@@ -1507,11 +1733,25 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     logToFile('app.whenReady resolved, initializing UI and background agents...');
+    // Prevent OS power-saving or timer suspension while PC is powered on
+    try { powerSaveBlocker.start('prevent-app-suspension'); } catch {}
+
     // Automatically register auto-start on Windows so pisonet agent runs on power-on
     setAutoStart(true);
     fetchHardwareInfo();
     createWindow();
     createTray();
+
+    // Main-process HTTP heartbeat every 15s (immune to Chromium renderer sleep/occlusion during fullscreen games)
+    setTimeout(sendMainHeartbeat, 2000);
+    setInterval(sendMainHeartbeat, 15000);
+
+    // Notify backend immediately on Windows OS shutdown / restart so station turns offline instantly
+    powerMonitor.on('shutdown', () => {
+      isQuitting = true;
+      try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
+      notifyServerOffline();
+    });
 
     // 1. Automatic Clean Slate on boot / terminal start
     setTimeout(() => {
@@ -1545,6 +1785,10 @@ if (!gotLock) {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
+  if (!isOtaRestarting) {
+    notifyServerOffline();
+  }
 });
 
 app.on('window-all-closed', () => {
