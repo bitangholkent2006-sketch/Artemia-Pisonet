@@ -49,7 +49,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.6';
+const CLIENT_AGENT_VERSION = '1.0.7';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -105,6 +105,8 @@ class StationMaintenanceAgent {
   private isScreenStreamInFlight = false;
   private lastAdminStreamPing = 0;
   private isBoostingFps = false;
+  private isUpdatingClient = false;
+  private lastOtaTriggerAt = 0;
 
   private telemetry = {
     cpuPercent: 14,
@@ -1081,10 +1083,17 @@ class StationMaintenanceAgent {
         const target = payload.targetPcId || payload.pcId;
         if (!this.matchesThisStation(target)) return;
 
+        if (this.isUpdatingClient || Date.now() - this.lastOtaTriggerAt < 30000) {
+          this.logMessage('[OTA Update] Duplicate/overlapping update trigger ignored.');
+          return;
+        }
+        this.isUpdatingClient = true;
+        this.lastOtaTriggerAt = Date.now();
+
         this.logMessage(`[OTA Update] Received update request from ${payload.sender || 'Admin'}. Starting auto-update...`);
         this.showToast('🚀 Naga-update ang Artemia Terminal gikan sa server...', 'info', 10);
 
-        this.showOtaUpdateModal(payload.version || '1.0.2');
+        this.showOtaUpdateModal(payload.version || CLIENT_AGENT_VERSION);
 
         this.socket?.emit('agent:client-update:status', {
           pcId: this.dbPcId || this.pcId,
@@ -1098,25 +1107,38 @@ class StationMaintenanceAgent {
           : `${this.apiBase}${payload.downloadUrl.startsWith('/') ? '' : '/'}${payload.downloadUrl}`;
 
         if (desktopWindow.pisonetDesktop?.applyClientUpdate) {
-          const res = await desktopWindow.pisonetDesktop.applyClientUpdate(fullDownloadUrl);
-          if (!res.success) {
-            this.logMessage(`[OTA Update] Error applying update: ${res.error}`);
-            this.showToast(`Update Failed: ${res.error}`, 'warn', 6);
+          try {
+            const res = await desktopWindow.pisonetDesktop.applyClientUpdate(fullDownloadUrl);
+            if (!res.success) {
+              this.isUpdatingClient = false;
+              this.lastOtaTriggerAt = 0;
+              this.logMessage(`[OTA Update] Error applying update: ${res.error}`);
+              this.showToast(`Update Failed: ${res.error}`, 'warn', 6);
+              this.hideOtaUpdateModal();
+              this.socket?.emit('agent:client-update:status', {
+                pcId: this.dbPcId || this.pcId,
+                status: 'failed',
+                error: res.error,
+                timestamp: new Date().toISOString()
+              });
+            } else {
+              this.socket?.emit('agent:client-update:status', {
+                pcId: this.dbPcId || this.pcId,
+                status: 'restarting',
+                timestamp: new Date().toISOString()
+              });
+            }
+          } catch (err: any) {
+            this.isUpdatingClient = false;
+            this.lastOtaTriggerAt = 0;
+            const errMsg = err?.message || String(err);
+            this.logMessage(`[OTA Update] Exception applying update: ${errMsg}`);
+            this.showToast(`Update Failed: ${errMsg}`, 'warn', 6);
             this.hideOtaUpdateModal();
-            this.socket?.emit('agent:client-update:status', {
-              pcId: this.dbPcId || this.pcId,
-              status: 'failed',
-              error: res.error,
-              timestamp: new Date().toISOString()
-            });
-          } else {
-            this.socket?.emit('agent:client-update:status', {
-              pcId: this.dbPcId || this.pcId,
-              status: 'restarting',
-              timestamp: new Date().toISOString()
-            });
           }
         } else {
+          this.isUpdatingClient = false;
+          this.lastOtaTriggerAt = 0;
           this.logMessage('[OTA Update] Client updater only supported on native Electron terminal.');
           this.hideOtaUpdateModal();
         }

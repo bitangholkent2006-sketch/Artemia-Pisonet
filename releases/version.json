@@ -1,7 +1,7 @@
 {
-  "version": "1.0.6",
+  "version": "1.0.7",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-10T20:54:00.000Z",
+  "releaseDate": "2026-11-10T21:30:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "All-PC Screen Stream (Persistent Fast GDI Worker), Anti-Offline Socket & HTTP Keepalive + Instant Shutdown Detection, Editable Display Name Sync, Auto-OTA v1.0.6 Upgrade"
+  "changelog": "Fix double-OTA broadcast collision, add OTA mutex & unique temp scripts, reliable detached Windows ping-wait restart & quoted auto-start path"
 }

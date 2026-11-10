@@ -1,15 +1,41 @@
 import { Hono } from 'hono';
 import { requireStaff } from '../middleware/auth.middleware';
-import { broadcastRealtimeEvent, getIO } from '../socket/socket-server';
+import { broadcastRealtimeEvent, tryGetIO } from '../socket/socket-server';
 import { getCollections } from '../database/connection';
 import { PcService } from '../services/pc.service';
 
 export const maintenanceRoutes = new Hono();
 
+function dispatchAgentEvent(eventName: string, payload: Record<string, any>, targetPcId = 'all', targetPcIds?: string[]) {
+  const io = tryGetIO();
+  const targets = Array.isArray(targetPcIds) && targetPcIds.length > 0 ? targetPcIds : [targetPcId];
+
+  if (targets.includes('all') || targets.includes('fleet')) {
+    if (io) {
+      io.to('fleet').emit(eventName, { ...payload, targetPcId: 'all' });
+    } else {
+      broadcastRealtimeEvent(eventName, { ...payload, targetPcId: 'all' }, 'fleet');
+    }
+    return;
+  }
+
+  for (const tid of targets) {
+    const t = String(tid || '').toLowerCase().trim();
+    if (!t) continue;
+    const clean = t.replace(/^pc-/, '');
+    const targetedPayload = { ...payload, targetPcId: t };
+    if (io) {
+      // Single chained emit deduplicates any socket joined to multiple alias rooms
+      io.to(`pc:${t}`).to(`pc:${clean}`).to(`pc:pc-${clean}`).emit(eventName, targetedPayload);
+    } else {
+      broadcastRealtimeEvent(eventName, targetedPayload, `pc:${t}`);
+    }
+  }
+}
+
 // Get Fleet Overview Metrics
 maintenanceRoutes.get('/overview', requireStaff, async (c) => {
-  const collections = getCollections();
-  const pcs = await collections.pcs.find().toArray();
+  const pcs = await PcService.listPcs();
   const total = pcs.length;
   const online = pcs.filter((p) => p.status !== 'offline').length;
   const offline = total - online;
@@ -43,9 +69,7 @@ maintenanceRoutes.post('/command', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId.toLowerCase()}`;
-  broadcastRealtimeEvent('agent:command:run', payload, room);
-  broadcastRealtimeEvent('agent:command:run', payload);
+  dispatchAgentEvent('agent:command:run', payload, targetPcId);
 
   return c.json({
     success: true,
@@ -66,9 +90,7 @@ maintenanceRoutes.post('/clean-temp', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId.toLowerCase()}`;
-  broadcastRealtimeEvent('agent:clean:run', payload, room);
-  broadcastRealtimeEvent('agent:clean:run', payload);
+  dispatchAgentEvent('agent:clean:run', payload, targetPcId);
 
   return c.json({
     success: true,
@@ -94,9 +116,7 @@ maintenanceRoutes.post('/game-update', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId.toLowerCase()}`;
-  broadcastRealtimeEvent('agent:game:update', payload, room);
-  broadcastRealtimeEvent('agent:game:update', payload);
+  dispatchAgentEvent('agent:game:update', payload, targetPcId);
 
   return c.json({
     success: true,
@@ -128,18 +148,7 @@ maintenanceRoutes.post('/download', requireStaff, async (c) => {
   };
 
   const targets = Array.isArray(targetPcIds) && targetPcIds.length > 0 ? targetPcIds : [targetPcId];
-  if (targets.includes('all') || targets.includes('fleet')) {
-    broadcastRealtimeEvent('agent:download:run', { ...payload, targetPcId: 'all' }, 'fleet');
-    broadcastRealtimeEvent('agent:download:run', { ...payload, targetPcId: 'all' });
-  } else {
-    targets.forEach((tid: string) => {
-      const t = tid.toLowerCase();
-      broadcastRealtimeEvent('agent:download:run', { ...payload, targetPcId: t }, `pc:${t}`);
-      if (!t.startsWith('pc-')) {
-        broadcastRealtimeEvent('agent:download:run', { ...payload, targetPcId: t }, `pc:pc-${t}`);
-      }
-    });
-  }
+  dispatchAgentEvent('agent:download:run', payload, targetPcId, targetPcIds);
 
   return c.json({
     success: true,
@@ -165,9 +174,7 @@ maintenanceRoutes.post('/power', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  const room = targetPcId === 'all' || targetPcId === 'fleet' ? 'fleet' : `pc:${targetPcId.toLowerCase()}`;
-  broadcastRealtimeEvent('agent:power:run', payload, room);
-  broadcastRealtimeEvent('agent:power:run', payload);
+  dispatchAgentEvent('agent:power:run', payload, targetPcId);
 
   const collections = getCollections();
   if (targetPcId !== 'all') {
@@ -275,18 +282,7 @@ maintenanceRoutes.post('/push-client-update', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  if (targets.includes('all') || targets.includes('fleet')) {
-    broadcastRealtimeEvent('agent:client-update:run', { ...payload, targetPcId: 'all' }, 'fleet');
-    broadcastRealtimeEvent('agent:client-update:run', { ...payload, targetPcId: 'all' });
-  } else {
-    targets.forEach((tid: string) => {
-      const t = tid.toLowerCase();
-      broadcastRealtimeEvent('agent:client-update:run', { ...payload, targetPcId: t }, `pc:${t}`);
-      if (!t.startsWith('pc-')) {
-        broadcastRealtimeEvent('agent:client-update:run', { ...payload, targetPcId: t }, `pc:pc-${t}`);
-      }
-    });
-  }
+  dispatchAgentEvent('agent:client-update:run', payload, targetPcId, targetPcIds);
 
   return c.json({
     success: true,
@@ -310,18 +306,7 @@ maintenanceRoutes.post('/boost-fps', requireStaff, async (c) => {
     timestamp: new Date().toISOString()
   };
 
-  if (targets.includes('all') || targets.includes('fleet')) {
-    broadcastRealtimeEvent('agent:fps-boost:run', { ...payload, targetPcId: 'all' }, 'fleet');
-    broadcastRealtimeEvent('agent:fps-boost:run', { ...payload, targetPcId: 'all' });
-  } else {
-    targets.forEach((tid: string) => {
-      const t = tid.toLowerCase();
-      broadcastRealtimeEvent('agent:fps-boost:run', { ...payload, targetPcId: t }, `pc:${t}`);
-      if (!t.startsWith('pc-')) {
-        broadcastRealtimeEvent('agent:fps-boost:run', { ...payload, targetPcId: t }, `pc:pc-${t}`);
-      }
-    });
-  }
+  dispatchAgentEvent('agent:fps-boost:run', payload, targetPcId, targetPcIds);
 
   return c.json({
     success: true,

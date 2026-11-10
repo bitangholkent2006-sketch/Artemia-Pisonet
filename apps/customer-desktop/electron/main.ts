@@ -27,6 +27,7 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let isOtaRestarting = false;
+let isUpdatingClient = false;
 let isStationLocked = false;
 let isAnnouncementActive = false;
 
@@ -145,10 +146,15 @@ if (process.platform === 'win32') {
   } catch {}
 }
 
+function getAutoStartLoginPath(): string {
+  return process.platform === 'win32' ? `"${process.execPath}"` : process.execPath;
+}
+
 function isAutoStartEnabled(): boolean {
   try {
-    const settings = app.getLoginItemSettings();
-    return !!settings.openAtLogin;
+    const settings = app.getLoginItemSettings({ path: getAutoStartLoginPath() });
+    if (settings.openAtLogin) return true;
+    return !!app.getLoginItemSettings().openAtLogin;
   } catch {
     return false;
   }
@@ -159,7 +165,7 @@ function setAutoStart(enable: boolean) {
     app.setLoginItemSettings({
       openAtLogin: enable,
       name: "Artemia Fleet Station Agent",
-      path: process.execPath
+      path: getAutoStartLoginPath()
     });
   } catch {}
 }
@@ -1600,6 +1606,13 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
 
 // 12. OTA Client Updater: Download app.asar, write detached updater batch script, and restart
 async function applyClientUpdate(downloadUrl: string): Promise<{ success: boolean; error?: string }> {
+  if (isUpdatingClient) {
+    logToFile('[OTA Updater] Ignoring duplicate/overlapping OTA update request while update is already in progress.');
+    return { success: true };
+  }
+  isUpdatingClient = true;
+
+  let tempAsar = '';
   try {
     let targetAsar = '';
     if (process.resourcesPath) {
@@ -1620,20 +1633,35 @@ async function applyClientUpdate(downloadUrl: string): Promise<{ success: boolea
     if (!fs.existsSync(updateDir)) {
       fs.mkdirSync(updateDir, { recursive: true });
     }
-    const tempAsar = path.join(updateDir, 'app.asar.new');
 
-    console.log(`[OTA Updater] Starting OTA client update from: ${downloadUrl}`);
-    console.log(`[OTA Updater] Target app.asar path: ${targetAsar}`);
+    // Best-effort cleanup of old temp update artifacts
+    try {
+      for (const entry of fs.readdirSync(updateDir)) {
+        if (entry.startsWith('app.asar.') || entry.startsWith('apply_ota_')) {
+          try { fs.unlinkSync(path.join(updateDir, entry)); } catch {}
+        }
+      }
+    } catch {}
+
+    const updateId = `${Date.now()}-${process.pid}`;
+    tempAsar = path.join(updateDir, `app.asar.${updateId}.new`);
+
+    logToFile(`[OTA Updater] Starting OTA client update from: ${downloadUrl} -> target=${targetAsar}`);
 
     // Download file
-    const downloadPromise = (url: string): Promise<void> => {
+    const downloadPromise = (url: string, redirectDepth = 0): Promise<void> => {
       return new Promise((resolve, reject) => {
+        if (redirectDepth > 5) {
+          return reject(new Error('Too many redirects while downloading update'));
+        }
         const httpModule = url.startsWith('https:') ? require('https') : require('http');
         const req = httpModule.get(url, (res: any) => {
           if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            return downloadPromise(res.headers.location).then(resolve).catch(reject);
+            res.resume();
+            return downloadPromise(res.headers.location, redirectDepth + 1).then(resolve).catch(reject);
           }
           if (res.statusCode !== 200) {
+            res.resume();
             return reject(new Error(`Download failed with HTTP ${res.statusCode}`));
           }
           const fileStream = fs.createWriteStream(tempAsar);
@@ -1646,6 +1674,9 @@ async function applyClientUpdate(downloadUrl: string): Promise<{ success: boolea
             fs.unlink(tempAsar, () => {});
             reject(err);
           });
+        });
+        req.setTimeout(30000, () => {
+          req.destroy(new Error('Download timed out after 30s'));
         });
         req.on('error', (err: any) => {
           fs.unlink(tempAsar, () => {});
@@ -1661,51 +1692,66 @@ async function applyClientUpdate(downloadUrl: string): Promise<{ success: boolea
       throw new Error(`Downloaded app.asar is too small (${stats.size} bytes). Update aborted.`);
     }
 
-    console.log(`[OTA Updater] Download complete (${stats.size} bytes). Preparing updater batch script...`);
+    logToFile(`[OTA Updater] Download complete (${stats.size} bytes). Preparing updater batch script...`);
 
-    const batchScriptPath = path.join(updateDir, 'apply_ota_update.bat');
+    const batchScriptPath = path.join(updateDir, `apply_ota_${updateId}.bat`);
     const exePath = process.execPath;
+    const exeDir = path.dirname(exePath);
+    const exeName = path.basename(exePath);
 
+    // Note: ping -n N works reliably when stdin is redirected (unlike timeout /t which fails immediately under stdio: 'ignore')
     const batchScript = `@echo off
 chcp 65001 >nul
+set "ELECTRON_RUN_AS_NODE="
 title Artemia Fleet Client Updater
-echo ========================================================
-echo  Artemia Fleet Client: Nag-apply sa pinakabag-ong update...
-echo ========================================================
-timeout /t 2 /nobreak >nul
+set /a retries=0
+ping -n 3 127.0.0.1 >nul
 
 :retry_copy
 copy /y "${tempAsar}" "${targetAsar}" >nul 2>&1
-if errorlevel 1 (
-  timeout /t 1 /nobreak >nul
+if not errorlevel 1 goto copy_ok
+set /a retries+=1
+if %retries% EQU 4 taskkill /F /PID ${process.pid} >nul 2>&1
+if %retries% EQU 8 taskkill /F /IM "${exeName}" >nul 2>&1
+if %retries% LSS 20 (
+  ping -n 2 127.0.0.1 >nul
   goto retry_copy
 )
 
+:copy_ok
 del /f /q "${tempAsar}" >nul 2>&1
-start "" "${exePath}"
+ping -n 2 127.0.0.1 >nul
+start "" /D "${exeDir}" "${exePath}"
 del /f /q "%~f0" >nul 2>&1
 exit
 `;
 
     fs.writeFileSync(batchScriptPath, batchScript, 'utf8');
 
-    // Spawn detached updater batch script silently
+    // Spawn detached updater batch script silently with clean environment
     isOtaRestarting = true;
     try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.ELECTRON_RUN_AS_NODE;
     const child = spawn('cmd.exe', ['/c', batchScriptPath], {
       detached: true,
       stdio: 'ignore',
-      windowsHide: true
+      windowsHide: true,
+      env: cleanEnv
     });
     child.unref();
 
-    console.log('[OTA Updater] Detached updater batch spawned. Exiting Electron...');
+    logToFile(`[OTA Updater] Detached updater batch spawned (${batchScriptPath}). Exiting Electron PID ${process.pid}...`);
     setTimeout(() => {
       app.exit(0);
-    }, 600);
+    }, 400);
 
     return { success: true };
   } catch (err: any) {
+    isUpdatingClient = false;
+    isOtaRestarting = false;
+    try { if (tempAsar && fs.existsSync(tempAsar)) fs.unlinkSync(tempAsar); } catch {}
+    logToFile(`[OTA Updater] Error applying client update: ${err?.message || String(err)}`);
     console.error('[OTA Updater] Error applying client update:', err);
     return { success: false, error: err.message || String(err) };
   }
