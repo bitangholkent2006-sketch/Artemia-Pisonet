@@ -1,7 +1,7 @@
 {
-  "version": "1.0.8",
+  "version": "1.0.9",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-10T22:28:00.000Z",
+  "releaseDate": "2026-11-10T23:00:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Auto-OTA Fleet Sync for ALL PCs (fixed backend release path & semver comparison), hardened legacy-v1.0.0 auto-upgrade, fixed cold-boot pc:join hardwareId race, quoted Windows auto-start & 1-click PC installer"
+  "changelog": "Fix pc:heartbeat legacy-OTA race that caused unintended taskkill on reconnect, add SingletonLock tasklist wait barrier before relaunch"
 }

@@ -1713,6 +1713,7 @@ chcp 65001 >nul
 set "ELECTRON_RUN_AS_NODE="
 title Artemia Fleet Client Updater
 set /a retries=0
+set /a wait_tries=0
 ping -n 3 127.0.0.1 >nul
 
 :retry_copy
@@ -1728,6 +1729,18 @@ if %retries% LSS 20 (
 
 :copy_ok
 del /f /q "${tempAsar}" >nul 2>&1
+
+:wait_exit
+tasklist /FI "IMAGENAME eq ${exeName}" 2>NUL | find /I "${exeName}" >NUL
+if not errorlevel 1 (
+  set /a wait_tries+=1
+  if %wait_tries% EQU 5 taskkill /F /IM "${exeName}" >nul 2>&1
+  if %wait_tries% LSS 15 (
+    ping -n 2 127.0.0.1 >nul
+    goto wait_exit
+  )
+)
+
 ping -n 2 127.0.0.1 >nul
 start "" /D "${exeDir}" "${exePath}"
 del /f /q "%~f0" >nul 2>&1

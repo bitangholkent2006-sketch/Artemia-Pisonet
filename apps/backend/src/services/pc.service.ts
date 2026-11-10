@@ -52,9 +52,9 @@ export class PcService {
         }
         pc.connectionState = 'connected';
         alivePcs.push(pc.id);
-      } else if (pc.status !== 'offline') {
+      } else if (pc.status !== 'offline' || pc.connectionState !== 'disconnected') {
         const lastHb = pc.lastHeartbeat ? new Date(pc.lastHeartbeat).getTime() : 0;
-        if (now - lastHb > PcService.HEARTBEAT_TIMEOUT_MS) {
+        if (pc.status === 'offline' || now - lastHb > PcService.HEARTBEAT_TIMEOUT_MS) {
           pc.status = 'offline';
           pc.connectionState = 'disconnected';
           stalePcs.push(pc.id);

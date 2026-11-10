@@ -65,21 +65,26 @@ function scheduleAutoOtaIfOutdated(authSocket: AuthenticatedSocket, pc: { id: st
 
   setTimeout(() => {
     if (!authSocket.connected) return;
-    const downloadUrl = 'https://artemia-pisonet-backend.onrender.com/download/client/app.asar';
-    console.log(`[Auto-OTA] Station ${pc.name} (${pc.id}) running version "${normalizedClientVer || 'legacy-v1.0.0'}". Pushing v${latestVersion}...`);
+    const latestNow = getLatestClientVersion();
+    const liveSocketVersion = authSocket.data.clientVersion ? String(authSocket.data.clientVersion).trim() : '';
+    const effectiveVer = liveSocketVersion || normalizedClientVer;
+    if (effectiveVer && compareSemver(effectiveVer, latestNow) >= 0) return;
 
-    if (normalizedClientVer) {
+    const downloadUrl = 'https://artemia-pisonet-backend.onrender.com/download/client/app.asar';
+    console.log(`[Auto-OTA] Station ${pc.name} (${pc.id}) running version "${effectiveVer || 'legacy-v1.0.0'}". Pushing v${latestNow}...`);
+
+    if (effectiveVer) {
       // Modern agent >= 1.0.2 understands agent:client-update:run natively
       authSocket.emit('agent:client-update:run', {
         reqId: 'auto_ota_' + Date.now(),
         targetPcId: pc.id,
-        version: latestVersion,
+        version: latestNow,
         downloadUrl,
         sender: 'Auto-Sync',
         timestamp: new Date().toISOString()
       });
     } else {
-      // Legacy v1.0.0 agent lacks agent:client-update:run; upgrade safely via ping-wait batch & fix startup registry
+      // Legacy v1.0.0 agent lacks agent:client-update:run; upgrade safely via ping-wait + process-exit barrier
       const ps = `
 $proc = Get-Process -Name "Artemia Customer Terminal" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $proc -or -not $proc.Path) { exit 0 }
@@ -106,21 +111,30 @@ if ((Test-Path $tempAsar) -and ((Get-Item $tempAsar).Length -gt 100000)) {
     "@echo off",
     "set $($q)ELECTRON_RUN_AS_NODE=$($q)",
     "set /a retries=0",
+    "set /a wait_tries=0",
     "ping -n 2 127.0.0.1 >nul",
     "taskkill /F /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
-    "ping -n 3 127.0.0.1 >nul",
+    ":wait_exit",
+    "tasklist /FI $($q)IMAGENAME eq Artemia Customer Terminal.exe$($q) 2>NUL | find /I $($q)Artemia Customer Terminal.exe$($q) >NUL",
+    "if not errorlevel 1 (",
+    "  set /a wait_tries+=1",
+    "  if %wait_tries% LSS 15 (",
+    "    taskkill /F /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
+    "    ping -n 2 127.0.0.1 >nul",
+    "    goto wait_exit",
+    "  )",
+    ")",
     ":retry_copy",
     "copy /Y $($q)$tempAsar$($q) $($q)$targetAsar$($q) >nul 2>&1",
     "if not errorlevel 1 goto copy_ok",
     "set /a retries+=1",
-    "if %retries% EQU 4 taskkill /F /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
     "if %retries% LSS 15 (",
     "  ping -n 2 127.0.0.1 >nul",
     "  goto retry_copy",
     ")",
     ":copy_ok",
     "del /f /q $($q)$tempAsar$($q) >nul 2>&1",
-    "ping -n 2 127.0.0.1 >nul",
+    "ping -n 3 127.0.0.1 >nul",
     "start $($q)$($q) /D $($q)$targetDir$($q) $($q)$exePath$($q)",
     "del /f /q $($q)%~f0$($q) >nul 2>&1",
     "exit"
@@ -234,6 +248,10 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     }
 
     const handleStationRegister = async (data: { pcId?: string; name?: string; specs?: string; ipAddress?: string; macAddress?: string; hardwareId?: string; clientVersion?: string }) => {
+      // Save clientVersion synchronously BEFORE awaiting DB so concurrent heartbeats never misclassify client as legacy-v1.0.0
+      if (data?.clientVersion) {
+        authSocket.data.clientVersion = String(data.clientVersion).trim();
+      }
       const rawId = (data?.pcId || pcId || 'pc-01').toLowerCase();
       const rawName = data?.name || rawId.toUpperCase();
       const pc = await PcService.autoDiscoverOrRegisterPc(
@@ -247,10 +265,11 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       joinAllStationRooms(authSocket, rawId, rawName, pc);
       authSocket.data.pcId = pc.id;
       authSocket.data.pcIdentifier = pc.identifier;
-      authSocket.data.clientVersion = data?.clientVersion;
+      const reportedVersion = data?.clientVersion || authSocket.data.clientVersion;
+      if (reportedVersion) authSocket.data.clientVersion = reportedVersion;
       authSocket.data.explicitOffline = false;
       authSocket.emit('pc:identity:sync', { pcId: pc.id, name: pc.name, identifier: pc.identifier, hardwareId: pc.hardwareId });
-      scheduleAutoOtaIfOutdated(authSocket, pc, data?.clientVersion);
+      scheduleAutoOtaIfOutdated(authSocket, pc, reportedVersion);
     };
 
     // PC Join & Auto-Discovery (Plug and Play - No manual registration required)
@@ -281,15 +300,15 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       const targetId = authSocket.data.pcId || pcId || data?.pcId;
       if (targetId) {
         if (data?.clientVersion) {
-          authSocket.data.clientVersion = data.clientVersion;
-        }
-        const effectiveVersion = data?.clientVersion || authSocket.data.clientVersion;
-        if (!effectiveVersion || compareSemver(effectiveVersion, getLatestClientVersion()) < 0) {
-          scheduleAutoOtaIfOutdated(
-            authSocket,
-            { id: targetId, name: authSocket.data.pcIdentifier || targetId },
-            effectiveVersion
-          );
+          const cleanVer = String(data.clientVersion).trim();
+          authSocket.data.clientVersion = cleanVer;
+          if (compareSemver(cleanVer, getLatestClientVersion()) < 0) {
+            scheduleAutoOtaIfOutdated(
+              authSocket,
+              { id: targetId, name: authSocket.data.pcIdentifier || targetId },
+              cleanVer
+            );
+          }
         }
         await PcService.recordHeartbeat(targetId, socket.handshake.address?.replace('::ffff:', ''), data?.macAddress, data?.hardwareId);
         if (data?.telemetry) {
