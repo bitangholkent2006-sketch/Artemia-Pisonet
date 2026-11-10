@@ -906,6 +906,61 @@ export class AdminStateService {
   }
 
   // -------------------------------------------------------------
+  // Game Launcher & Shop Wallpaper
+  // -------------------------------------------------------------
+  public async getLauncherConfig(): Promise<any> {
+    try {
+      const res = await this.apiClient.getLauncherConfig();
+      return res?.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  public async saveLauncherConfig(config: any, targetPcId: string = 'all') {
+    return this.apiClient.saveLauncherConfig(config, targetPcId);
+  }
+
+  public async uploadLauncherWallpaper(dataUrl: string, targetPcId: string = 'all') {
+    return this.apiClient.uploadLauncherWallpaper(dataUrl, targetPcId);
+  }
+
+  public async clearLauncherWallpaper() {
+    return this.apiClient.clearLauncherWallpaper();
+  }
+
+  public scanLauncherAppsOnPc(pcId: string): Promise<{
+    statuses: Record<string, { installed: boolean; resolvedPath?: string | null }>;
+    discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; category: string }>;
+    error?: string;
+  }> {
+    return new Promise((resolve) => {
+      const reqId = 'lscan_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve({ statuses: {}, discoveredApps: [], error: 'Timeout pag-scan sa PC.' });
+      }, 10000);
+
+      const cleanup = this.apiClient.onSocketEvent('maintenance:launcher:scan:res', (data: any) => {
+        if (data?.reqId === reqId || this.matchesStationId(data?.pcId, pcId)) {
+          clearTimeout(timer);
+          cleanup();
+          resolve({
+            statuses: data?.statuses || {},
+            discoveredApps: Array.isArray(data?.discoveredApps) ? data.discoveredApps : []
+          });
+        }
+      });
+
+      this.apiClient.emitSocket('maintenance:launcher:scan:req', { reqId, pcId });
+    });
+  }
+
+  public onLauncherActionResult(cb: (res: any) => void): () => void {
+    return this.apiClient.onSocketEvent('maintenance:launcher:action:res', cb);
+  }
+
+  // -------------------------------------------------------------
   // Fleet Management
   // -------------------------------------------------------------
   public async wipeFleet(): Promise<{ success: boolean; message: string; deletedCount?: number }> {

@@ -10,10 +10,12 @@ import { TaskManagerComponent } from './components/task-manager/task-manager.com
 import { RemoteTerminalComponent } from './components/remote-terminal/remote-terminal.component';
 import { ScreenViewComponent } from './components/screen-view/screen-view.component';
 import { PcsComponent } from './components/pcs/pcs.component';
+import { LauncherComponent } from './components/launcher/launcher.component';
 import { PisonetAppState } from '@pisonet/shared';
 
 export type NavTab = 
   | 'dashboard'
+  | 'launcher'
   | 'game-updater'
   | 'file-manager'
   | 'task-manager'
@@ -28,6 +30,7 @@ export type NavTab =
     CommonModule,
     LoginComponent,
     DashboardComponent,
+    LauncherComponent,
     FileManagerComponent,
     GameUpdaterComponent,
     TaskManagerComponent,

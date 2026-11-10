@@ -51,10 +51,20 @@ interface WindowWithDesktop extends Window {
     applyClientUpdate?: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
     optimizeFps?: () => Promise<{ success: boolean; freedRamMb: number; powerPlan: string; boostedGames: string[]; tweaksApplied: string[]; elapsedMs: number; error?: string }>;
     syncRuntime?: (data: { apiBase: string; pcId: string; hardwareId?: string; macAddress?: string }) => Promise<boolean>;
+    getLauncherConfig?: () => Promise<any>;
+    saveLauncherConfigLocal?: (cfg: any) => Promise<boolean>;
+    scanLauncherApps?: () => Promise<{
+      statuses: Record<string, { installed: boolean; resolvedPath?: string | null }>;
+      discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; category: string }>;
+    }>;
+    launchGame?: (item: any) => Promise<{ success: boolean; resolvedPath?: string; error?: string }>;
+    applyWallpaper?: (wallpaperUrl: string) => Promise<{ success: boolean; localPath?: string; error?: string }>;
+    setVolumePercent?: (percent: number) => Promise<{ success: boolean; error?: string }>;
+    onLauncherRestoredIdle?: (callback: () => void) => void;
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.17';
+const CLIENT_AGENT_VERSION = '1.0.18';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -114,6 +124,24 @@ class StationMaintenanceAgent {
   private isBoostingFps = false;
   private isUpdatingClient = false;
   private lastOtaTriggerAt = 0;
+
+  // Game Launcher & Shop Theme State
+  private launcherConfig: any = {
+    launcherEnabled: true,
+    shopName: "Artemia's Pisonet",
+    bannerText: 'Palihug i-logout ang Facebook / Gmail / GCash human gamit • Bawal Cheat Engine & Torrent',
+    wallpaperUrl: '',
+    autoRestoreOnIdle: true,
+    idleTimeoutSeconds: 180,
+    autoLogoutBrowsers: true,
+    resetVolumePercent: 60,
+    items: []
+  };
+  private launcherScanStatuses: Record<string, { installed: boolean; resolvedPath?: string | null }> = {};
+  private launcherCategory: 'all' | 'Games' | 'Browsers' | 'Tools' = 'all';
+  private launcherSearch = '';
+  private uiMode: 'launcher' | 'agent' = 'launcher';
+  private lastAppliedWallpaperUrl = localStorage.getItem('artemia_applied_wallpaper_url') || '';
 
   private telemetry = {
     cpuPercent: 0,
@@ -369,11 +397,34 @@ class StationMaintenanceAgent {
   }
 
   private async bootstrapAgent() {
+    // Load cached launcher config immediately before rendering / connecting
+    try {
+      if (desktopWindow.pisonetDesktop?.getLauncherConfig) {
+        const localCfg = await desktopWindow.pisonetDesktop.getLauncherConfig();
+        if (localCfg) {
+          this.launcherConfig = localCfg;
+          this.uiMode = localCfg.launcherEnabled !== false ? 'launcher' : 'agent';
+          this.applyLauncherConfigToDom();
+        }
+      }
+    } catch {}
+
     // Wait for hardwareId, macAddress, and hostname identity BEFORE opening socket
     // so pc:join never registers with fallback defaults on newly added PCs.
     await this.setupStationIdentity();
     this.initSocket();
     this.startTelemetryLoop();
+    this.syncLauncherConfigFromServer();
+
+    if (desktopWindow.pisonetDesktop?.onLauncherRestoredIdle) {
+      desktopWindow.pisonetDesktop.onLauncherRestoredIdle(() => {
+        if (this.launcherConfig?.launcherEnabled !== false) {
+          this.switchUiMode('launcher');
+          this.refreshLauncherScan();
+          this.showToast('🎮 Limpyo na ang PC! Andam na para sa sunod nga customer.', 'success', 5);
+        }
+      });
+    }
   }
 
   private async setupStationIdentity() {
@@ -484,6 +535,10 @@ class StationMaintenanceAgent {
           const titleSub = document.querySelector('.station-sub');
           if (titleSub) {
             titleSub.innerHTML = `Station ID: <strong style="color:#38bdf8">${this.pcName}</strong> ${this.specs ? `<span style="font-size:0.75rem; color:#64748b; margin-left:8px;">(${this.specs})</span>` : ''}`;
+          }
+          const launcherPill = document.getElementById('launcher-station-pill');
+          if (launcherPill) {
+            launcherPill.innerText = this.pcName;
           }
           this.logMessage(`Station matched in Fleet Database: ID=${current.id}, Name=${this.pcName}`);
           if (!this.hasRealtimeStatus) {
@@ -724,6 +779,10 @@ class StationMaintenanceAgent {
           const titleSub = document.querySelector('.station-sub');
           if (titleSub) {
             titleSub.innerHTML = `Station ID: <strong style="color:#38bdf8">${this.pcName}</strong> ${this.specs ? `<span style="font-size:0.75rem; color:#64748b; margin-left:8px;">(${this.specs})</span>` : ''}`;
+          }
+          const launcherPill = document.getElementById('launcher-station-pill');
+          if (launcherPill) {
+            launcherPill.innerText = this.pcName;
           }
           const lockStationTag = document.getElementById('lock-station-tag');
           if (lockStationTag) {
@@ -1121,6 +1180,7 @@ class StationMaintenanceAgent {
         if (res.success) {
           this.logMessage(`[Downloader] Download completed: ${res.destPath}`);
           this.showToast(`✅ Download Complete: ${res.filename}!`, 'success', 6);
+          setTimeout(() => { this.refreshLauncherScan(); }, 1500);
         } else {
           this.logMessage(`[Downloader] Download failed: ${res.error}`);
           this.showToast(`❌ Download Failed: ${res.error}`, 'warn', 6);
@@ -1159,6 +1219,52 @@ class StationMaintenanceAgent {
           pcId: payload.pcId || payload.targetPcId || this.dbPcId || this.pcId,
           targetPcId: payload.pcId || payload.targetPcId,
           ...res,
+          timestamp: new Date().toISOString()
+        });
+      });
+
+      // 10B. Game Launcher Config, Desktop Wallpaper & App Scan Relays
+      this.socket.on('agent:launcher:config-updated', async (payload: { targetPcId?: string; config?: any }) => {
+        if (payload?.targetPcId && !this.matchesThisStation(payload.targetPcId)) return;
+        if (payload?.config) {
+          await this.applyLauncherConfigUpdate(payload.config);
+          this.showToast('🎮 Gi-update sa Admin ang Game Launcher ug Shop Theme!', 'info', 4);
+        }
+      });
+
+      this.socket.on('agent:wallpaper:apply', async (payload: { targetPcId?: string; wallpaperUrl?: string }) => {
+        if (payload?.targetPcId && !this.matchesThisStation(payload.targetPcId)) return;
+        const targetUrl = String(payload?.wallpaperUrl || this.launcherConfig?.wallpaperUrl || '').trim();
+        if (!targetUrl) return;
+        if (desktopWindow.pisonetDesktop?.applyWallpaper) {
+          const res = await desktopWindow.pisonetDesktop.applyWallpaper(targetUrl);
+          if (res.success) {
+            this.lastAppliedWallpaperUrl = targetUrl;
+            localStorage.setItem('artemia_applied_wallpaper_url', targetUrl);
+            this.launcherConfig = { ...this.launcherConfig, wallpaperUrl: targetUrl };
+            this.applyLauncherConfigToDom();
+            this.showToast('🖼️ Bag-ong Shop Wallpaper gi-apply sa monitor!', 'success', 4);
+          }
+          this.socket?.emit('agent:launcher:action:res', {
+            pcId: this.dbPcId || this.pcId,
+            pcName: this.pcName,
+            action: 'wallpaper',
+            success: res.success,
+            error: res.error,
+            timestamp: new Date().toISOString()
+          });
+        }
+      });
+
+      this.socket.on('agent:launcher:scan:req', async (payload: { reqId?: string; pcId?: string }) => {
+        if (payload?.pcId && !this.matchesThisStation(payload.pcId)) return;
+        const scan = await this.refreshLauncherScan();
+        this.socket?.emit('agent:launcher:scan:res', {
+          reqId: payload?.reqId,
+          pcId: this.dbPcId || this.pcId,
+          pcName: this.pcName,
+          statuses: scan?.statuses || {},
+          discoveredApps: scan?.discoveredApps || [],
           timestamp: new Date().toISOString()
         });
       });
@@ -1344,6 +1450,162 @@ class StationMaintenanceAgent {
     }, 5000);
   }
 
+  private escapeHtml(str: string): string {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private async syncLauncherConfigFromServer() {
+    try {
+      const res = await fetch(`${this.apiBase}/api/v1/maintenance/launcher-config`, { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.data) {
+          await this.applyLauncherConfigUpdate(json.data);
+          return;
+        }
+      }
+    } catch {}
+    await this.refreshLauncherScan();
+  }
+
+  private async applyLauncherConfigUpdate(cfg: any) {
+    this.launcherConfig = cfg;
+    if (desktopWindow.pisonetDesktop?.saveLauncherConfigLocal) {
+      await desktopWindow.pisonetDesktop.saveLauncherConfigLocal(cfg).catch(() => {});
+    }
+    this.uiMode = cfg?.launcherEnabled !== false ? 'launcher' : 'agent';
+    this.applyLauncherConfigToDom();
+    await this.refreshLauncherScan();
+
+    const wp = String(cfg?.wallpaperUrl || '').trim();
+    if (wp && wp !== this.lastAppliedWallpaperUrl && desktopWindow.pisonetDesktop?.applyWallpaper) {
+      const res = await desktopWindow.pisonetDesktop.applyWallpaper(wp);
+      if (res?.success) {
+        this.lastAppliedWallpaperUrl = wp;
+        localStorage.setItem('artemia_applied_wallpaper_url', wp);
+      }
+    }
+  }
+
+  private async refreshLauncherScan() {
+    try {
+      if (desktopWindow.pisonetDesktop?.scanLauncherApps) {
+        const scan = await desktopWindow.pisonetDesktop.scanLauncherApps();
+        this.launcherScanStatuses = scan?.statuses || {};
+        this.renderLauncherGrid();
+        return scan;
+      }
+    } catch {}
+    return { statuses: {}, discoveredApps: [] };
+  }
+
+  private switchUiMode(mode: 'launcher' | 'agent') {
+    this.uiMode = mode;
+    const launcherShell = document.getElementById('launcher-shell');
+    const agentShell = document.getElementById('agent-shell');
+    if (launcherShell && agentShell) {
+      launcherShell.style.display = mode === 'launcher' ? 'flex' : 'none';
+      agentShell.style.display = mode === 'agent' ? 'flex' : 'none';
+    }
+  }
+
+  private applyLauncherConfigToDom() {
+    const cfg = this.launcherConfig || {};
+    const titleEl = document.getElementById('launcher-shop-title');
+    if (titleEl) titleEl.innerText = cfg.shopName || "Artemia's Pisonet";
+
+    const stationPill = document.getElementById('launcher-station-pill');
+    if (stationPill) stationPill.innerText = this.pcName;
+
+    const bannerBox = document.getElementById('launcher-rules-banner');
+    const bannerTxt = document.getElementById('launcher-rules-text');
+    const textVal = String(cfg.bannerText || '').trim();
+    if (bannerBox && bannerTxt) {
+      if (textVal) {
+        bannerTxt.innerText = textVal;
+        bannerBox.style.display = 'flex';
+      } else {
+        bannerBox.style.display = 'none';
+      }
+    }
+
+    const bgEl = document.getElementById('launcher-wallpaper-bg');
+    if (bgEl) {
+      const wp = String(cfg.wallpaperUrl || '').trim();
+      bgEl.style.backgroundImage = wp ? `linear-gradient(180deg, rgba(7,9,14,0.72), rgba(7,9,14,0.92)), url("${wp.replace(/"/g, '%22')}")` : '';
+    }
+
+    const backToLauncherBtn = document.getElementById('btn-open-launcher');
+    if (backToLauncherBtn) {
+      backToLauncherBtn.style.display = cfg.launcherEnabled !== false ? 'inline-flex' : 'none';
+    }
+
+    this.switchUiMode(cfg.launcherEnabled !== false ? this.uiMode : 'agent');
+    this.renderLauncherGrid();
+  }
+
+  private renderLauncherGrid() {
+    const grid = document.getElementById('launcher-cards-grid');
+    if (!grid) return;
+
+    const items: any[] = Array.isArray(this.launcherConfig?.items) ? this.launcherConfig.items : [];
+    const q = this.launcherSearch.trim().toLowerCase();
+    const filtered = items.filter((it) => {
+      if (it?.visible === false) return false;
+      if (this.launcherCategory !== 'all' && it.category !== this.launcherCategory) return false;
+      if (q && !String(it.name || '').toLowerCase().includes(q) && !String(it.category || '').toLowerCase().includes(q)) return false;
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:48px 20px; color:#94a3b8; border:1px dashed rgba(255,255,255,0.12); border-radius:16px;">Walay nakit-an nga app o dula sa kani nga category.</div>`;
+      return;
+    }
+
+    grid.innerHTML = filtered.map((item) => {
+      const st = this.launcherScanStatuses[item.id];
+      const installed = st ? st.installed : true;
+      const badgeHtml = installed
+        ? `<span class="l-badge ready">● Ready</span>`
+        : `<span class="l-badge missing">Not Installed</span>`;
+      const btnText = installed ? '▶ PLAY' : 'Wala Ma-install';
+      return `
+        <div class="launcher-card ${installed ? '' : 'missing'}" data-launch-id="${this.escapeHtml(item.id)}">
+          <div class="l-card-top">
+            <div class="l-icon">${this.escapeHtml(item.icon || '🎮')}</div>
+            ${badgeHtml}
+          </div>
+          <div class="l-name">${this.escapeHtml(item.name)}</div>
+          <div class="l-cat">${this.escapeHtml(item.category || 'Games')}</div>
+          <button type="button" class="l-play-btn" ${installed ? '' : 'data-missing="1"'}>${btnText}</button>
+        </div>
+      `;
+    }).join('');
+
+    grid.querySelectorAll('.launcher-card').forEach((cardEl) => {
+      cardEl.addEventListener('click', async () => {
+        const id = cardEl.getAttribute('data-launch-id');
+        const item = items.find((x) => x.id === id);
+        if (!item) return;
+        if (desktopWindow.pisonetDesktop?.launchGame) {
+          const res = await desktopWindow.pisonetDesktop.launchGame(item);
+          if (res.success) {
+            this.showToast(`🚀 Gi-abli ang ${item.name}... Enjoy playing!`, 'success', 4);
+          } else {
+            this.showToast(`⚠️ ${res.error || `${item.name} wala pa ma-install ani nga PC.`}`, 'warn', 5);
+          }
+        } else {
+          this.showToast(`🎮 Launching ${item.name}...`, 'info', 3);
+        }
+      });
+    });
+  }
+
   private logMessage(msg: string) {
     this.lastUpdateLog = `[${new Date().toLocaleTimeString()}] ${msg}`;
     try {
@@ -1444,6 +1706,78 @@ class StationMaintenanceAgent {
           padding: 10px 18px; border-radius: 10px; font-size: 0.85rem; font-weight: 700; cursor: pointer;
         }
         .btn-action:hover { background: rgba(51, 65, 85, 0.8); color: #fff; }
+
+        /* SHOP GAME LAUNCHER HUB STYLES */
+        .agent-shell, .launcher-shell { display: flex; flex-direction: column; height: 100vh; width: 100vw; position: relative; overflow: hidden; }
+        .launcher-wallpaper-bg {
+          position: absolute; inset: 0; background-size: cover; background-position: center;
+          background-color: #07090e; z-index: 0; pointer-events: none;
+        }
+        .launcher-header {
+          position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+          padding: 16px 26px; background: rgba(10, 15, 29, 0.82); backdrop-filter: blur(16px);
+          border-bottom: 1px solid rgba(56, 189, 248, 0.18);
+        }
+        .launcher-brand { display: flex; align-items: center; gap: 12px; }
+        .launcher-logo {
+          width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, #06b6d4, #6366f1);
+          display: flex; align-items: center; justify-content: center; font-size: 1.4rem;
+          box-shadow: 0 0 18px rgba(6, 182, 212, 0.45);
+        }
+        .launcher-shop-title { font-size: 1.25rem; font-weight: 900; color: #f8fafc; letter-spacing: 0.3px; }
+        .launcher-station-sub { font-size: 0.76rem; color: #94a3b8; display: flex; align-items: center; gap: 8px; }
+        .launcher-rules-banner {
+          position: relative; z-index: 2; margin: 14px 26px 0; padding: 11px 18px; border-radius: 12px;
+          background: linear-gradient(90deg, rgba(6, 182, 212, 0.14), rgba(99, 102, 241, 0.14));
+          border: 1px solid rgba(56, 189, 248, 0.35); color: #e0f2fe; font-size: 0.88rem; font-weight: 700;
+          display: flex; align-items: center; gap: 10px; backdrop-filter: blur(10px);
+        }
+        .launcher-toolbar {
+          position: relative; z-index: 2; padding: 14px 26px 8px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+        }
+        .launcher-cats { display: flex; gap: 8px; flex-wrap: wrap; }
+        .l-cat-pill {
+          background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); color: #cbd5e1;
+          padding: 8px 16px; border-radius: 999px; font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: 0.15s;
+        }
+        .l-cat-pill.active, .l-cat-pill:hover {
+          background: rgba(6, 182, 212, 0.25); border-color: #38bdf8; color: #fff;
+        }
+        .launcher-search {
+          background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.14); color: #f8fafc;
+          padding: 8px 14px; border-radius: 10px; font-size: 0.85rem; min-width: 240px; outline: none;
+        }
+        .launcher-search:focus { border-color: #38bdf8; }
+        .launcher-grid-wrap {
+          position: relative; z-index: 2; flex: 1; overflow-y: auto; padding: 12px 26px 26px;
+        }
+        .launcher-cards-grid {
+          display: grid; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 16px;
+        }
+        .launcher-card {
+          background: rgba(15, 23, 42, 0.84); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px;
+          padding: 16px; display: flex; flex-direction: column; gap: 8px; cursor: pointer;
+          transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease; backdrop-filter: blur(12px);
+        }
+        .launcher-card:hover {
+          transform: translateY(-3px); border-color: #38bdf8; box-shadow: 0 12px 26px rgba(2, 132, 199, 0.28);
+        }
+        .launcher-card.missing { opacity: 0.65; border-style: dashed; }
+        .l-card-top { display: flex; align-items: center; justify-content: space-between; }
+        .l-icon {
+          width: 48px; height: 48px; border-radius: 12px; background: rgba(30, 41, 59, 0.85);
+          display: flex; align-items: center; justify-content: center; font-size: 1.75rem;
+        }
+        .l-badge { font-size: 0.68rem; font-weight: 800; padding: 3px 8px; border-radius: 999px; }
+        .l-badge.ready { background: rgba(16, 185, 129, 0.16); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
+        .l-badge.missing { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
+        .l-name { font-size: 1.02rem; font-weight: 800; color: #f8fafc; margin-top: 2px; }
+        .l-cat { font-size: 0.72rem; color: #94a3b8; font-weight: 600; }
+        .l-play-btn {
+          margin-top: 6px; padding: 9px 12px; border-radius: 10px; border: none;
+          background: linear-gradient(135deg, #06b6d4, #2563eb); color: #fff; font-weight: 800; font-size: 0.82rem; cursor: pointer;
+        }
+        .launcher-card.missing .l-play-btn { background: #1e293b; color: #94a3b8; }
 
         /* FULL SCREEN LOCK OVERLAY */
         .lock-overlay {
@@ -1706,7 +2040,49 @@ class StationMaintenanceAgent {
         <div id="power-sub" class="power-sub">Ang kini nga computer gi-shutdown na sa operator.</div>
       </div>
 
-      <!-- NORMAL CLIENT TERMINAL VIEW -->
+      <!-- CUSTOMER SHOP GAME LAUNCHER HUB -->
+      <div id="launcher-shell" class="launcher-shell" style="display:none;">
+        <div id="launcher-wallpaper-bg" class="launcher-wallpaper-bg"></div>
+        <header class="launcher-header">
+          <div class="launcher-brand">
+            <div class="launcher-logo">🎮</div>
+            <div>
+              <div id="launcher-shop-title" class="launcher-shop-title">Artemia's Pisonet</div>
+              <div class="launcher-station-sub">
+                <span>Station: <strong id="launcher-station-pill" style="color:#38bdf8;">${this.escapeHtml(this.pcName)}</strong></span>
+                <span>• Pindota ang PLAY aron mo-abli dayon ang dula</span>
+              </div>
+            </div>
+          </div>
+          <div class="header-actions">
+            <button class="btn-minimize" id="btn-launcher-rescan" title="I-scan balik ang installed games">🔄 Rescan</button>
+            <button class="btn-minimize" id="btn-launcher-minimize" title="Minimize to Taskbar">➖ Minimize</button>
+            <button class="btn-minimize" id="btn-launcher-to-agent" title="Admin / Maintenance Console" style="border-color: rgba(56, 189, 248, 0.35);">⚙️ Agent</button>
+          </div>
+        </header>
+
+        <div id="launcher-rules-banner" class="launcher-rules-banner" style="display:none;">
+          <span>📢</span>
+          <span id="launcher-rules-text"></span>
+        </div>
+
+        <div class="launcher-toolbar">
+          <div class="launcher-cats">
+            <button type="button" class="l-cat-pill active" data-lcat="all">Tanang Apps</button>
+            <button type="button" class="l-cat-pill" data-lcat="Games">🎮 Games</button>
+            <button type="button" class="l-cat-pill" data-lcat="Browsers">🌐 Browsers &amp; Chat</button>
+            <button type="button" class="l-cat-pill" data-lcat="Tools">🛠️ Tools</button>
+          </div>
+          <input id="launcher-search-input" type="text" class="launcher-search" placeholder="🔍 Pangita og dula o app..." />
+        </div>
+
+        <div class="launcher-grid-wrap">
+          <div id="launcher-cards-grid" class="launcher-cards-grid"></div>
+        </div>
+      </div>
+
+      <!-- NORMAL CLIENT TERMINAL VIEW (MAINTENANCE AGENT) -->
+      <div id="agent-shell" class="agent-shell" style="display:flex;">
       <div class="station-header">
         <div class="station-branding">
           <div class="logo-box">AF</div>
@@ -1717,6 +2093,7 @@ class StationMaintenanceAgent {
         </div>
         <div class="header-actions">
           <div id="status-pill" class="status-pill offline">○ CONNECTING...</div>
+          <button class="btn-minimize" id="btn-open-launcher" style="display:none; background:rgba(6,182,212,0.2); border-color:#38bdf8; color:#e0f2fe;" title="Balik sa Customer Game Launcher">🎮 Game Launcher</button>
           <button class="btn-minimize" id="btn-hide-window" title="Hide to Background Tray">🙈 Hide to Background</button>
           <button class="btn-minimize" id="btn-minimize-window" title="Minimize">Minimize</button>
         </div>
@@ -1759,7 +2136,35 @@ class StationMaintenanceAgent {
           <button class="btn-action" id="btn-operator-exit" style="border-color:rgba(244,63,94,0.4); color:#fda4af;">🔐 Operator Exit / Unlock</button>
         </div>
       </div>
+      </div>
     `;
+
+    document.getElementById('btn-launcher-minimize')?.addEventListener('click', () => {
+      desktopWindow.pisonetDesktop?.minimize();
+    });
+    document.getElementById('btn-launcher-rescan')?.addEventListener('click', async () => {
+      await this.refreshLauncherScan();
+      this.showToast('🔄 Na-rescan na ang installed games ug apps!', 'info', 3);
+    });
+    document.getElementById('btn-launcher-to-agent')?.addEventListener('click', () => {
+      this.switchUiMode('agent');
+    });
+    document.getElementById('btn-open-launcher')?.addEventListener('click', () => {
+      this.switchUiMode('launcher');
+      this.refreshLauncherScan();
+    });
+    document.getElementById('launcher-search-input')?.addEventListener('input', (ev: any) => {
+      this.launcherSearch = String(ev?.target?.value || '');
+      this.renderLauncherGrid();
+    });
+    document.querySelectorAll('.l-cat-pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.l-cat-pill').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.launcherCategory = (btn.getAttribute('data-lcat') as any) || 'all';
+        this.renderLauncherGrid();
+      });
+    });
 
     document.getElementById('announcement-dismiss-btn')?.addEventListener('click', () => {
       this.dismissAnnouncement();

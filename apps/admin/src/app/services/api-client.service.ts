@@ -442,6 +442,30 @@ export class ApiClientService {
     });
   }
 
+  public async getLauncherConfig() {
+    return this.request<{ success: boolean; data: any }>('/api/v1/maintenance/launcher-config');
+  }
+
+  public async saveLauncherConfig(config: any, targetPcId: string = 'all') {
+    return this.request<{ success: boolean; data: any; message?: string }>('/api/v1/maintenance/launcher-config', {
+      method: 'PUT',
+      body: JSON.stringify({ config, targetPcId })
+    });
+  }
+
+  public async uploadLauncherWallpaper(dataUrl: string, targetPcId: string = 'all') {
+    return this.request<{ success: boolean; data?: { wallpaperUrl: string; byteSize: number; config: any }; message?: string }>('/api/v1/maintenance/launcher-wallpaper', {
+      method: 'POST',
+      body: JSON.stringify({ dataUrl, targetPcId })
+    });
+  }
+
+  public async clearLauncherWallpaper() {
+    return this.request<{ success: boolean; data: any; message?: string }>('/api/v1/maintenance/launcher-wallpaper', {
+      method: 'DELETE'
+    });
+  }
+
   public async executePowerAction(targetPcId: string = 'all', action: 'restart' | 'shutdown' | 'sleep' | 'lock' | 'unlock') {
     return this.request<{ success: boolean; message: string }>('/api/v1/maintenance/power', {
       method: 'POST',

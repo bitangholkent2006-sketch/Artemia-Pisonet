@@ -64,6 +64,16 @@ export interface PisonetDesktopApi {
   applyClientUpdate: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
   optimizeFps: () => Promise<{ success: boolean; freedRamMb: number; powerPlan: string; boostedGames: string[]; tweaksApplied: string[]; elapsedMs: number; error?: string }>;
   syncRuntime: (data: { apiBase: string; pcId: string; hardwareId?: string; macAddress?: string }) => Promise<boolean>;
+  getLauncherConfig?: () => Promise<any>;
+  saveLauncherConfigLocal?: (cfg: any) => Promise<boolean>;
+  scanLauncherApps?: () => Promise<{
+    statuses: Record<string, { installed: boolean; resolvedPath?: string | null }>;
+    discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; category: string }>;
+  }>;
+  launchGame?: (item: any) => Promise<{ success: boolean; resolvedPath?: string; error?: string }>;
+  applyWallpaper?: (wallpaperUrl: string) => Promise<{ success: boolean; localPath?: string; error?: string }>;
+  setVolumePercent?: (percent: number) => Promise<{ success: boolean; error?: string }>;
+  onLauncherRestoredIdle?: (callback: () => void) => void;
 }
 
 const api: PisonetDesktopApi = {
@@ -110,7 +120,16 @@ const api: PisonetDesktopApi = {
   sendRemoteInput: (payload) => ipcRenderer.invoke('maintenance:remote-input', payload),
   applyClientUpdate: (downloadUrl: string) => ipcRenderer.invoke('maintenance:apply-client-update', downloadUrl),
   optimizeFps: () => ipcRenderer.invoke('maintenance:fps-boost'),
-  syncRuntime: (data) => ipcRenderer.invoke('system:sync-runtime', data)
+  syncRuntime: (data) => ipcRenderer.invoke('system:sync-runtime', data),
+  getLauncherConfig: () => ipcRenderer.invoke('launcher:get-config'),
+  saveLauncherConfigLocal: (cfg) => ipcRenderer.invoke('launcher:save-config-local', cfg),
+  scanLauncherApps: () => ipcRenderer.invoke('launcher:scan-installed'),
+  launchGame: (item) => ipcRenderer.invoke('launcher:launch-item', item),
+  applyWallpaper: (wallpaperUrl) => ipcRenderer.invoke('launcher:apply-wallpaper', wallpaperUrl),
+  setVolumePercent: (percent) => ipcRenderer.invoke('system:set-volume', percent),
+  onLauncherRestoredIdle: (callback) => {
+    ipcRenderer.on('launcher:restored-after-idle', () => callback());
+  }
 };
 
 contextBridge.exposeInMainWorld('pisonetDesktop', api);

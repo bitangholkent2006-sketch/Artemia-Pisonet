@@ -376,6 +376,14 @@ export interface StationDownloadState {
                   </span>
                 </label>
 
+                <label class="checkbox-label" style="margin-top: 8px;">
+                  <input type="checkbox" [(ngModel)]="addToLauncherAfterDownload" />
+                  <span class="checkbox-text">
+                    <strong>🎮 I-apil sa Customer Game Launcher Menu</strong>
+                    <span class="subtext">Automatic mo-gawas ang tile sa Artemia Game Launcher pagkahuman og push</span>
+                  </span>
+                </label>
+
                 <div *ngIf="autoRunInstaller && !downloadUrl.startsWith('winget://')" class="form-group silent-args-group">
                   <label class="form-label">Silent Install Flags / Arguments (Para sa .exe/.msi)</label>
                   <input
@@ -1706,6 +1714,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
   downloadTargetDir: string = '';
   autoRunInstaller: boolean = true;
   createDesktopShortcut: boolean = true;
+  addToLauncherAfterDownload: boolean = false;
   silentArgs: string = '/silent /install';
   isDispatchingDownload = false;
 
@@ -2193,13 +2202,44 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
           message: `Dispatched download for '${this.downloadFilename || this.downloadUrl}' to ${this.targetMode === 'all' ? 'ALL online stations' : this.selectedPcIds.length + ' stations'}.`,
           type: 'info'
         });
+
+        if (this.addToLauncherAfterDownload) {
+          this.syncDownloadedItemToLauncher().catch(() => {});
+        }
       } else {
         this.statusNotice = res.message || 'Napakyas ang pag-dispatch sa download.';
         this.noticeType = 'error';
       }
-    } finally {
+      } finally {
       this.isDispatchingDownload = false;
     }
+  }
+
+  private async syncDownloadedItemToLauncher() {
+    const preset = this.allPresets.find((p) => p.id === this.selectedPresetId);
+    const rawName = (preset && preset.id !== 'custom')
+      ? preset.name.replace(/\s*\(.*?\)\s*/g, '').trim()
+      : (this.downloadFilename || 'New Game').replace(/\.(zip|rar|7z|exe|msi)$/i, '').replace(/[_-]*(setup|install|full|client).*$/i, '').trim();
+    if (!rawName) return;
+    const cfg = await this.adminState.getLauncherConfig();
+    if (!cfg || !Array.isArray(cfg.items)) return;
+    const exists = cfg.items.some((it: any) => String(it.name || '').toLowerCase() === rawName.toLowerCase());
+    if (exists) return;
+
+    const cleanFolder = (this.downloadFilename || rawName).replace(/\.(zip|rar|7z|exe|msi)$/i, '').replace(/[_-]*(setup|install|full|client).*$/i, '').trim() || rawName;
+    const targetPath = this.downloadTargetDir.trim()
+      ? `${this.downloadTargetDir.trim().replace(/[\\\/]+$/, '')}\\${cleanFolder}`
+      : (preset?.targetDir || `C:\\Games\\${cleanFolder}`);
+
+    cfg.items.push({
+      id: 'dl_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      name: rawName,
+      icon: preset?.icon || '🎮',
+      category: preset?.category === 'Browsers' ? 'Browsers' : (preset?.category === 'Tools' ? 'Tools' : 'Games'),
+      launchTarget: targetPath,
+      visible: true
+    });
+    await this.adminState.saveLauncherConfig(cfg, 'all');
   }
 
   async launchBatchUpdate() {

@@ -4,6 +4,7 @@ import { broadcastRealtimeEvent, dispatchClientOtaToTargets, tryGetIO } from '..
 import { getCollections } from '../database/connection';
 import { PcService } from '../services/pc.service';
 import { getLatestAsarInfo, getLatestReleaseInfo } from '../config/releases';
+import { createDefaultShopLauncherConfig, LauncherGameItem, ShopLauncherConfig } from '@pisonet/shared';
 
 export const maintenanceRoutes = new Hono();
 
@@ -458,6 +459,189 @@ maintenanceRoutes.delete('/download-presets/:id', requireStaff, async (c) => {
   const collections = getCollections();
   await collections.downloadPresets.deleteOne({ id });
   return c.json({ success: true });
+});
+
+function sanitizeLauncherConfig(raw: any, base: ShopLauncherConfig): ShopLauncherConfig {
+  const safeIdle = Number(raw?.idleTimeoutSeconds);
+  const idleTimeoutSeconds = Number.isFinite(safeIdle)
+    ? Math.max(60, Math.min(3600, Math.round(safeIdle)))
+    : base.idleTimeoutSeconds;
+
+  let resetVolumePercent: number | null = base.resetVolumePercent;
+  if (raw?.resetVolumePercent === null || raw?.resetVolumePercent === '') {
+    resetVolumePercent = null;
+  } else if (raw?.resetVolumePercent !== undefined) {
+    const v = Number(raw.resetVolumePercent);
+    resetVolumePercent = Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : base.resetVolumePercent;
+  }
+
+  let wallpaperUrl = raw?.wallpaperUrl !== undefined ? String(raw.wallpaperUrl || '').trim() : base.wallpaperUrl;
+  if (wallpaperUrl && !/^https?:\/\//i.test(wallpaperUrl)) {
+    wallpaperUrl = base.wallpaperUrl;
+  }
+
+  let items: LauncherGameItem[] = base.items;
+  if (Array.isArray(raw?.items)) {
+    items = raw.items
+      .filter((it: any) => it && String(it.name || '').trim() && String(it.launchTarget || '').trim())
+      .slice(0, 80)
+      .map((it: any, idx: number): LauncherGameItem => {
+        const rawCat = String(it.category || 'Games');
+        const category: LauncherGameItem['category'] =
+          rawCat === 'Browsers' || rawCat === 'Tools' ? rawCat : 'Games';
+        return {
+          id: String(it.id || `item_${Date.now()}_${idx}`).trim(),
+          name: String(it.name).trim().slice(0, 60),
+          icon: String(it.icon || '🎮').trim().slice(0, 8) || '🎮',
+          category,
+          launchTarget: String(it.launchTarget).trim().slice(0, 400),
+          fallbackPaths: Array.isArray(it.fallbackPaths)
+            ? it.fallbackPaths.map((p: any) => String(p || '').trim()).filter(Boolean).slice(0, 6)
+            : [],
+          args: it.args ? String(it.args).trim().slice(0, 200) : '',
+          visible: it.visible !== false
+        };
+      });
+  }
+
+  return {
+    launcherEnabled: raw?.launcherEnabled !== undefined ? Boolean(raw.launcherEnabled) : base.launcherEnabled,
+    shopName: raw?.shopName !== undefined ? (String(raw.shopName).trim().slice(0, 60) || "Artemia's Pisonet") : base.shopName,
+    bannerText: raw?.bannerText !== undefined ? String(raw.bannerText || '').trim().slice(0, 240) : base.bannerText,
+    wallpaperUrl,
+    autoRestoreOnIdle: raw?.autoRestoreOnIdle !== undefined ? Boolean(raw.autoRestoreOnIdle) : base.autoRestoreOnIdle,
+    idleTimeoutSeconds,
+    autoLogoutBrowsers: raw?.autoLogoutBrowsers !== undefined ? Boolean(raw.autoLogoutBrowsers) : base.autoLogoutBrowsers,
+    resetVolumePercent,
+    items,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function loadOrSeedLauncherConfig(): Promise<ShopLauncherConfig> {
+  const collections = getCollections();
+  const doc = await collections.systemSettings.findOne({ _id: 'shop_launcher_config' });
+  if (doc) {
+    const { _id: _, ...rest } = doc;
+    return sanitizeLauncherConfig(rest, createDefaultShopLauncherConfig());
+  }
+  const seeded = createDefaultShopLauncherConfig();
+  await collections.systemSettings.updateOne(
+    { _id: 'shop_launcher_config' },
+    { $set: seeded },
+    { upsert: true }
+  );
+  return seeded;
+}
+
+// Get Shop Game Launcher & Wallpaper Configuration (Accessible by Client Terminals & Admin)
+maintenanceRoutes.get('/launcher-config', async (c) => {
+  try {
+    const cfg = await loadOrSeedLauncherConfig();
+    return c.json({ success: true, data: cfg });
+  } catch (err: any) {
+    return c.json({ success: true, data: createDefaultShopLauncherConfig(), fallback: true, message: err?.message });
+  }
+});
+
+// Save & Push Shop Game Launcher & Hulog-Piso Auto-Reset Config
+maintenanceRoutes.put('/launcher-config', requireStaff, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const targetPcId = String(body?.targetPcId || 'all').trim() || 'all';
+  const targetPcIds = Array.isArray(body?.targetPcIds) ? body.targetPcIds : undefined;
+  const current = await loadOrSeedLauncherConfig();
+  const next = sanitizeLauncherConfig(body?.config || body, current);
+
+  const collections = getCollections();
+  await collections.systemSettings.updateOne(
+    { _id: 'shop_launcher_config' },
+    { $set: next },
+    { upsert: true }
+  );
+
+  dispatchAgentEvent('agent:launcher:config-updated', { config: next, targetPcId }, targetPcId, targetPcIds);
+
+  return c.json({
+    success: true,
+    data: next,
+    message: 'Na-save ug na-push na ang Game Launcher & Shop Theme settings sa tanang online PCs!'
+  });
+});
+
+// Upload & Push Shop Desktop Wallpaper (Stored in MongoDB so Render deploys never wipe it)
+maintenanceRoutes.post('/launcher-wallpaper', requireStaff, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const dataUrl = String(body?.dataUrl || '').trim();
+  const targetPcId = String(body?.targetPcId || 'all').trim() || 'all';
+  const match = dataUrl.match(/^data:(image\/(?:png|jpeg|jpg|webp|bmp));base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match) {
+    return c.json({ success: false, message: 'Invalid image format. Gamit og PNG o JPG file.' }, 400);
+  }
+  const mimeType = match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1].toLowerCase();
+  const base64Data = match[2];
+  const byteSize = Math.floor((base64Data.length * 3) / 4);
+  if (byteSize < 64 || byteSize > 3 * 1024 * 1024) {
+    return c.json({ success: false, message: 'Wallpaper file kinahanglan mas ubos sa 3 MB.' }, 400);
+  }
+
+  const ts = Date.now();
+  const host = c.req.header('host') || 'artemia-pisonet-backend.onrender.com';
+  const protocol = host.includes('localhost') || host.startsWith('127.') ? 'http' : 'https';
+  const publicWallpaperUrl = `${protocol}://${host}/api/v1/maintenance/wallpaper?v=${ts}`;
+
+  const collections = getCollections();
+  await collections.systemSettings.updateOne(
+    { _id: 'shop_wallpaper_asset' },
+    { $set: { mimeType, base64Data, byteSize, updatedAt: new Date().toISOString() } },
+    { upsert: true }
+  );
+
+  const current = await loadOrSeedLauncherConfig();
+  const next: ShopLauncherConfig = { ...current, wallpaperUrl: publicWallpaperUrl, updatedAt: new Date().toISOString() };
+  await collections.systemSettings.updateOne(
+    { _id: 'shop_launcher_config' },
+    { $set: next },
+    { upsert: true }
+  );
+
+  dispatchAgentEvent('agent:launcher:config-updated', { config: next, targetPcId }, targetPcId);
+  dispatchAgentEvent('agent:wallpaper:apply', { wallpaperUrl: publicWallpaperUrl, targetPcId }, targetPcId);
+
+  return c.json({
+    success: true,
+    data: { wallpaperUrl: publicWallpaperUrl, byteSize, config: next },
+    message: 'Na-upload ug na-push na ang Desktop Wallpaper sa tanang online PCs!'
+  });
+});
+
+maintenanceRoutes.delete('/launcher-wallpaper', requireStaff, async (c) => {
+  const collections = getCollections();
+  await collections.systemSettings.deleteOne({ _id: 'shop_wallpaper_asset' });
+  const current = await loadOrSeedLauncherConfig();
+  const next: ShopLauncherConfig = { ...current, wallpaperUrl: '', updatedAt: new Date().toISOString() };
+  await collections.systemSettings.updateOne(
+    { _id: 'shop_launcher_config' },
+    { $set: next },
+    { upsert: true }
+  );
+  dispatchAgentEvent('agent:launcher:config-updated', { config: next, targetPcId: 'all' }, 'all');
+  return c.json({ success: true, data: next, message: 'Gitangtang ang custom wallpaper.' });
+});
+
+maintenanceRoutes.get('/wallpaper', async (c) => {
+  try {
+    const collections = getCollections();
+    const doc = await collections.systemSettings.findOne({ _id: 'shop_wallpaper_asset' });
+    if (!doc?.base64Data) {
+      return c.text('No custom shop wallpaper configured.', 404);
+    }
+    const buf = Buffer.from(String(doc.base64Data), 'base64');
+    c.header('Content-Type', doc.mimeType || 'image/jpeg');
+    c.header('Cache-Control', 'no-store');
+    return c.body(buf);
+  } catch {
+    return c.text('Wallpaper lookup failed.', 500);
+  }
 });
 
 // Remote Power Actions: Restart, Shutdown, Sleep, Maintenance Lock

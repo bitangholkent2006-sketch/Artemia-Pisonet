@@ -99,3 +99,146 @@ export interface RemoteDownloadResult {
   timestamp: string;
 }
 
+export type LauncherCategory = 'Games' | 'Browsers' | 'Tools';
+
+export interface LauncherGameItem {
+  id: string;
+  name: string;
+  icon: string;
+  category: LauncherCategory;
+  launchTarget: string;
+  fallbackPaths?: string[];
+  args?: string;
+  visible: boolean;
+}
+
+export interface ShopLauncherConfig {
+  launcherEnabled: boolean;
+  shopName: string;
+  bannerText: string;
+  wallpaperUrl: string;
+  autoRestoreOnIdle: boolean;
+  idleTimeoutSeconds: number;
+  autoLogoutBrowsers: boolean;
+  resetVolumePercent: number | null;
+  items: LauncherGameItem[];
+  updatedAt: string;
+}
+
+export const DEFAULT_SHOP_LAUNCHER_ITEMS: LauncherGameItem[] = [
+  {
+    id: 'roslegacy',
+    name: 'ROS Legacy',
+    icon: '🎯',
+    category: 'Games',
+    launchTarget: 'C:\\Games\\ROS Legacy',
+    fallbackPaths: ['D:\\Games\\ROS Legacy', 'ROSLegacy.exe', 'ros.exe'],
+    visible: true
+  },
+  {
+    id: 'valorant',
+    name: 'Valorant',
+    icon: '🔫',
+    category: 'Games',
+    launchTarget: 'C:\\Riot Games\\Riot Client\\RiotClientServices.exe',
+    fallbackPaths: ['D:\\Riot Games\\Riot Client\\RiotClientServices.exe'],
+    args: '--launch-product=valorant --launch-patchline=live',
+    visible: true
+  },
+  {
+    id: 'roblox',
+    name: 'Roblox',
+    icon: '🧱',
+    category: 'Games',
+    launchTarget: 'roblox-player:',
+    fallbackPaths: ['%LOCALAPPDATA%\\Roblox\\Versions', 'Roblox Player.lnk'],
+    visible: true
+  },
+  {
+    id: 'steam',
+    name: 'Steam',
+    icon: '🎮',
+    category: 'Games',
+    launchTarget: 'C:\\Program Files (x86)\\Steam\\steam.exe',
+    fallbackPaths: ['D:\\Steam\\steam.exe', 'C:\\Steam\\steam.exe'],
+    visible: true
+  },
+  {
+    id: 'epic',
+    name: 'Epic Games',
+    icon: '⚡',
+    category: 'Games',
+    launchTarget: 'C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win32\\EpicGamesLauncher.exe',
+    fallbackPaths: ['C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe'],
+    visible: true
+  },
+  {
+    id: 'crossfire',
+    name: 'CrossFire PH',
+    icon: '💥',
+    category: 'Games',
+    launchTarget: 'C:\\Games\\CrossFire PH',
+    fallbackPaths: ['D:\\Games\\CrossFire PH', 'C:\\Program Files (x86)\\CrossFire'],
+    visible: true
+  },
+  {
+    id: 'chrome',
+    name: 'Google Chrome',
+    icon: '🌐',
+    category: 'Browsers',
+    launchTarget: 'chrome.exe',
+    fallbackPaths: [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+    ],
+    visible: true
+  },
+  {
+    id: 'msedge',
+    name: 'Microsoft Edge',
+    icon: '🧭',
+    category: 'Browsers',
+    launchTarget: 'msedge.exe',
+    fallbackPaths: ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'],
+    visible: true
+  },
+  {
+    id: 'discord',
+    name: 'Discord',
+    icon: '💬',
+    category: 'Browsers',
+    launchTarget: '%LOCALAPPDATA%\\Discord\\Update.exe',
+    args: '--processStart Discord.exe',
+    fallbackPaths: ['Discord.lnk'],
+    visible: true
+  },
+  {
+    id: 'vlc',
+    name: 'VLC Media Player',
+    icon: '🎬',
+    category: 'Tools',
+    launchTarget: 'C:\\Program Files\\VideoLAN\\VLC\\vlc.exe',
+    fallbackPaths: ['C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe'],
+    visible: true
+  }
+];
+
+export function createDefaultShopLauncherConfig(): ShopLauncherConfig {
+  return {
+    launcherEnabled: true,
+    shopName: "Artemia's Pisonet",
+    bannerText: 'Palihug i-logout ang Facebook / Gmail / GCash human gamit • Bawal Cheat Engine & Torrent',
+    wallpaperUrl: '',
+    autoRestoreOnIdle: true,
+    idleTimeoutSeconds: 180,
+    autoLogoutBrowsers: true,
+    resetVolumePercent: 60,
+    items: DEFAULT_SHOP_LAUNCHER_ITEMS.map((item) => ({
+      ...item,
+      fallbackPaths: item.fallbackPaths ? [...item.fallbackPaths] : []
+    })),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+

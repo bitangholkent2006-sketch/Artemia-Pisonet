@@ -571,6 +571,25 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.to('staff').emit('maintenance:winget:search:res', result);
     });
 
+    // Live Game Launcher Scan & Wallpaper Application Relays
+    authSocket.on('maintenance:launcher:scan:req', (payload: { reqId?: string; pcId?: string }) => {
+      if (payload?.pcId) {
+        emitToPcTarget('agent:launcher:scan:req', payload, payload.pcId);
+      }
+    });
+
+    authSocket.on('agent:launcher:scan:res', (result: any) => {
+      io?.to('staff').emit('maintenance:launcher:scan:res', result);
+    });
+
+    authSocket.on('maintenance:wallpaper:apply', (payload: { wallpaperUrl?: string; targetPcId?: string }) => {
+      emitToPcTarget('agent:wallpaper:apply', payload, payload?.targetPcId || 'all');
+    });
+
+    authSocket.on('agent:launcher:action:res', (result: any) => {
+      io?.to('staff').emit('maintenance:launcher:action:res', result);
+    });
+
     authSocket.on('maintenance:power:run', (payload: any) => {
       emitToPcTarget('agent:power:run', payload, payload.targetPcId || payload.pcId);
     });

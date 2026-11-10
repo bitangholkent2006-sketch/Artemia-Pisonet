@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage, screen, powerMonitor, powerSaveBlocker } from 'electron';
+import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage, screen, powerMonitor, powerSaveBlocker, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -43,6 +43,84 @@ let isOtaRestarting = false;
 let isUpdatingClient = false;
 let isStationLocked = false;
 let isAnnouncementActive = false;
+
+const artemiaStateDir = path.join(os.homedir(), '.artemia');
+const launcherConfigFilePath = path.join(artemiaStateDir, 'launcher_config.json');
+const wallpaperMetaFilePath = path.join(artemiaStateDir, 'applied_wallpaper.json');
+
+interface LocalLauncherItem {
+  id: string;
+  name: string;
+  icon: string;
+  category: 'Games' | 'Browsers' | 'Tools';
+  launchTarget: string;
+  fallbackPaths?: string[];
+  args?: string;
+  visible: boolean;
+}
+
+interface LocalLauncherConfig {
+  launcherEnabled: boolean;
+  shopName: string;
+  bannerText: string;
+  wallpaperUrl: string;
+  autoRestoreOnIdle: boolean;
+  idleTimeoutSeconds: number;
+  autoLogoutBrowsers: boolean;
+  resetVolumePercent: number | null;
+  items: LocalLauncherItem[];
+  updatedAt: string;
+}
+
+const DEFAULT_LOCAL_LAUNCHER_CONFIG: LocalLauncherConfig = {
+  launcherEnabled: true,
+  shopName: "Artemia's Pisonet",
+  bannerText: 'Palihug i-logout ang Facebook / Gmail / GCash human gamit • Bawal Cheat Engine & Torrent',
+  wallpaperUrl: '',
+  autoRestoreOnIdle: true,
+  idleTimeoutSeconds: 180,
+  autoLogoutBrowsers: true,
+  resetVolumePercent: 60,
+  items: [
+    { id: 'roslegacy', name: 'ROS Legacy', icon: '🎯', category: 'Games', launchTarget: 'C:\\Games\\ROS Legacy', fallbackPaths: ['D:\\Games\\ROS Legacy', 'ROSLegacy.exe', 'ros.exe'], visible: true },
+    { id: 'valorant', name: 'Valorant', icon: '🔫', category: 'Games', launchTarget: 'C:\\Riot Games\\Riot Client\\RiotClientServices.exe', fallbackPaths: ['D:\\Riot Games\\Riot Client\\RiotClientServices.exe'], args: '--launch-product=valorant --launch-patchline=live', visible: true },
+    { id: 'roblox', name: 'Roblox', icon: '🧱', category: 'Games', launchTarget: 'roblox-player:', fallbackPaths: ['%LOCALAPPDATA%\\Roblox\\Versions', 'Roblox Player.lnk'], visible: true },
+    { id: 'steam', name: 'Steam', icon: '🎮', category: 'Games', launchTarget: 'C:\\Program Files (x86)\\Steam\\steam.exe', fallbackPaths: ['D:\\Steam\\steam.exe', 'C:\\Steam\\steam.exe'], visible: true },
+    { id: 'epic', name: 'Epic Games', icon: '⚡', category: 'Games', launchTarget: 'C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win32\\EpicGamesLauncher.exe', fallbackPaths: ['C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe'], visible: true },
+    { id: 'crossfire', name: 'CrossFire PH', icon: '💥', category: 'Games', launchTarget: 'C:\\Games\\CrossFire PH', fallbackPaths: ['D:\\Games\\CrossFire PH', 'C:\\Program Files (x86)\\CrossFire'], visible: true },
+    { id: 'chrome', name: 'Google Chrome', icon: '🌐', category: 'Browsers', launchTarget: 'chrome.exe', fallbackPaths: ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'], visible: true },
+    { id: 'msedge', name: 'Microsoft Edge', icon: '🧭', category: 'Browsers', launchTarget: 'msedge.exe', fallbackPaths: ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'], visible: true },
+    { id: 'discord', name: 'Discord', icon: '💬', category: 'Browsers', launchTarget: '%LOCALAPPDATA%\\Discord\\Update.exe', args: '--processStart Discord.exe', fallbackPaths: ['Discord.lnk'], visible: true },
+    { id: 'vlc', name: 'VLC Media Player', icon: '🎬', category: 'Tools', launchTarget: 'C:\\Program Files\\VideoLAN\\VLC\\vlc.exe', fallbackPaths: ['C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe'], visible: true }
+  ],
+  updatedAt: new Date().toISOString()
+};
+
+let cachedLauncherConfig: LocalLauncherConfig = (() => {
+  try {
+    if (fs.existsSync(launcherConfigFilePath)) {
+      const raw = JSON.parse(fs.readFileSync(launcherConfigFilePath, 'utf8'));
+      if (raw && Array.isArray(raw.items)) {
+        return { ...DEFAULT_LOCAL_LAUNCHER_CONFIG, ...raw };
+      }
+    }
+  } catch {}
+  return { ...DEFAULT_LOCAL_LAUNCHER_CONFIG };
+})();
+
+function saveLocalLauncherConfigToDisk(cfg: LocalLauncherConfig): LocalLauncherConfig {
+  cachedLauncherConfig = {
+    ...DEFAULT_LOCAL_LAUNCHER_CONFIG,
+    ...cfg,
+    idleTimeoutSeconds: Math.max(60, Math.min(3600, Number(cfg?.idleTimeoutSeconds) || 180)),
+    items: Array.isArray(cfg?.items) ? cfg.items : DEFAULT_LOCAL_LAUNCHER_CONFIG.items
+  };
+  try {
+    if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+    fs.writeFileSync(launcherConfigFilePath, JSON.stringify(cachedLauncherConfig, null, 2), 'utf8');
+  } catch {}
+  return cachedLauncherConfig;
+}
 
 let runtimeStationInfo = {
   apiBase: 'https://artemia-pisonet-backend.onrender.com',
@@ -295,8 +373,18 @@ function createTray() {
           }
         },
         {
+          label: '🎮 Open Game Launcher',
+          click: () => {
+            if (mainWindow?.isMinimized()) mainWindow.restore();
+            mainWindow?.show();
+            mainWindow?.focus();
+            mainWindow?.webContents.send('launcher:restored-after-idle');
+          }
+        },
+        {
           label: 'Show Maintenance Console',
           click: () => {
+            if (mainWindow?.isMinimized()) mainWindow.restore();
             mainWindow?.show();
             mainWindow?.focus();
           }
@@ -340,12 +428,15 @@ function createTray() {
 }
 
 function createWindow() {
+  const showLauncher = cachedLauncherConfig.launcherEnabled !== false;
   mainWindow = new BrowserWindow({
-    width: 980,
-    height: 640,
+    width: showLauncher ? 1100 : 980,
+    height: showLauncher ? 680 : 640,
     minWidth: 480,
     minHeight: 360,
-    title: "Artemia Fleet - Station Agent & Maintenance Daemon",
+    title: showLauncher
+      ? `${cachedLauncherConfig.shopName || "Artemia's Pisonet"} — Game Launcher`
+      : 'Artemia Fleet - Station Agent & Maintenance Daemon',
     frame: true, // Native window frame with standard title bar & minimize/maximize/close
     transparent: false,
     backgroundColor: '#07090e',
@@ -390,12 +481,14 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     if (mainWindow) {
       mainWindow.show();
-      // Quick startup flick: show briefly for 1.2s then hide silently to background/tray
-      setTimeout(() => {
-        if (mainWindow && !isStationLocked && !isAnnouncementActive) {
-          mainWindow.hide();
-        }
-      }, 1200);
+      // Keep Game Launcher visible when enabled; otherwise silently hide to tray after 1.2s
+      if (!cachedLauncherConfig.launcherEnabled) {
+        setTimeout(() => {
+          if (mainWindow && !isStationLocked && !isAnnouncementActive && !cachedLauncherConfig.launcherEnabled) {
+            mainWindow.hide();
+          }
+        }, 1200);
+      }
     }
   });
 
@@ -569,7 +662,6 @@ namespace ArtemiaPisonet
     }
 }`;
 
-const artemiaStateDir = path.join(os.homedir(), '.artemia');
 const authorizedExitFlagPath = path.join(artemiaStateDir, 'authorized_exit.flag');
 const otaUpdatingFlagPath = path.join(artemiaStateDir, 'ota_updating.flag');
 const kioskLockExePath = path.join(artemiaStateDir, 'ArtemiaKioskLock_v2.exe');
@@ -886,7 +978,7 @@ ipcMain.handle('window:set-lock-mode', (_event, locked: boolean) => {
       try { mainWindow.setClosable(true); } catch {}
       mainWindow.setFullScreen(false);
       mainWindow.setAlwaysOnTop(false);
-      if (!isAnnouncementActive) {
+      if (!isAnnouncementActive && !cachedLauncherConfig.launcherEnabled) {
         mainWindow.hide();
       }
     }
@@ -900,11 +992,13 @@ ipcMain.handle('window:set-announcement-mode', (_event, active: boolean) => {
     if (active) {
       presentOverlayWindow();
     } else {
-      // If not locked, return silently to hidden background!
+      // Return to background only when Game Launcher is disabled; otherwise keep Launcher accessible
       if (!isStationLocked) {
         mainWindow.setFullScreen(false);
         mainWindow.setAlwaysOnTop(false);
-        mainWindow.hide();
+        if (!cachedLauncherConfig.launcherEnabled) {
+          mainWindow.hide();
+        }
       }
     }
   }
@@ -1171,12 +1265,13 @@ function performCleanSlate(reason: 'startup' | 'idle' | 'manual' | 'admin' = 'ma
 
   return new Promise((resolve) => {
     const exeDir = path.dirname(process.execPath).replace(/'/g, "''");
-    const killBrowsers = reason !== 'startup';
+    const shouldClearBrowsers = cachedLauncherConfig.autoLogoutBrowsers !== false || reason === 'admin' || reason === 'manual';
+    const killBrowsers = reason !== 'startup' && shouldClearBrowsers;
     const psScript = `
       $totalBytes = 0
       $cleanedItems = [System.Collections.Generic.List[string]]::new()
 
-      # 1. Close web browsers to release locks ONLY on idle/manual/admin clean (never kill operator browser at startup)
+      # 1. Close web browsers to release locks ONLY when autoLogoutBrowsers is active on idle/manual/admin clean
       ${killBrowsers ? `try {
         Stop-Process -Name chrome, msedge, brave, firefox, opera, iexplore -Force -ErrorAction SilentlyContinue
       } catch {}` : ''}
@@ -1198,6 +1293,7 @@ function performCleanSlate(reason: 'startup' | 'idle' | 'manual' | 'admin' = 'ma
       }
 
       # 3. Clean Browser Data (Sign out Facebook, Google, YouTube, TikTok, Steam Web, delete history)
+      ${shouldClearBrowsers ? `
       # Google Chrome
       $chromeData = Join-Path $env:LOCALAPPDATA 'Google\\Chrome\\User Data'
       if (Test-Path $chromeData) {
@@ -1270,10 +1366,11 @@ function performCleanSlate(reason: 'startup' | 'idle' | 'manual' | 'admin' = 'ma
         }
         $cleanedItems.Add('Firefox')
       }
+      ` : ''}
 
       # 4. Clean Loose Desktop Files (STRICTLY PRESERVE SHORTCUTS .lnk, .url, desktop.ini, and folders!)
-      $desktop = Join-Path $env:USERPROFILE 'Desktop'
-      if (Test-Path $desktop) {
+      $desktopDirs = @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:USERPROFILE 'Desktop')) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+      foreach ($desktop in $desktopDirs) {
         Get-ChildItem -Path $desktop -File -Force -ErrorAction SilentlyContinue | ForEach-Object {
           $ext = $_.Extension.ToLower()
           if ($ext -notin @('.lnk', '.url') -and $_.Name -ne 'desktop.ini') {
@@ -1283,8 +1380,8 @@ function performCleanSlate(reason: 'startup' | 'idle' | 'manual' | 'admin' = 'ma
             } catch {}
           }
         }
-        $cleanedItems.Add('Desktop (Preserved all shortcuts & games)')
       }
+      $cleanedItems.Add('Desktop (Preserved all shortcuts & games)')
 
       # 5. Clean Temporary Files (%TEMP%, SystemRoot\\Temp, CrashDumps)
       $tempPaths = @($env:TEMP, "$env:SystemRoot\\Temp", "$env:LOCALAPPDATA\\CrashDumps")
@@ -2875,6 +2972,472 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
   }
 });
 
+// 11B. Shop Game Launcher, Native Wallpaper & CoreAudio Volume Reset
+function expandWinEnvVars(rawPath: string): string {
+  if (!rawPath) return '';
+  return rawPath
+    .replace(/%USERPROFILE%/gi, os.homedir())
+    .replace(/%LOCALAPPDATA%/gi, process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'))
+    .replace(/%APPDATA%/gi, process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'))
+    .replace(/%PROGRAMFILES\(X86\)%/gi, process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)')
+    .replace(/%PROGRAMFILES%/gi, process.env.ProgramFiles || 'C:\\Program Files');
+}
+
+function findMainExeInDirectory(dir: string, depth = 0): string | null {
+  try {
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return null;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    let bestExe: { path: string; size: number } | null = null;
+    for (const ent of entries) {
+      if (ent.isFile() && ent.name.toLowerCase().endsWith('.exe')) {
+        if (/unins|crash|unitycrash|redist|vc_redist|dxsetup|update|helper|report/i.test(ent.name)) continue;
+        const full = path.join(dir, ent.name);
+        try {
+          const sz = fs.statSync(full).size;
+          if (!bestExe || sz > bestExe.size) bestExe = { path: full, size: sz };
+        } catch {}
+      }
+    }
+    if (bestExe) return bestExe.path;
+    if (depth < 2) {
+      for (const ent of entries) {
+        if (ent.isDirectory() && !ent.name.startsWith('.')) {
+          const nested = findMainExeInDirectory(path.join(dir, ent.name), depth + 1);
+          if (nested) return nested;
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function collectDesktopAndGameLinks(): {
+  shortcutByName: Map<string, string>;
+  discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; category: string }>;
+} {
+  const shortcutByName = new Map<string, string>();
+  const discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; category: string }> = [];
+  const seenNames = new Set<string>();
+
+  const desktopDirs = Array.from(new Set([
+    path.join(os.homedir(), 'OneDrive', 'Desktop'),
+    path.join(os.homedir(), 'Desktop'),
+    'C:\\Users\\Public\\Desktop'
+  ]));
+
+  for (const dir of desktopDirs) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (!ent.isFile()) continue;
+        const lower = ent.name.toLowerCase();
+        if (!lower.endsWith('.lnk') && !lower.endsWith('.url')) continue;
+        if (/artemia|edge|recycle/i.test(lower)) continue;
+        const baseName = ent.name.replace(/\.(lnk|url)$/i, '').trim();
+        const key = baseName.toLowerCase();
+        const full = path.join(dir, ent.name);
+        if (!shortcutByName.has(key)) shortcutByName.set(key, full);
+        if (!seenNames.has(key)) {
+          seenNames.add(key);
+          const isBrowser = /chrome|brave|firefox|opera|discord/i.test(key);
+          discoveredApps.push({
+            id: 'scan_' + key.replace(/[^a-z0-9]+/g, '_'),
+            name: baseName,
+            launchTarget: full,
+            icon: isBrowser ? '🌐' : '🎮',
+            category: isBrowser ? 'Browsers' : 'Games'
+          });
+        }
+      }
+    } catch {}
+  }
+
+  for (const gameRoot of ['C:\\Games', 'D:\\Games']) {
+    try {
+      if (!fs.existsSync(gameRoot)) continue;
+      for (const ent of fs.readdirSync(gameRoot, { withFileTypes: true })) {
+        if (!ent.isDirectory()) continue;
+        const exe = findMainExeInDirectory(path.join(gameRoot, ent.name), 0);
+        if (!exe) continue;
+        const key = ent.name.toLowerCase().trim();
+        if (!shortcutByName.has(key)) shortcutByName.set(key, exe);
+        if (!seenNames.has(key)) {
+          seenNames.add(key);
+          discoveredApps.push({
+            id: 'scan_' + key.replace(/[^a-z0-9]+/g, '_'),
+            name: ent.name,
+            launchTarget: exe,
+            icon: '🎮',
+            category: 'Games'
+          });
+        }
+      }
+    } catch {}
+  }
+
+  return { shortcutByName, discoveredApps };
+}
+
+function resolveLauncherItemTarget(
+  item: LocalLauncherItem,
+  shortcutByName: Map<string, string>
+): { installed: boolean; resolvedPath: string | null; kind: 'protocol' | 'file' } {
+  const candidates = [item.launchTarget, ...(item.fallbackPaths || [])].filter(Boolean);
+  for (const raw of candidates) {
+    if (/^(https?|steam|com\.epicgames\.launcher|roblox-player|ms-windows-store):/i.test(raw)) {
+      if (raw.toLowerCase().startsWith('roblox-player:')) {
+        const versionsDir = expandWinEnvVars('%LOCALAPPDATA%\\Roblox\\Versions');
+        const hasRobloxDir = fs.existsSync(versionsDir) || shortcutByName.has('roblox player');
+        if (!hasRobloxDir) continue;
+      }
+      return { installed: true, resolvedPath: raw, kind: 'protocol' };
+    }
+    const expanded = expandWinEnvVars(raw);
+    try {
+      if (fs.existsSync(expanded)) {
+        const st = fs.statSync(expanded);
+        if (st.isFile()) return { installed: true, resolvedPath: expanded, kind: 'file' };
+        if (st.isDirectory()) {
+          const found = findMainExeInDirectory(expanded, 0);
+          if (found) return { installed: true, resolvedPath: found, kind: 'file' };
+        }
+      }
+    } catch {}
+
+    // Also inspect known desktop shortcut file name e.g. 'Discord.lnk' or base name
+    const cleanKey = path.basename(expanded).replace(/\.(lnk|url|exe)$/i, '').toLowerCase();
+    if (shortcutByName.has(cleanKey)) {
+      return { installed: true, resolvedPath: shortcutByName.get(cleanKey)!, kind: 'file' };
+    }
+  }
+
+  // Fallback by item display name on Desktop / C:\Games
+  const itemKey = String(item.name || '').toLowerCase().trim();
+  if (itemKey && shortcutByName.has(itemKey)) {
+    return { installed: true, resolvedPath: shortcutByName.get(itemKey)!, kind: 'file' };
+  }
+  for (const [k, v] of shortcutByName.entries()) {
+    if (itemKey.length >= 3 && (k.includes(itemKey) || itemKey.includes(k))) {
+      return { installed: true, resolvedPath: v, kind: 'file' };
+    }
+  }
+
+  // Common bare executables (chrome.exe, msedge.exe)
+  const targetLower = String(item.launchTarget || '').toLowerCase();
+  if (targetLower === 'chrome.exe') {
+    for (const p of [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      expandWinEnvVars('%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe')
+    ]) {
+      if (fs.existsSync(p)) return { installed: true, resolvedPath: p, kind: 'file' };
+    }
+  }
+  if (targetLower === 'msedge.exe') {
+    for (const p of [
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
+    ]) {
+      if (fs.existsSync(p)) return { installed: true, resolvedPath: p, kind: 'file' };
+    }
+  }
+
+  return { installed: false, resolvedPath: null, kind: 'file' };
+}
+
+function scanAllLauncherApps() {
+  const { shortcutByName, discoveredApps } = collectDesktopAndGameLinks();
+  const statuses: Record<string, { installed: boolean; resolvedPath: string | null }> = {};
+  for (const item of cachedLauncherConfig.items || []) {
+    const res = resolveLauncherItemTarget(item, shortcutByName);
+    statuses[item.id] = { installed: res.installed, resolvedPath: res.resolvedPath };
+  }
+  return { statuses, discoveredApps };
+}
+
+ipcMain.handle('launcher:get-config', () => {
+  return cachedLauncherConfig;
+});
+
+ipcMain.handle('launcher:save-config-local', (_event, cfg: LocalLauncherConfig) => {
+  const prevEnabled = cachedLauncherConfig.launcherEnabled;
+  const saved = saveLocalLauncherConfigToDisk(cfg);
+  if (mainWindow) {
+    mainWindow.setTitle(
+      saved.launcherEnabled
+        ? `${saved.shopName || "Artemia's Pisonet"} — Game Launcher`
+        : 'Artemia Fleet - Station Agent & Maintenance Daemon'
+    );
+    if (!prevEnabled && saved.launcherEnabled && !isStationLocked) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    } else if (prevEnabled && !saved.launcherEnabled && !isStationLocked && !isAnnouncementActive) {
+      mainWindow.hide();
+    }
+  }
+  return true;
+});
+
+ipcMain.handle('launcher:scan-installed', () => {
+  return scanAllLauncherApps();
+});
+
+ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) => {
+  try {
+    const { shortcutByName } = collectDesktopAndGameLinks();
+    const resolved = resolveLauncherItemTarget(item, shortcutByName);
+    if (!resolved.installed || !resolved.resolvedPath) {
+      return { success: false, error: `${item?.name || 'App'} wala pa ma-install ani nga PC.` };
+    }
+    const target = resolved.resolvedPath;
+    if (resolved.kind === 'protocol') {
+      await shell.openExternal(target);
+    } else if (/\.(lnk|url)$/i.test(target)) {
+      const errMsg = await shell.openPath(target);
+      if (errMsg) return { success: false, error: errMsg };
+    } else {
+      const argParts = (item?.args || '').trim() ? item.args!.trim().split(/\s+/) : [];
+      const child = spawn(target, argParts, {
+        cwd: path.dirname(target),
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false
+      });
+      child.unref();
+    }
+
+    if (mainWindow && !isStationLocked) {
+      setTimeout(() => {
+        try { mainWindow?.minimize(); } catch {}
+      }, 350);
+    }
+    return { success: true, resolvedPath: target };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Napakyas ang pag-abli sa app.' };
+  }
+});
+
+async function applyDesktopWallpaper(wallpaperUrl: string): Promise<{ success: boolean; localPath?: string; error?: string }> {
+  if (process.platform !== 'win32') return { success: false, error: 'Windows only' };
+  const url = String(wallpaperUrl || '').trim();
+  if (!url) return { success: true };
+
+  try {
+    if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+    let imgBuf: Buffer;
+    let ext = '.jpg';
+
+    if (url.startsWith('data:image/')) {
+      const m = url.match(/^data:image\/(png|jpeg|jpg|bmp|webp);base64,([A-Za-z0-9+/=]+)$/i);
+      if (!m) return { success: false, error: 'Invalid wallpaper data URI' };
+      ext = m[1].toLowerCase() === 'png' ? '.png' : m[1].toLowerCase() === 'bmp' ? '.bmp' : '.jpg';
+      imgBuf = Buffer.from(m[2], 'base64');
+    } else {
+      imgBuf = await new Promise<Buffer>((resolve, reject) => {
+        const fetchImg = (u: string, hops = 0) => {
+          if (hops > 5) return reject(new Error('Too many redirects'));
+          const mod = u.startsWith('https:') ? https : http;
+          const req = mod.get(u, { timeout: 25000, headers: { 'User-Agent': 'Artemia-Fleet-Agent/1.0' } }, (res) => {
+            if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+              res.resume();
+              return fetchImg(new URL(res.headers.location, u).toString(), hops + 1);
+            }
+            if (res.statusCode !== 200) {
+              res.resume();
+              return reject(new Error(`HTTP ${res.statusCode}`));
+            }
+            const ct = String(res.headers['content-type'] || '').toLowerCase();
+            if (ct.includes('png')) ext = '.png';
+            else if (ct.includes('bmp')) ext = '.bmp';
+            else if (ct.includes('webp')) ext = '.webp';
+            const chunks: Buffer[] = [];
+            res.on('data', (c: Buffer) => chunks.push(c));
+            res.on('end', () => resolve(Buffer.concat(chunks)));
+            res.on('error', reject);
+          });
+          req.on('error', reject);
+          req.on('timeout', () => {
+            try { req.destroy(); } catch {}
+            reject(new Error('Wallpaper download timed out'));
+          });
+        };
+        fetchImg(url);
+      });
+    }
+
+    if (!imgBuf || imgBuf.length < 64) {
+      return { success: false, error: 'Downloaded wallpaper is empty.' };
+    }
+
+    const rawPath = path.join(artemiaStateDir, `shop_wallpaper_raw${ext}`);
+    const bmpPath = path.join(artemiaStateDir, 'shop_wallpaper.bmp');
+    fs.writeFileSync(rawPath, imgBuf);
+
+    // Convert to clean Windows BMP (100% native SystemParametersInfo compatibility) & apply
+    const ps = `
+      Add-Type -AssemblyName System.Drawing
+      Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class ArtemiaWallpaper {
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  public static extern bool SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+}
+"@
+      $src = '${rawPath.replace(/'/g, "''")}'
+      $dst = '${bmpPath.replace(/'/g, "''")}'
+      try {
+        $img = [System.Drawing.Image]::FromFile($src)
+        $img.Save($dst, [System.Drawing.Imaging.ImageFormat]::Bmp)
+        $img.Dispose()
+      } catch {
+        Copy-Item -LiteralPath $src -Destination $dst -Force
+      }
+      Set-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name WallpaperStyle -Value '10' -ErrorAction SilentlyContinue
+      Set-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name TileWallpaper -Value '0' -ErrorAction SilentlyContinue
+      $ok = [ArtemiaWallpaper]::SystemParametersInfo(20, 0, $dst, 3)
+      Write-Output $ok
+    `;
+
+    await new Promise<void>((resolve, reject) => {
+      execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { timeout: 20000, windowsHide: true }, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    try { fs.writeFileSync(wallpaperMetaFilePath, JSON.stringify({ url, localPath: bmpPath, appliedAt: new Date().toISOString() }), 'utf8'); } catch {}
+    logToFile(`[Wallpaper] Applied desktop wallpaper from ${url.slice(0, 80)}`);
+    return { success: true, localPath: bmpPath };
+  } catch (err: any) {
+    logToFile('[Wallpaper] Error: ' + (err?.message || String(err)));
+    return { success: false, error: err?.message || 'Napakyas pag-apply sa wallpaper.' };
+  }
+}
+
+ipcMain.handle('launcher:apply-wallpaper', async (_event, wallpaperUrl: string) => {
+  return applyDesktopWallpaper(wallpaperUrl);
+});
+
+const VOL_CTL_CS_SOURCE = `using System;
+using System.Runtime.InteropServices;
+
+namespace ArtemiaVol {
+    [ComImport]
+    [Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+    internal class MMDeviceEnumerator {}
+
+    [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IMMDeviceEnumerator {
+        int EnumAudioEndpoints(int dataFlow, int dwStateMask, out IntPtr ppDevices);
+        int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppEndpoint);
+    }
+
+    [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IMMDevice {
+        int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+    }
+
+    [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IAudioEndpointVolume {
+        int RegisterControlChangeNotify(IntPtr pNotify);
+        int UnregisterControlChangeNotify(IntPtr pNotify);
+        int GetChannelCount(out uint pnChannelCount);
+        int SetMasterVolumeLevel(float fLevelDB, ref Guid pguidEventContext);
+        int SetMasterVolumeLevelScalar(float fLevel, ref Guid pguidEventContext);
+        int GetMasterVolumeLevel(out float pfLevelDB);
+        int GetMasterVolumeLevelScalar(out float pfLevel);
+        int SetChannelVolumeLevel(uint nChannel, float fLevelDB, ref Guid pguidEventContext);
+        int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, ref Guid pguidEventContext);
+        int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
+        int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
+        int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid pguidEventContext);
+        int GetMute(out bool pbMute);
+    }
+
+    public class Program {
+        [STAThread]
+        public static int Main(string[] args) {
+            try {
+                var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
+                IMMDevice dev;
+                int hr = enumerator.GetDefaultAudioEndpoint(0, 1, out dev);
+                if (hr != 0 || dev == null) enumerator.GetDefaultAudioEndpoint(0, 0, out dev);
+                if (dev == null) return 2;
+                Guid iid = typeof(IAudioEndpointVolume).GUID;
+                object volObj;
+                dev.Activate(ref iid, 23, IntPtr.Zero, out volObj);
+                var vol = (IAudioEndpointVolume)volObj;
+                if (args.Length > 0 && args[0] == "--get") {
+                    float cur;
+                    vol.GetMasterVolumeLevelScalar(out cur);
+                    Console.WriteLine((int)Math.Round(cur * 100f));
+                    return 0;
+                }
+                float target = 60f;
+                if (args.Length > 0) float.TryParse(args[0], out target);
+                if (target < 0f) target = 0f;
+                if (target > 100f) target = 100f;
+                Guid ctx = Guid.Empty;
+                vol.SetMute(false, ref ctx);
+                vol.SetMasterVolumeLevelScalar(target / 100f, ref ctx);
+                return 0;
+            } catch (Exception ex) {
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+        }
+    }
+}`;
+
+const volCtlExePath = path.join(artemiaStateDir, 'ArtemiaVolCtl.exe');
+const volCtlCsPath = path.join(artemiaStateDir, 'ArtemiaVolCtl.cs');
+
+async function ensureVolumeCtlBinary(): Promise<string | null> {
+  if (process.platform !== 'win32') return null;
+  if (fs.existsSync(volCtlExePath)) return volCtlExePath;
+  const cscCandidates = [
+    'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',
+    'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe'
+  ];
+  const csc = cscCandidates.find((p) => fs.existsSync(p));
+  if (!csc) return null;
+  try {
+    if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+    fs.writeFileSync(volCtlCsPath, VOL_CTL_CS_SOURCE, 'utf8');
+    await new Promise<void>((resolve, reject) => {
+      execFile(csc, ['/nologo', '/target:exe', `/out:${volCtlExePath}`, volCtlCsPath], { timeout: 15000, windowsHide: true }, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    return fs.existsSync(volCtlExePath) ? volCtlExePath : null;
+  } catch {
+    return null;
+  }
+}
+
+async function setWindowsMasterVolume(percent: number): Promise<{ success: boolean; error?: string }> {
+  if (process.platform !== 'win32') return { success: false, error: 'Windows only' };
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  const bin = await ensureVolumeCtlBinary();
+  if (!bin) return { success: false, error: 'Volume controller binary unavailable.' };
+  return new Promise((resolve) => {
+    execFile(bin, [String(clamped)], { timeout: 5000, windowsHide: true }, (err) => {
+      if (err) resolve({ success: false, error: err.message });
+      else {
+        logToFile(`[Volume] Master speaker volume reset to ${clamped}%`);
+        resolve({ success: true });
+      }
+    });
+  });
+}
+
+ipcMain.handle('system:set-volume', async (_event, percent: number) => {
+  return setWindowsMasterVolume(percent);
+});
+
 // 12. OTA Client Updater: Download app.asar, write detached updater batch script, and restart
 async function applyClientUpdate(downloadUrl: string): Promise<{ success: boolean; error?: string }> {
   if (isUpdatingClient) {
@@ -3170,6 +3733,7 @@ if (!gotLock) {
     setAutoStart(true);
     applyInstallProtection();
     ensureKioskLockBinary().catch(() => {});
+    ensureVolumeCtlBinary().catch(() => {});
     startGuardianWatchdog();
 
     fetchHardwareInfo();
@@ -3211,16 +3775,27 @@ if (!gotLock) {
     }, 3500);
 
     // 2. Traditional Pisonet Idle Watchdog (Allan timer relay cuts monitor power; PC remains idle)
-    // When no mouse or keyboard inputs occur for 3 minutes (180s), auto-clean session data
-    const IDLE_THRESHOLD_SECONDS = 180;
+    // Uses dynamic admin-configured idle threshold (default 180s), cleans session, resets volume & restores Game Launcher
     setInterval(() => {
       try {
+        const threshold = Math.max(60, Number(cachedLauncherConfig.idleTimeoutSeconds) || 180);
         const idleSeconds = powerMonitor.getSystemIdleTime();
-        if (idleSeconds >= IDLE_THRESHOLD_SECONDS) {
+        if (idleSeconds >= threshold) {
           if (!hasCleanedInCurrentIdleSession && !isCleaningSlate) {
             hasCleanedInCurrentIdleSession = true;
-            console.log(`[Pisonet Watchdog] Station idle for ${idleSeconds}s (Allan timer cutoff). Auto-cleaning session...`);
-            performCleanSlate('idle').then((res) => {
+            console.log(`[Pisonet Watchdog] Station idle for ${idleSeconds}s (threshold=${threshold}s). Auto-cleaning & resetting station...`);
+            performCleanSlate('idle').then(async (res) => {
+              if (cachedLauncherConfig.resetVolumePercent !== null && cachedLauncherConfig.resetVolumePercent !== undefined) {
+                await setWindowsMasterVolume(cachedLauncherConfig.resetVolumePercent);
+              }
+              if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.autoRestoreOnIdle && !isStationLocked && !isAnnouncementActive && mainWindow) {
+                try {
+                  if (mainWindow.isMinimized()) mainWindow.restore();
+                  mainWindow.show();
+                  mainWindow.focus();
+                } catch {}
+                mainWindow.webContents.send('launcher:restored-after-idle');
+              }
               mainWindow?.webContents.send('maintenance:clean:auto-done', res);
             });
           }
@@ -3229,7 +3804,7 @@ if (!gotLock) {
           hasCleanedInCurrentIdleSession = false;
         }
       } catch {}
-    }, 30000);
+    }, 15000);
   });
 }
 

@@ -1,7 +1,7 @@
 {
-  "version": "1.0.17",
+  "version": "1.0.18",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-11T01:48:00.000Z",
+  "releaseDate": "2026-11-11T02:18:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Advanced App & Game Store Downloader: Smart Website/MediaFire/GDrive link extractor, live WinGet online search & 1-click install, saved custom shop shortcuts, verified ROS Legacy/Steam/Epic/Roblox/Valorant/Chrome links, auto-extract .zip/.rar/.7z + Desktop Shortcut creation"
+  "changelog": "Custom Shop Game Launcher + 1-Click Desktop Wallpaper Pusher + Hulog-Piso Idle Auto-Reset (Dynamic idle timeout, Chrome/Edge/Brave/Firefox session logout, CoreAudio speaker volume reset, and automatic Launcher restoration)"
 }

@@ -49,6 +49,19 @@
       <button
         type="button"
         class="nav-link"
+        [ngClass]="{'active': activeNav === 'launcher'}"
+        (click)="setActiveNav('launcher')"
+      >
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>Game Launcher &amp; Theme</span>
+      </button>
+
+      <button
+        type="button"
+        class="nav-link"
         [ngClass]="{'active': activeNav === 'file-manager'}"
         (click)="setActiveNav('file-manager')"
       >
@@ -170,6 +183,7 @@
         <h1 class="page-header-title">
           <span class="desktop-title">
             {{ activeNav === 'dashboard' ? 'Artemia Fleet Maintenance & Control' :
+               activeNav === 'launcher' ? 'Shop Game Launcher, Wallpaper & Hulog-Piso Auto-Reset' :
                activeNav === 'game-updater' ? 'Simultaneous Game & App Auto-Updater' :
                activeNav === 'file-manager' ? 'Remote Drive File Manager & Storage Cleaner' :
                activeNav === 'task-manager' ? 'Live Process & Task Killer' :
@@ -179,6 +193,7 @@
           </span>
           <span class="mobile-title">
             {{ activeNav === 'dashboard' ? 'Fleet Overview' :
+               activeNav === 'launcher' ? 'Game Launcher' :
                activeNav === 'game-updater' ? 'Game Updater' :
                activeNav === 'file-manager' ? 'File Manager' :
                activeNav === 'task-manager' ? 'Task Manager' :
@@ -240,6 +255,7 @@
     <!-- Active View Router -->
     <main class="page-container">
       <app-dashboard *ngIf="activeNav === 'dashboard'" (navigateTab)="onNavigateTab($event)"></app-dashboard>
+      <app-launcher *ngIf="activeNav === 'launcher'"></app-launcher>
       <app-game-updater *ngIf="activeNav === 'game-updater'" [initialPcId]="targetStationId"></app-game-updater>
       <app-file-manager *ngIf="activeNav === 'file-manager'" [initialPcId]="targetStationId"></app-file-manager>
       <app-task-manager *ngIf="activeNav === 'task-manager'" [initialPcId]="targetStationId"></app-task-manager>
