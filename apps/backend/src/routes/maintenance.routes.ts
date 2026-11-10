@@ -488,7 +488,9 @@ function sanitizeLauncherConfig(raw: any, base: ShopLauncherConfig): ShopLaunche
       .map((it: any, idx: number): LauncherGameItem => {
         const rawCat = String(it.category || 'Games');
         const category: LauncherGameItem['category'] =
-          rawCat === 'Browsers' || rawCat === 'Tools' ? rawCat : 'Games';
+          rawCat === 'Browsers' || rawCat === 'Tools' || rawCat === 'Files & System' || rawCat === 'Office & Tools'
+            ? rawCat
+            : 'Games';
         return {
           id: String(it.id || `item_${Date.now()}_${idx}`).trim(),
           name: String(it.name).trim().slice(0, 60),
@@ -499,6 +501,7 @@ function sanitizeLauncherConfig(raw: any, base: ShopLauncherConfig): ShopLaunche
             ? it.fallbackPaths.map((p: any) => String(p || '').trim()).filter(Boolean).slice(0, 6)
             : [],
           args: it.args ? String(it.args).trim().slice(0, 200) : '',
+          workingDir: it.workingDir ? String(it.workingDir).trim().slice(0, 300) : '',
           visible: it.visible !== false
         };
       });
@@ -506,6 +509,9 @@ function sanitizeLauncherConfig(raw: any, base: ShopLauncherConfig): ShopLaunche
 
   return {
     launcherEnabled: raw?.launcherEnabled !== undefined ? Boolean(raw.launcherEnabled) : base.launcherEnabled,
+    autoDetectApps: raw?.autoDetectApps !== undefined ? Boolean(raw.autoDetectApps) : base.autoDetectApps,
+    cleanDesktopShortcuts: raw?.cleanDesktopShortcuts !== undefined ? Boolean(raw.cleanDesktopShortcuts) : base.cleanDesktopShortcuts,
+    preventLauncherClose: raw?.preventLauncherClose !== undefined ? Boolean(raw.preventLauncherClose) : base.preventLauncherClose,
     shopName: raw?.shopName !== undefined ? (String(raw.shopName).trim().slice(0, 60) || "Artemia's Pisonet") : base.shopName,
     bannerText: raw?.bannerText !== undefined ? String(raw.bannerText || '').trim().slice(0, 240) : base.bannerText,
     wallpaperUrl,
@@ -513,6 +519,9 @@ function sanitizeLauncherConfig(raw: any, base: ShopLauncherConfig): ShopLaunche
     idleTimeoutSeconds,
     autoLogoutBrowsers: raw?.autoLogoutBrowsers !== undefined ? Boolean(raw.autoLogoutBrowsers) : base.autoLogoutBrowsers,
     resetVolumePercent,
+    hiddenAppNames: Array.isArray(raw?.hiddenAppNames)
+      ? raw.hiddenAppNames.map((n: any) => String(n || '').trim().toLowerCase()).filter(Boolean).slice(0, 60)
+      : (base.hiddenAppNames || []),
     items,
     updatedAt: new Date().toISOString()
   };
@@ -565,6 +574,21 @@ maintenanceRoutes.put('/launcher-config', requireStaff, async (c) => {
     success: true,
     data: next,
     message: 'Na-save ug na-push na ang Game Launcher & Shop Theme settings sa tanang online PCs!'
+  });
+});
+
+// Clean or Restore Migrated Desktop Shortcuts on target station(s)
+maintenanceRoutes.post('/launcher-desktop-action', requireStaff, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const action = body?.action === 'restore' ? 'restore' : 'clean';
+  const targetPcId = String(body?.targetPcId || 'all').trim() || 'all';
+  const reqId = 'desk_' + Date.now();
+  dispatchAgentEvent('agent:launcher:desktop-action', { reqId, action, targetPcId }, targetPcId);
+  return c.json({
+    success: true,
+    message: action === 'restore'
+      ? `Gi-restore ang backed-up desktop shortcuts sa ${targetPcId}.`
+      : `Gi-limpyo na ang tanang desktop shortcuts ug gi-balhin sa Game Launcher sa ${targetPcId}.`
   });
 });
 

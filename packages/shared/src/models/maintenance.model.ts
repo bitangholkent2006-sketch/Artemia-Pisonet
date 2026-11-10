@@ -99,21 +99,27 @@ export interface RemoteDownloadResult {
   timestamp: string;
 }
 
-export type LauncherCategory = 'Games' | 'Browsers' | 'Tools';
+export type LauncherCategory = 'Games' | 'Browsers' | 'Files & System' | 'Office & Tools' | 'Tools';
 
 export interface LauncherGameItem {
   id: string;
   name: string;
   icon: string;
+  iconDataUrl?: string;
   category: LauncherCategory;
   launchTarget: string;
   fallbackPaths?: string[];
   args?: string;
+  workingDir?: string;
+  source?: 'auto' | 'desktop' | 'steam' | 'epic' | 'startmenu' | 'registry' | 'system' | 'admin';
   visible: boolean;
 }
 
 export interface ShopLauncherConfig {
   launcherEnabled: boolean;
+  autoDetectApps: boolean;
+  cleanDesktopShortcuts: boolean;
+  preventLauncherClose: boolean;
   shopName: string;
   bannerText: string;
   wallpaperUrl: string;
@@ -121,6 +127,7 @@ export interface ShopLauncherConfig {
   idleTimeoutSeconds: number;
   autoLogoutBrowsers: boolean;
   resetVolumePercent: number | null;
+  hiddenAppNames?: string[];
   items: LauncherGameItem[];
   updatedAt: string;
 }
@@ -226,6 +233,9 @@ export const DEFAULT_SHOP_LAUNCHER_ITEMS: LauncherGameItem[] = [
 export function createDefaultShopLauncherConfig(): ShopLauncherConfig {
   return {
     launcherEnabled: true,
+    autoDetectApps: true,
+    cleanDesktopShortcuts: true,
+    preventLauncherClose: true,
     shopName: "Artemia's Pisonet",
     bannerText: 'Palihug i-logout ang Facebook / Gmail / GCash human gamit • Bawal Cheat Engine & Torrent',
     wallpaperUrl: '',
@@ -233,6 +243,7 @@ export function createDefaultShopLauncherConfig(): ShopLauncherConfig {
     idleTimeoutSeconds: 180,
     autoLogoutBrowsers: true,
     resetVolumePercent: 60,
+    hiddenAppNames: [],
     items: DEFAULT_SHOP_LAUNCHER_ITEMS.map((item) => ({
       ...item,
       fallbackPaths: item.fallbackPaths ? [...item.fallbackPaths] : []

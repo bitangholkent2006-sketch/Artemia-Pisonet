@@ -1,7 +1,7 @@
 {
-  "version": "1.0.18",
+  "version": "1.0.19",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-11T02:18:00.000Z",
+  "releaseDate": "2026-11-11T02:38:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Custom Shop Game Launcher + 1-Click Desktop Wallpaper Pusher + Hulog-Piso Idle Auto-Reset (Dynamic idle timeout, Chrome/Edge/Brave/Firefox session logout, CoreAudio speaker volume reset, and automatic Launcher restoration)"
+  "changelog": "Full-Screen Auto-Detect Big Game Launcher: Automatically migrates & removes Desktop shortcuts into the Launcher, discovers all installed Games, Steam/Epic/Riot/Roblox, File Explorer & System tools, Browsers & Office apps with real Windows PNG icons, and locks window closing (Minimize-only)"
 }

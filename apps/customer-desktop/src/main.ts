@@ -55,8 +55,11 @@ interface WindowWithDesktop extends Window {
     saveLauncherConfigLocal?: (cfg: any) => Promise<boolean>;
     scanLauncherApps?: () => Promise<{
       statuses: Record<string, { installed: boolean; resolvedPath?: string | null }>;
-      discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; category: string }>;
+      catalog: any[];
+      discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; iconDataUrl?: string; category: string }>;
     }>;
+    migrateDesktopShortcuts?: () => Promise<{ movedCount: number; error?: string }>;
+    restoreDesktopShortcuts?: () => Promise<{ restoredCount: number; error?: string }>;
     launchGame?: (item: any) => Promise<{ success: boolean; resolvedPath?: string; error?: string }>;
     applyWallpaper?: (wallpaperUrl: string) => Promise<{ success: boolean; localPath?: string; error?: string }>;
     setVolumePercent?: (percent: number) => Promise<{ success: boolean; error?: string }>;
@@ -64,7 +67,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.18';
+const CLIENT_AGENT_VERSION = '1.0.19';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -128,6 +131,9 @@ class StationMaintenanceAgent {
   // Game Launcher & Shop Theme State
   private launcherConfig: any = {
     launcherEnabled: true,
+    autoDetectApps: true,
+    cleanDesktopShortcuts: true,
+    preventLauncherClose: true,
     shopName: "Artemia's Pisonet",
     bannerText: 'Palihug i-logout ang Facebook / Gmail / GCash human gamit • Bawal Cheat Engine & Torrent',
     wallpaperUrl: '',
@@ -137,8 +143,9 @@ class StationMaintenanceAgent {
     resetVolumePercent: 60,
     items: []
   };
+  private detectedCatalog: any[] = [];
   private launcherScanStatuses: Record<string, { installed: boolean; resolvedPath?: string | null }> = {};
-  private launcherCategory: 'all' | 'Games' | 'Browsers' | 'Tools' = 'all';
+  private launcherCategory: 'all' | 'Files & System' | 'Games' | 'Browsers' | 'Tools' = 'all';
   private launcherSearch = '';
   private uiMode: 'launcher' | 'agent' = 'launcher';
   private lastAppliedWallpaperUrl = localStorage.getItem('artemia_applied_wallpaper_url') || '';
@@ -1264,9 +1271,43 @@ class StationMaintenanceAgent {
           pcId: this.dbPcId || this.pcId,
           pcName: this.pcName,
           statuses: scan?.statuses || {},
+          catalog: scan?.catalog || [],
           discoveredApps: scan?.discoveredApps || [],
           timestamp: new Date().toISOString()
         });
+      });
+
+      this.socket.on('agent:launcher:desktop-action', async (payload: { reqId?: string; action?: 'clean' | 'restore'; targetPcId?: string }) => {
+        if (payload?.targetPcId && !this.matchesThisStation(payload.targetPcId)) return;
+        if (payload?.action === 'restore' && desktopWindow.pisonetDesktop?.restoreDesktopShortcuts) {
+          const res = await desktopWindow.pisonetDesktop.restoreDesktopShortcuts();
+          await this.refreshLauncherScan();
+          this.showToast(`♻️ Na-restore ang ${res.restoredCount} desktop shortcut(s).`, 'info', 4);
+          this.socket?.emit('agent:launcher:action:res', {
+            reqId: payload?.reqId,
+            pcId: this.dbPcId || this.pcId,
+            pcName: this.pcName,
+            action: 'desktop-restore',
+            restoredCount: res.restoredCount,
+            success: !res.error,
+            error: res.error,
+            timestamp: new Date().toISOString()
+          });
+        } else if (desktopWindow.pisonetDesktop?.migrateDesktopShortcuts) {
+          const res = await desktopWindow.pisonetDesktop.migrateDesktopShortcuts();
+          await this.refreshLauncherScan();
+          this.showToast(`🧹 Na-limpyo ang ${res.movedCount} desktop shortcut(s) ug gibalhin sa Game Launcher!`, 'success', 4);
+          this.socket?.emit('agent:launcher:action:res', {
+            reqId: payload?.reqId,
+            pcId: this.dbPcId || this.pcId,
+            pcName: this.pcName,
+            action: 'desktop-clean',
+            movedCount: res.movedCount,
+            success: !res.error,
+            error: res.error,
+            timestamp: new Date().toISOString()
+          });
+        }
       });
 
       // 11. Over-The-Air (OTA) Instant Client Updater (Pushes updated app.asar and restarts)
@@ -1497,11 +1538,12 @@ class StationMaintenanceAgent {
       if (desktopWindow.pisonetDesktop?.scanLauncherApps) {
         const scan = await desktopWindow.pisonetDesktop.scanLauncherApps();
         this.launcherScanStatuses = scan?.statuses || {};
+        this.detectedCatalog = Array.isArray(scan?.catalog) ? scan.catalog : [];
         this.renderLauncherGrid();
         return scan;
       }
     } catch {}
-    return { statuses: {}, discoveredApps: [] };
+    return { statuses: {}, catalog: [], discoveredApps: [] };
   }
 
   private switchUiMode(mode: 'launcher' | 'agent') {
@@ -1549,43 +1591,100 @@ class StationMaintenanceAgent {
     this.renderLauncherGrid();
   }
 
+  private getActiveLauncherItems(): any[] {
+    if (this.launcherConfig?.autoDetectApps !== false && this.detectedCatalog.length > 0) {
+      return this.detectedCatalog;
+    }
+    return Array.isArray(this.launcherConfig?.items) ? this.launcherConfig.items : [];
+  }
+
+  private renderCategoryPillsCounts(allItems: any[]) {
+    const visibleItems = allItems.filter((it) => it?.visible !== false);
+    const counts: Record<string, number> = {
+      all: visibleItems.length,
+      Games: visibleItems.filter((x) => x.category === 'Games').length,
+      Browsers: visibleItems.filter((x) => x.category === 'Browsers').length,
+      'Files & System': visibleItems.filter((x) => x.category === 'Files & System').length,
+      Tools: visibleItems.filter((x) => x.category !== 'Games' && x.category !== 'Browsers' && x.category !== 'Files & System').length
+    };
+    const labels: Record<string, string> = {
+      all: '🌟 Tanang Apps',
+      Games: '🎮 Games',
+      Browsers: '🌐 Browsers & Chat',
+      'Files & System': '📁 File Explorer & System',
+      Tools: '🛠️ Office, Media & Tools'
+    };
+    document.querySelectorAll('.l-cat-pill').forEach((btn) => {
+      const k = btn.getAttribute('data-lcat') || 'all';
+      const cnt = counts[k] ?? 0;
+      btn.textContent = `${labels[k] || k} (${cnt})`;
+    });
+  }
+
+  private renderLauncherCardHtml(item: any): string {
+    const iconHtml = item.iconDataUrl
+      ? `<img src="${this.escapeHtml(item.iconDataUrl)}" alt="" class="l-real-icon" />`
+      : `<span>${this.escapeHtml(item.icon || '🎮')}</span>`;
+    const isSystemOrExplorer = item.category === 'Files & System';
+    const actionLabel = isSystemOrExplorer ? '📂 ABRIHI' : '▶ PLAY / OPEN';
+    const sourceLabel = item.source === 'steam' ? 'Steam Game'
+      : item.source === 'epic' ? 'Epic Game'
+      : item.source === 'system' ? 'Windows System'
+      : item.source === 'desktop' ? 'Desktop Shortcut'
+      : (item.category || 'App');
+    return `
+      <div class="launcher-card ${isSystemOrExplorer ? 'sys-card' : ''}" data-launch-id="${this.escapeHtml(item.id)}">
+        <div class="l-card-top">
+          <div class="l-icon">${iconHtml}</div>
+          <span class="l-badge ready">● Ready</span>
+        </div>
+        <div class="l-name" title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)}</div>
+        <div class="l-cat">${this.escapeHtml(sourceLabel)}</div>
+        <button type="button" class="l-play-btn">${actionLabel}</button>
+      </div>
+    `;
+  }
+
   private renderLauncherGrid() {
     const grid = document.getElementById('launcher-cards-grid');
     if (!grid) return;
 
-    const items: any[] = Array.isArray(this.launcherConfig?.items) ? this.launcherConfig.items : [];
+    const items = this.getActiveLauncherItems();
+    this.renderCategoryPillsCounts(items);
+
     const q = this.launcherSearch.trim().toLowerCase();
     const filtered = items.filter((it) => {
       if (it?.visible === false) return false;
-      if (this.launcherCategory !== 'all' && it.category !== this.launcherCategory) return false;
+      if (this.launcherCategory === 'Tools') {
+        if (it.category === 'Games' || it.category === 'Browsers' || it.category === 'Files & System') return false;
+      } else if (this.launcherCategory !== 'all' && it.category !== this.launcherCategory) {
+        return false;
+      }
       if (q && !String(it.name || '').toLowerCase().includes(q) && !String(it.category || '').toLowerCase().includes(q)) return false;
       return true;
     });
 
     if (filtered.length === 0) {
-      grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:48px 20px; color:#94a3b8; border:1px dashed rgba(255,255,255,0.12); border-radius:16px;">Walay nakit-an nga app o dula sa kani nga category.</div>`;
+      grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:48px 20px; color:#94a3b8; border:1px dashed rgba(255,255,255,0.12); border-radius:16px;">${items.length === 0 ? '⏳ Nag-scan sa tanang installed games ug apps ani nga PC...' : 'Walay nakit-an nga app o dula sa kani nga search/category.'}</div>`;
       return;
     }
 
-    grid.innerHTML = filtered.map((item) => {
-      const st = this.launcherScanStatuses[item.id];
-      const installed = st ? st.installed : true;
-      const badgeHtml = installed
-        ? `<span class="l-badge ready">● Ready</span>`
-        : `<span class="l-badge missing">Not Installed</span>`;
-      const btnText = installed ? '▶ PLAY' : 'Wala Ma-install';
-      return `
-        <div class="launcher-card ${installed ? '' : 'missing'}" data-launch-id="${this.escapeHtml(item.id)}">
-          <div class="l-card-top">
-            <div class="l-icon">${this.escapeHtml(item.icon || '🎮')}</div>
-            ${badgeHtml}
-          </div>
-          <div class="l-name">${this.escapeHtml(item.name)}</div>
-          <div class="l-cat">${this.escapeHtml(item.category || 'Games')}</div>
-          <button type="button" class="l-play-btn" ${installed ? '' : 'data-missing="1"'}>${btnText}</button>
-        </div>
-      `;
-    }).join('');
+    if (this.launcherCategory === 'all' && !q) {
+      const sections: Array<{ title: string; list: any[] }> = [
+        { title: '📁 File Explorer & System Utilities', list: filtered.filter((x) => x.category === 'Files & System') },
+        { title: '🎮 Installed Games', list: filtered.filter((x) => x.category === 'Games') },
+        { title: '🌐 Browsers & Communication', list: filtered.filter((x) => x.category === 'Browsers') },
+        { title: '🛠️ Office, Media & Other Apps', list: filtered.filter((x) => x.category !== 'Files & System' && x.category !== 'Games' && x.category !== 'Browsers') }
+      ];
+      grid.innerHTML = sections
+        .filter((s) => s.list.length > 0)
+        .map((s) => `
+          <div class="l-section-hdr">${s.title} <span class="l-sec-cnt">${s.list.length}</span></div>
+          ${s.list.map((it) => this.renderLauncherCardHtml(it)).join('')}
+        `).join('');
+    } else {
+      grid.innerHTML = filtered.map((item) => this.renderLauncherCardHtml(item)).join('');
+    }
 
     grid.querySelectorAll('.launcher-card').forEach((cardEl) => {
       cardEl.addEventListener('click', async () => {
@@ -1595,9 +1694,9 @@ class StationMaintenanceAgent {
         if (desktopWindow.pisonetDesktop?.launchGame) {
           const res = await desktopWindow.pisonetDesktop.launchGame(item);
           if (res.success) {
-            this.showToast(`🚀 Gi-abli ang ${item.name}... Enjoy playing!`, 'success', 4);
+            this.showToast(`🚀 Gi-abli ang ${item.name}!`, 'success', 4);
           } else {
-            this.showToast(`⚠️ ${res.error || `${item.name} wala pa ma-install ani nga PC.`}`, 'warn', 5);
+            this.showToast(`⚠️ ${res.error || `${item.name} dili ma-abli.`}`, 'warn', 5);
           }
         } else {
           this.showToast(`🎮 Launching ${item.name}...`, 'info', 3);
@@ -1715,9 +1814,10 @@ class StationMaintenanceAgent {
         }
         .launcher-header {
           position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-          padding: 16px 26px; background: rgba(10, 15, 29, 0.82); backdrop-filter: blur(16px);
-          border-bottom: 1px solid rgba(56, 189, 248, 0.18);
+          padding: 16px 28px; background: rgba(10, 15, 29, 0.86); backdrop-filter: blur(18px);
+          border-bottom: 1px solid rgba(56, 189, 248, 0.22); -webkit-app-region: drag;
         }
+        .launcher-header button, .launcher-header input, .station-header button { -webkit-app-region: no-drag; }
         .launcher-brand { display: flex; align-items: center; gap: 12px; }
         .launcher-logo {
           width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, #06b6d4, #6366f1);
@@ -1752,26 +1852,41 @@ class StationMaintenanceAgent {
           position: relative; z-index: 2; flex: 1; overflow-y: auto; padding: 12px 26px 26px;
         }
         .launcher-cards-grid {
-          display: grid; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 16px;
+          display: grid; grid-template-columns: repeat(auto-fill, minmax(195px, 1fr)); gap: 16px;
+        }
+        .l-section-hdr {
+          grid-column: 1 / -1; display: flex; align-items: center; gap: 10px;
+          font-size: 0.92rem; font-weight: 900; color: #e2e8f0; letter-spacing: 0.4px;
+          margin-top: 10px; padding-bottom: 6px; border-bottom: 1px solid rgba(56, 189, 248, 0.2);
+        }
+        .l-section-hdr:first-child { margin-top: 0; }
+        .l-sec-cnt {
+          background: rgba(56, 189, 248, 0.18); color: #38bdf8; border-radius: 999px;
+          padding: 2px 9px; font-size: 0.72rem; font-weight: 800;
         }
         .launcher-card {
-          background: rgba(15, 23, 42, 0.84); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px;
+          background: rgba(15, 23, 42, 0.86); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px;
           padding: 16px; display: flex; flex-direction: column; gap: 8px; cursor: pointer;
           transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease; backdrop-filter: blur(12px);
         }
+        .launcher-card.sys-card { border-color: rgba(245, 158, 11, 0.26); }
         .launcher-card:hover {
           transform: translateY(-3px); border-color: #38bdf8; box-shadow: 0 12px 26px rgba(2, 132, 199, 0.28);
         }
         .launcher-card.missing { opacity: 0.65; border-style: dashed; }
         .l-card-top { display: flex; align-items: center; justify-content: space-between; }
         .l-icon {
-          width: 48px; height: 48px; border-radius: 12px; background: rgba(30, 41, 59, 0.85);
-          display: flex; align-items: center; justify-content: center; font-size: 1.75rem;
+          width: 52px; height: 52px; border-radius: 13px; background: rgba(30, 41, 59, 0.9);
+          display: flex; align-items: center; justify-content: center; font-size: 1.8rem; overflow: hidden;
         }
+        .l-real-icon { width: 38px; height: 38px; object-fit: contain; }
         .l-badge { font-size: 0.68rem; font-weight: 800; padding: 3px 8px; border-radius: 999px; }
         .l-badge.ready { background: rgba(16, 185, 129, 0.16); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
         .l-badge.missing { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
-        .l-name { font-size: 1.02rem; font-weight: 800; color: #f8fafc; margin-top: 2px; }
+        .l-name {
+          font-size: 0.98rem; font-weight: 800; color: #f8fafc; margin-top: 2px;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
         .l-cat { font-size: 0.72rem; color: #94a3b8; font-weight: 600; }
         .l-play-btn {
           margin-top: 6px; padding: 9px 12px; border-radius: 10px; border: none;
@@ -2068,12 +2183,13 @@ class StationMaintenanceAgent {
 
         <div class="launcher-toolbar">
           <div class="launcher-cats">
-            <button type="button" class="l-cat-pill active" data-lcat="all">Tanang Apps</button>
+            <button type="button" class="l-cat-pill active" data-lcat="all">🌟 Tanang Apps</button>
+            <button type="button" class="l-cat-pill" data-lcat="Files & System">📁 File Explorer &amp; System</button>
             <button type="button" class="l-cat-pill" data-lcat="Games">🎮 Games</button>
             <button type="button" class="l-cat-pill" data-lcat="Browsers">🌐 Browsers &amp; Chat</button>
-            <button type="button" class="l-cat-pill" data-lcat="Tools">🛠️ Tools</button>
+            <button type="button" class="l-cat-pill" data-lcat="Tools">🛠️ Office, Media &amp; Tools</button>
           </div>
-          <input id="launcher-search-input" type="text" class="launcher-search" placeholder="🔍 Pangita og dula o app..." />
+          <input id="launcher-search-input" type="text" class="launcher-search" placeholder="🔍 Pangita og dula, app, o File Explorer..." />
         </div>
 
         <div class="launcher-grid-wrap">

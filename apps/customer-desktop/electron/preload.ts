@@ -68,8 +68,11 @@ export interface PisonetDesktopApi {
   saveLauncherConfigLocal?: (cfg: any) => Promise<boolean>;
   scanLauncherApps?: () => Promise<{
     statuses: Record<string, { installed: boolean; resolvedPath?: string | null }>;
-    discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; category: string }>;
+    catalog: any[];
+    discoveredApps: any[];
   }>;
+  migrateDesktopShortcuts?: () => Promise<{ movedCount: number; error?: string }>;
+  restoreDesktopShortcuts?: () => Promise<{ restoredCount: number; error?: string }>;
   launchGame?: (item: any) => Promise<{ success: boolean; resolvedPath?: string; error?: string }>;
   applyWallpaper?: (wallpaperUrl: string) => Promise<{ success: boolean; localPath?: string; error?: string }>;
   setVolumePercent?: (percent: number) => Promise<{ success: boolean; error?: string }>;
@@ -124,6 +127,8 @@ const api: PisonetDesktopApi = {
   getLauncherConfig: () => ipcRenderer.invoke('launcher:get-config'),
   saveLauncherConfigLocal: (cfg) => ipcRenderer.invoke('launcher:save-config-local', cfg),
   scanLauncherApps: () => ipcRenderer.invoke('launcher:scan-installed'),
+  migrateDesktopShortcuts: () => ipcRenderer.invoke('launcher:migrate-desktop'),
+  restoreDesktopShortcuts: () => ipcRenderer.invoke('launcher:restore-desktop'),
   launchGame: (item) => ipcRenderer.invoke('launcher:launch-item', item),
   applyWallpaper: (wallpaperUrl) => ipcRenderer.invoke('launcher:apply-wallpaper', wallpaperUrl),
   setVolumePercent: (percent) => ipcRenderer.invoke('system:set-volume', percent),

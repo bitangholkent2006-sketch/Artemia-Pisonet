@@ -929,6 +929,10 @@ export class AdminStateService {
     return this.apiClient.clearLauncherWallpaper();
   }
 
+  public async triggerLauncherDesktopAction(action: 'clean' | 'restore', targetPcId: string = 'all') {
+    return this.apiClient.triggerLauncherDesktopAction(action, targetPcId);
+  }
+
   public scanLauncherAppsOnPc(pcId: string): Promise<{
     statuses: Record<string, { installed: boolean; resolvedPath?: string | null }>;
     discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; category: string }>;

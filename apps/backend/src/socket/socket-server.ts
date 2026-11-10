@@ -590,6 +590,10 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.to('staff').emit('maintenance:launcher:action:res', result);
     });
 
+    authSocket.on('maintenance:launcher:desktop-action', (payload: { reqId?: string; action: 'clean' | 'restore'; targetPcId?: string }) => {
+      emitToPcTarget('agent:launcher:desktop-action', payload, payload?.targetPcId || 'all');
+    });
+
     authSocket.on('maintenance:power:run', (payload: any) => {
       emitToPcTarget('agent:power:run', payload, payload.targetPcId || payload.pcId);
     });

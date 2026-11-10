@@ -466,6 +466,13 @@ export class ApiClientService {
     });
   }
 
+  public async triggerLauncherDesktopAction(action: 'clean' | 'restore', targetPcId: string = 'all') {
+    return this.request<{ success: boolean; message?: string }>('/api/v1/maintenance/launcher-desktop-action', {
+      method: 'POST',
+      body: JSON.stringify({ action, targetPcId })
+    });
+  }
+
   public async executePowerAction(targetPcId: string = 'all', action: 'restart' | 'shutdown' | 'sleep' | 'lock' | 'unlock') {
     return this.request<{ success: boolean; message: string }>('/api/v1/maintenance/power', {
       method: 'POST',

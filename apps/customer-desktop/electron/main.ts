@@ -48,19 +48,31 @@ const artemiaStateDir = path.join(os.homedir(), '.artemia');
 const launcherConfigFilePath = path.join(artemiaStateDir, 'launcher_config.json');
 const wallpaperMetaFilePath = path.join(artemiaStateDir, 'applied_wallpaper.json');
 
+const desktopBackupDir = path.join(artemiaStateDir, 'desktop_shortcuts_backup');
+const migratedShortcutsFilePath = path.join(artemiaStateDir, 'migrated_shortcuts.json');
+const appIconsCacheDir = path.join(artemiaStateDir, 'app_icons');
+
+type LocalLauncherCategory = 'Games' | 'Browsers' | 'Files & System' | 'Office & Tools' | 'Tools';
+
 interface LocalLauncherItem {
   id: string;
   name: string;
   icon: string;
-  category: 'Games' | 'Browsers' | 'Tools';
+  iconDataUrl?: string;
+  category: LocalLauncherCategory;
   launchTarget: string;
   fallbackPaths?: string[];
   args?: string;
+  workingDir?: string;
+  source?: string;
   visible: boolean;
 }
 
 interface LocalLauncherConfig {
   launcherEnabled: boolean;
+  autoDetectApps: boolean;
+  cleanDesktopShortcuts: boolean;
+  preventLauncherClose: boolean;
   shopName: string;
   bannerText: string;
   wallpaperUrl: string;
@@ -68,12 +80,16 @@ interface LocalLauncherConfig {
   idleTimeoutSeconds: number;
   autoLogoutBrowsers: boolean;
   resetVolumePercent: number | null;
+  hiddenAppNames?: string[];
   items: LocalLauncherItem[];
   updatedAt: string;
 }
 
 const DEFAULT_LOCAL_LAUNCHER_CONFIG: LocalLauncherConfig = {
   launcherEnabled: true,
+  autoDetectApps: true,
+  cleanDesktopShortcuts: true,
+  preventLauncherClose: true,
   shopName: "Artemia's Pisonet",
   bannerText: 'Palihug i-logout ang Facebook / Gmail / GCash human gamit • Bawal Cheat Engine & Torrent',
   wallpaperUrl: '',
@@ -81,6 +97,7 @@ const DEFAULT_LOCAL_LAUNCHER_CONFIG: LocalLauncherConfig = {
   idleTimeoutSeconds: 180,
   autoLogoutBrowsers: true,
   resetVolumePercent: 60,
+  hiddenAppNames: [],
   items: [
     { id: 'roslegacy', name: 'ROS Legacy', icon: '🎯', category: 'Games', launchTarget: 'C:\\Games\\ROS Legacy', fallbackPaths: ['D:\\Games\\ROS Legacy', 'ROSLegacy.exe', 'ros.exe'], visible: true },
     { id: 'valorant', name: 'Valorant', icon: '🔫', category: 'Games', launchTarget: 'C:\\Riot Games\\Riot Client\\RiotClientServices.exe', fallbackPaths: ['D:\\Riot Games\\Riot Client\\RiotClientServices.exe'], args: '--launch-product=valorant --launch-patchline=live', visible: true },
@@ -429,15 +446,16 @@ function createTray() {
 
 function createWindow() {
   const showLauncher = cachedLauncherConfig.launcherEnabled !== false;
+  const preventClose = showLauncher && cachedLauncherConfig.preventLauncherClose !== false;
   mainWindow = new BrowserWindow({
-    width: showLauncher ? 1100 : 980,
-    height: showLauncher ? 680 : 640,
+    width: showLauncher ? 1280 : 980,
+    height: showLauncher ? 760 : 640,
     minWidth: 480,
     minHeight: 360,
     title: showLauncher
       ? `${cachedLauncherConfig.shopName || "Artemia's Pisonet"} — Game Launcher`
       : 'Artemia Fleet - Station Agent & Maintenance Daemon',
-    frame: true, // Native window frame with standard title bar & minimize/maximize/close
+    frame: !showLauncher, // Remove native [X] Close button when Big Game Launcher is active
     transparent: false,
     backgroundColor: '#07090e',
     show: false,
@@ -445,7 +463,7 @@ function createWindow() {
     fullscreen: false,
     alwaysOnTop: false,
     minimizable: true,
-    closable: true,
+    closable: !preventClose,
     movable: true,
     resizable: true,
     webPreferences: {
@@ -454,6 +472,17 @@ function createWindow() {
       backgroundThrottling: false,
       sandbox: false, // Allow preload full access to ipcRenderer
       preload: path.join(__dirname, 'preload.js')
+    }
+  });
+
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (isQuitting || isStationLocked) return;
+    const isCloseShortcut =
+      (input.alt && input.key === 'F4') ||
+      (input.control && (input.key.toLowerCase() === 'w' || input.key.toLowerCase() === 'q'));
+    if (isCloseShortcut && cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
+      event.preventDefault();
+      try { mainWindow?.minimize(); } catch {}
     }
   });
 
@@ -480,8 +509,14 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     if (mainWindow) {
+      if (cachedLauncherConfig.launcherEnabled) {
+        try {
+          mainWindow.maximize();
+          mainWindow.setClosable(cachedLauncherConfig.preventLauncherClose === false);
+        } catch {}
+      }
       mainWindow.show();
-      // Keep Game Launcher visible when enabled; otherwise silently hide to tray after 1.2s
+      // Keep Game Launcher open & maximized when enabled; otherwise silently hide to tray after 1.2s
       if (!cachedLauncherConfig.launcherEnabled) {
         setTimeout(() => {
           if (mainWindow && !isStationLocked && !isAnnouncementActive && !cachedLauncherConfig.launcherEnabled) {
@@ -492,14 +527,16 @@ function createWindow() {
     }
   });
 
-  // Intercept window close to keep background agent running silently in system tray (or prevent hiding when locked)
+  // Intercept window close: customers can ONLY minimize the Game Launcher, never close/exit it!
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
-      if (!isStationLocked) {
-        mainWindow?.hide();
-      } else {
+      if (isStationLocked) {
         presentOverlayWindow();
+      } else if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
+        mainWindow?.minimize();
+      } else {
+        mainWindow?.hide();
       }
       return false;
     }
@@ -525,17 +562,25 @@ ipcMain.handle('window:maximize', () => {
   return true;
 });
 
-// Close button in UI hides to tray instead of quitting!
+// Close / Hide in UI minimizes instead of closing when Big Game Launcher is active
 ipcMain.handle('window:close', () => {
   if (!isStationLocked) {
-    mainWindow?.hide();
+    if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
+      mainWindow?.minimize();
+    } else {
+      mainWindow?.hide();
+    }
   }
   return true;
 });
 
 ipcMain.handle('window:hide-to-tray', () => {
   if (!isStationLocked) {
-    mainWindow?.hide();
+    if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
+      mainWindow?.minimize();
+    } else {
+      mainWindow?.hide();
+    }
   }
   return true;
 });
@@ -953,6 +998,7 @@ ipcMain.handle('operator:verify-and-exit', async (_event, payload: { password: s
 
   logToFile(`[Operator Exit] Authorized exit triggered (removeProtection=${!!payload?.removeProtection}).`);
   isQuitting = true;
+  try { mainWindow?.setClosable(true); } catch {}
   writeFlagFile(authorizedExitFlagPath);
   stopKioskInputBlocker();
   if (payload?.removeProtection) {
@@ -975,10 +1021,16 @@ ipcMain.handle('window:set-lock-mode', (_event, locked: boolean) => {
       startKioskInputBlocker().catch(() => {});
     } else {
       stopKioskInputBlocker();
-      try { mainWindow.setClosable(true); } catch {}
+      const keepUnclosable = Boolean(cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false);
+      try { mainWindow.setClosable(!keepUnclosable); } catch {}
       mainWindow.setFullScreen(false);
       mainWindow.setAlwaysOnTop(false);
-      if (!isAnnouncementActive && !cachedLauncherConfig.launcherEnabled) {
+      if (cachedLauncherConfig.launcherEnabled) {
+        try {
+          mainWindow.maximize();
+          mainWindow.show();
+        } catch {}
+      } else if (!isAnnouncementActive) {
         mainWindow.hide();
       }
     }
@@ -3011,155 +3063,540 @@ function findMainExeInDirectory(dir: string, depth = 0): string | null {
   return null;
 }
 
-function collectDesktopAndGameLinks(): {
-  shortcutByName: Map<string, string>;
-  discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; category: string }>;
-} {
-  const shortcutByName = new Map<string, string>();
-  const discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; category: string }> = [];
-  const seenNames = new Set<string>();
+const SYSTEM_JUNK_APP_REGEX = /unins|uninst|uninstall|remove|repair|readme|license|eula|changelog|documentation|manual|release\s*notes|what'?s\s*new|\bhelp\b|support\s*center|feedback|crash|reporter|redist|vcredist|dxsetup|directx|dotnet|sdk\b|powershell|command\s*prompt|\bcmd\.exe|registry\s*editor|regedit|task\s*manager|event\s*viewer|resource\s*monitor|performance\s*monitor|services\.msc|computer\s*management|defrag|recovery|windows\s*security|windows\s*backup|artemia|speech\s*recognition|narrator|magnifier|steps\s*recorder|live\s*captions|voice\s*access/i;
 
-  const desktopDirs = Array.from(new Set([
-    path.join(os.homedir(), 'OneDrive', 'Desktop'),
-    path.join(os.homedir(), 'Desktop'),
-    'C:\\Users\\Public\\Desktop'
-  ]));
-
-  for (const dir of desktopDirs) {
-    try {
-      if (!fs.existsSync(dir)) continue;
-      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (!ent.isFile()) continue;
-        const lower = ent.name.toLowerCase();
-        if (!lower.endsWith('.lnk') && !lower.endsWith('.url')) continue;
-        if (/artemia|edge|recycle/i.test(lower)) continue;
-        const baseName = ent.name.replace(/\.(lnk|url)$/i, '').trim();
-        const key = baseName.toLowerCase();
-        const full = path.join(dir, ent.name);
-        if (!shortcutByName.has(key)) shortcutByName.set(key, full);
-        if (!seenNames.has(key)) {
-          seenNames.add(key);
-          const isBrowser = /chrome|brave|firefox|opera|discord/i.test(key);
-          discoveredApps.push({
-            id: 'scan_' + key.replace(/[^a-z0-9]+/g, '_'),
-            name: baseName,
-            launchTarget: full,
-            icon: isBrowser ? '🌐' : '🎮',
-            category: isBrowser ? 'Browsers' : 'Games'
-          });
-        }
-      }
-    } catch {}
+function categorizeAppEntry(name: string, targetPath: string, source: string): LocalLauncherCategory {
+  if (source === 'system') return 'Files & System';
+  const combo = `${name} ${targetPath}`.toLowerCase();
+  if (
+    source === 'steam' ||
+    source === 'epic' ||
+    /\\games\\|\\online games\\|\\riot games\\|\\garena\\|\\steamlibrary\\|\\xboxgames\\|\\roblox\\/.test(combo) ||
+    /\b(ros|rules of survival|valorant|league of legends|dota|counter-strike|counter strike|cs2|csgo|crossfire|roblox|minecraft|gta|grand theft|genshin|honkai|pubg|apex|fortnite|overwatch|call of duty|farlight|blood strike|mir4|ran|cabal|mu online|dragon nest|left 4 dead|nba|tekken|naruto|bluestacks|ldplayer|nox|memu|gameloop|steam|epic games|riot|battle\.net|ea app|ubisoft|garena|special force|point blank|cabal)\b/i.test(combo)
+  ) {
+    return 'Games';
   }
-
-  for (const gameRoot of ['C:\\Games', 'D:\\Games']) {
-    try {
-      if (!fs.existsSync(gameRoot)) continue;
-      for (const ent of fs.readdirSync(gameRoot, { withFileTypes: true })) {
-        if (!ent.isDirectory()) continue;
-        const exe = findMainExeInDirectory(path.join(gameRoot, ent.name), 0);
-        if (!exe) continue;
-        const key = ent.name.toLowerCase().trim();
-        if (!shortcutByName.has(key)) shortcutByName.set(key, exe);
-        if (!seenNames.has(key)) {
-          seenNames.add(key);
-          discoveredApps.push({
-            id: 'scan_' + key.replace(/[^a-z0-9]+/g, '_'),
-            name: ent.name,
-            launchTarget: exe,
-            icon: '🎮',
-            category: 'Games'
-          });
-        }
-      }
-    } catch {}
+  if (/\b(chrome|edge|brave|firefox|opera|vivaldi|discord|messenger|telegram|whatsapp|zoom|teams|skype|viber|twitch)\b/i.test(combo)) {
+    return 'Browsers';
   }
-
-  return { shortcutByName, discoveredApps };
+  return 'Tools';
 }
 
-function resolveLauncherItemTarget(
-  item: LocalLauncherItem,
-  shortcutByName: Map<string, string>
-): { installed: boolean; resolvedPath: string | null; kind: 'protocol' | 'file' } {
-  const candidates = [item.launchTarget, ...(item.fallbackPaths || [])].filter(Boolean);
-  for (const raw of candidates) {
-    if (/^(https?|steam|com\.epicgames\.launcher|roblox-player|ms-windows-store):/i.test(raw)) {
-      if (raw.toLowerCase().startsWith('roblox-player:')) {
-        const versionsDir = expandWinEnvVars('%LOCALAPPDATA%\\Roblox\\Versions');
-        const hasRobloxDir = fs.existsSync(versionsDir) || shortcutByName.has('roblox player');
-        if (!hasRobloxDir) continue;
-      }
-      return { installed: true, resolvedPath: raw, kind: 'protocol' };
-    }
-    const expanded = expandWinEnvVars(raw);
-    try {
-      if (fs.existsSync(expanded)) {
-        const st = fs.statSync(expanded);
-        if (st.isFile()) return { installed: true, resolvedPath: expanded, kind: 'file' };
-        if (st.isDirectory()) {
-          const found = findMainExeInDirectory(expanded, 0);
-          if (found) return { installed: true, resolvedPath: found, kind: 'file' };
-        }
-      }
-    } catch {}
-
-    // Also inspect known desktop shortcut file name e.g. 'Discord.lnk' or base name
-    const cleanKey = path.basename(expanded).replace(/\.(lnk|url|exe)$/i, '').toLowerCase();
-    if (shortcutByName.has(cleanKey)) {
-      return { installed: true, resolvedPath: shortcutByName.get(cleanKey)!, kind: 'file' };
-    }
-  }
-
-  // Fallback by item display name on Desktop / C:\Games
-  const itemKey = String(item.name || '').toLowerCase().trim();
-  if (itemKey && shortcutByName.has(itemKey)) {
-    return { installed: true, resolvedPath: shortcutByName.get(itemKey)!, kind: 'file' };
-  }
-  for (const [k, v] of shortcutByName.entries()) {
-    if (itemKey.length >= 3 && (k.includes(itemKey) || itemKey.includes(k))) {
-      return { installed: true, resolvedPath: v, kind: 'file' };
-    }
-  }
-
-  // Common bare executables (chrome.exe, msedge.exe)
-  const targetLower = String(item.launchTarget || '').toLowerCase();
-  if (targetLower === 'chrome.exe') {
-    for (const p of [
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      expandWinEnvVars('%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe')
-    ]) {
-      if (fs.existsSync(p)) return { installed: true, resolvedPath: p, kind: 'file' };
-    }
-  }
-  if (targetLower === 'msedge.exe') {
-    for (const p of [
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
-    ]) {
-      if (fs.existsSync(p)) return { installed: true, resolvedPath: p, kind: 'file' };
-    }
-  }
-
-  return { installed: false, resolvedPath: null, kind: 'file' };
+function defaultEmojiForCategory(cat: LocalLauncherCategory, name: string): string {
+  const n = name.toLowerCase();
+  if (/file explorer|this pc|downloads|documents/.test(n)) return '📁';
+  if (/sound|audio/.test(n)) return '🔊';
+  if (/calc/.test(n)) return '🧮';
+  if (/notepad/.test(n)) return '📝';
+  if (/paint/.test(n)) return '🎨';
+  if (cat === 'Files & System') return '⚙️';
+  if (cat === 'Games') return '🎮';
+  if (cat === 'Browsers') return '🌐';
+  if (/word|excel|powerpoint|wps|acrobat|pdf/.test(n)) return '📄';
+  if (/vlc|media|spotify|music/.test(n)) return '🎬';
+  return '🛠️';
 }
 
-function scanAllLauncherApps() {
-  const { shortcutByName, discoveredApps } = collectDesktopAndGameLinks();
-  const statuses: Record<string, { installed: boolean; resolvedPath: string | null }> = {};
-  for (const item of cachedLauncherConfig.items || []) {
-    const res = resolveLauncherItemTarget(item, shortcutByName);
-    statuses[item.id] = { installed: res.installed, resolvedPath: res.resolvedPath };
+function loadMigratedShortcuts(): any[] {
+  try {
+    if (fs.existsSync(migratedShortcutsFilePath)) {
+      const parsed = JSON.parse(fs.readFileSync(migratedShortcutsFilePath, 'utf8'));
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+function loadIconDataUrlFromCache(iconPngPath?: string): string | undefined {
+  try {
+    if (iconPngPath && fs.existsSync(iconPngPath)) {
+      const buf = fs.readFileSync(iconPngPath);
+      if (buf.length > 16 && buf.length < 65536) {
+        return 'data:image/png;base64,' + buf.toString('base64');
+      }
+    }
+  } catch {}
+  return undefined;
+}
+
+async function migrateAndCleanDesktopShortcuts(): Promise<{ movedCount: number; error?: string }> {
+  if (process.platform !== 'win32') return { movedCount: 0 };
+  try {
+    if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+    if (!fs.existsSync(desktopBackupDir)) fs.mkdirSync(desktopBackupDir, { recursive: true });
+
+    const existing = loadMigratedShortcuts();
+    const ps = `
+      $ErrorActionPreference = 'SilentlyContinue'
+      $backupDir = '${desktopBackupDir.replace(/'/g, "''")}'
+      New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+      $ws = New-Object -ComObject WScript.Shell
+      $desktopDirs = @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:USERPROFILE 'Desktop'), 'C:\\Users\\Public\\Desktop') | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+      $moved = [System.Collections.Generic.List[object]]::new()
+      foreach ($dir in $desktopDirs) {
+        Get-ChildItem -Path $dir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.lnk', '.url') } | ForEach-Object {
+          $f = $_
+          $baseName = [IO.Path]::GetFileNameWithoutExtension($f.Name).Trim()
+          $targetPath = ''
+          $argsStr = ''
+          $workDir = ''
+          $iconLoc = ''
+          if ($f.Extension.ToLower() -eq '.lnk') {
+            try {
+              $sc = $ws.CreateShortcut($f.FullName)
+              $targetPath = [string]$sc.TargetPath
+              $argsStr = [string]$sc.Arguments
+              $workDir = [string]$sc.WorkingDirectory
+              $iconLoc = ([string]$sc.IconLocation -split ',')[0].Trim()
+            } catch {}
+          } else {
+            try {
+              $lines = Get-Content -LiteralPath $f.FullName -ErrorAction SilentlyContinue
+              foreach ($ln in $lines) {
+                if ($ln -match '^URL=(.+)$') { $targetPath = $Matches[1].Trim() }
+                if ($ln -match '^IconFile=(.+)$') { $iconLoc = ($Matches[1].Trim() -split ',')[0].Trim() }
+              }
+            } catch {}
+          }
+          $safeHash = [BitConverter]::ToString(([System.Security.Cryptography.MD5]::Create()).ComputeHash([Text.Encoding]::UTF8.GetBytes($f.FullName.ToLower()))).Replace('-','').Substring(0,8)
+          $backupPath = Join-Path $backupDir ($safeHash + '_' + $f.Name)
+          Copy-Item -LiteralPath $f.FullName -Destination $backupPath -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+          $moved.Add([PSCustomObject]@{
+            name = $baseName
+            origPath = $f.FullName
+            backupPath = $backupPath
+            targetPath = $targetPath
+            args = $argsStr
+            workingDir = $workDir
+            iconLoc = $iconLoc
+          })
+        }
+      }
+      Write-Output '---JSON_START---'
+      Write-Output ($moved | ConvertTo-Json -Compress -Depth 3)
+      Write-Output '---JSON_END---'
+    `;
+
+    const migratePsPath = path.join(artemiaStateDir, 'migrate_desktop.ps1');
+    fs.writeFileSync(migratePsPath, '\ufeff' + ps, 'utf8');
+    const stdout = await new Promise<string>((resolve) => {
+      execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', migratePsPath], { timeout: 25000, maxBuffer: 5 * 1024 * 1024, windowsHide: true }, (_e, out) => {
+        resolve(out || '');
+      });
+    });
+
+    const m = stdout.match(/---JSON_START---([\s\S]*?)---JSON_END---/);
+    let newlyMoved: any[] = [];
+    if (m?.[1]?.trim()) {
+      const parsed = JSON.parse(m[1].trim());
+      newlyMoved = Array.isArray(parsed) ? parsed : [parsed];
+    }
+
+    if (newlyMoved.length > 0) {
+      const byOrig = new Map<string, any>();
+      for (const item of existing) {
+        if (item?.origPath) byOrig.set(String(item.origPath).toLowerCase(), item);
+      }
+      for (const item of newlyMoved) {
+        if (item?.origPath) byOrig.set(String(item.origPath).toLowerCase(), item);
+      }
+      fs.writeFileSync(migratedShortcutsFilePath, JSON.stringify(Array.from(byOrig.values()), null, 2), 'utf8');
+      logToFile(`[Launcher] Migrated and removed ${newlyMoved.length} desktop shortcut(s) into Game Launcher vault.`);
+    }
+    return { movedCount: newlyMoved.length };
+  } catch (err: any) {
+    return { movedCount: 0, error: err?.message || String(err) };
   }
-  return { statuses, discoveredApps };
+}
+
+async function restoreMigratedDesktopShortcuts(): Promise<{ restoredCount: number; error?: string }> {
+  if (process.platform !== 'win32') return { restoredCount: 0 };
+  try {
+    const entries = loadMigratedShortcuts();
+    let restoredCount = 0;
+    for (const ent of entries) {
+      try {
+        if (ent?.backupPath && ent?.origPath && fs.existsSync(ent.backupPath)) {
+          const parent = path.dirname(ent.origPath);
+          if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
+          fs.copyFileSync(ent.backupPath, ent.origPath);
+          restoredCount++;
+        }
+      } catch {}
+    }
+    logToFile(`[Launcher] Restored ${restoredCount} desktop shortcut(s) from backup.`);
+    return { restoredCount };
+  } catch (err: any) {
+    return { restoredCount: 0, error: err?.message || String(err) };
+  }
+}
+
+let cachedAutoScanCatalog: LocalLauncherItem[] = [];
+
+async function runDeepSystemAppScan(): Promise<{
+  catalog: LocalLauncherItem[];
+  statuses: Record<string, { installed: boolean; resolvedPath: string | null }>;
+  discoveredApps: Array<{ id: string; name: string; launchTarget: string; icon: string; iconDataUrl?: string; category: string }>;
+}> {
+  if (process.platform !== 'win32') {
+    return { catalog: [], statuses: {}, discoveredApps: [] };
+  }
+
+  try {
+    if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+    if (!fs.existsSync(appIconsCacheDir)) fs.mkdirSync(appIconsCacheDir, { recursive: true });
+
+    const migrated = loadMigratedShortcuts();
+    const migratedB64 = Buffer.from(JSON.stringify(migrated), 'utf8').toString('base64');
+
+    const ps = `
+      $ErrorActionPreference = 'SilentlyContinue'
+      Add-Type -AssemblyName System.Drawing
+      $iconDir = '${appIconsCacheDir.replace(/'/g, "''")}'
+      New-Item -ItemType Directory -Force -Path $iconDir | Out-Null
+      $ws = New-Object -ComObject WScript.Shell
+      $results = [System.Collections.Generic.List[object]]::new()
+
+      function Resolve-IconPng([string]$iconSrc) {
+        if (-not $iconSrc) { return '' }
+        $clean = ($iconSrc -split ',')[0].Trim().Trim('"')
+        if (-not $clean -or -not (Test-Path -LiteralPath $clean -PathType Leaf)) { return '' }
+        $ext = [IO.Path]::GetExtension($clean).ToLower()
+        if ($ext -notin @('.exe', '.ico', '.dll', '.png', '.jpg', '.jpeg')) { return '' }
+        $md5 = [BitConverter]::ToString(([System.Security.Cryptography.MD5]::Create()).ComputeHash([Text.Encoding]::UTF8.GetBytes($clean.ToLower()))).Replace('-','')
+        $outPng = Join-Path $iconDir ($md5 + '.png')
+        if (Test-Path -LiteralPath $outPng) { return $outPng }
+        try {
+          if ($ext -in @('.png', '.jpg', '.jpeg')) {
+            $img = [System.Drawing.Image]::FromFile($clean)
+            $res = New-Object System.Drawing.Bitmap($img, 48, 48)
+            $res.Save($outPng, [System.Drawing.Imaging.ImageFormat]::Png)
+            $res.Dispose(); $img.Dispose()
+            return $outPng
+          }
+          $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($clean)
+          if ($ico) {
+            $bmp = $ico.ToBitmap()
+            $res = New-Object System.Drawing.Bitmap($bmp, 48, 48)
+            $res.Save($outPng, [System.Drawing.Imaging.ImageFormat]::Png)
+            $res.Dispose(); $bmp.Dispose(); $ico.Dispose()
+            return $outPng
+          }
+        } catch {}
+        return ''
+      }
+
+      # 1. Essential System & File Explorer Apps
+      $explorerExe = Join-Path $env:WINDIR 'explorer.exe'
+      $sysApps = @(
+        @{ name='File Explorer (This PC)'; target=$explorerExe; args=''; icon=$explorerExe },
+        @{ name='Downloads Folder'; target=$explorerExe; args=(Join-Path $env:USERPROFILE 'Downloads'); icon=$explorerExe },
+        @{ name='Documents Folder'; target=$explorerExe; args=([Environment]::GetFolderPath('MyDocuments')); icon=$explorerExe },
+        @{ name='Sound / Audio Settings'; target=(Join-Path $env:WINDIR 'System32\\control.exe'); args='mmsys.cpl sounds'; icon=(Join-Path $env:WINDIR 'System32\\SndVol.exe') },
+        @{ name='Calculator'; target='calc.exe'; args=''; icon=(Join-Path $env:WINDIR 'System32\\calc.exe') },
+        @{ name='Notepad'; target=(Join-Path $env:WINDIR 'System32\\notepad.exe'); args=''; icon=(Join-Path $env:WINDIR 'System32\\notepad.exe') },
+        @{ name='Paint'; target=(Join-Path $env:WINDIR 'System32\\mspaint.exe'); args=''; icon=(Join-Path $env:WINDIR 'System32\\mspaint.exe') }
+      )
+      foreach ($sa in $sysApps) {
+        $png = Resolve-IconPng $sa.icon
+        if (-not $png) { $png = Resolve-IconPng $explorerExe }
+        $results.Add([PSCustomObject]@{ name=$sa.name; target=$sa.target; args=$sa.args; workDir=''; source='system'; iconPng=$png })
+      }
+
+      # 2. Migrated Desktop Vault + Any Current Desktop Shortcuts
+      try {
+        $migJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${migratedB64}')) | ConvertFrom-Json
+        foreach ($m in $migJson) {
+          if (-not $m.name) { continue }
+          $useTarget = if ($m.targetPath) { [string]$m.targetPath } else { [string]$m.backupPath }
+          if (-not $useTarget) { continue }
+          if ($useTarget -notmatch '^(http|steam|com\\.epicgames|roblox)' -and -not (Test-Path -LiteralPath $useTarget)) {
+            if ($m.backupPath -and (Test-Path -LiteralPath $m.backupPath)) { $useTarget = [string]$m.backupPath } else { continue }
+          }
+          $ico = Resolve-IconPng $(if ($m.iconLoc) { $m.iconLoc } else { $useTarget })
+          if (-not $ico -and $useTarget -ne $m.targetPath -and $m.targetPath) { $ico = Resolve-IconPng $m.targetPath }
+          $results.Add([PSCustomObject]@{ name=[string]$m.name; target=$useTarget; args=[string]$m.args; workDir=[string]$m.workingDir; source='desktop'; iconPng=$ico })
+        }
+      } catch {}
+
+      $desktopDirs = @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:USERPROFILE 'Desktop'), 'C:\\Users\\Public\\Desktop') | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+      foreach ($dd in $desktopDirs) {
+        Get-ChildItem -Path $dd -File -Force | Where-Object { $_.Extension -in @('.lnk', '.url') } | ForEach-Object {
+          $f = $_
+          $bn = [IO.Path]::GetFileNameWithoutExtension($f.Name).Trim()
+          $tp = $f.FullName; $ag = ''; $wd = ''; $ic = $f.FullName
+          if ($f.Extension.ToLower() -eq '.lnk') {
+            try { $sc = $ws.CreateShortcut($f.FullName); if ($sc.TargetPath) { $tp = [string]$sc.TargetPath; $ag = [string]$sc.Arguments; $wd = [string]$sc.WorkingDirectory; $ic = if ($sc.IconLocation) { ($sc.IconLocation -split ',')[0] } else { $tp } } } catch {}
+          }
+          $results.Add([PSCustomObject]@{ name=$bn; target=$tp; args=$ag; workDir=$wd; source='desktop'; iconPng=(Resolve-IconPng $ic) })
+        }
+      }
+
+      # 3. Steam Installed Games (all libraries)
+      $steamExe = ''
+      foreach ($sp in @('HKCU:\\Software\\Valve\\Steam', 'HKLM:\\SOFTWARE\\WOW6432Node\\Valve\\Steam', 'HKLM:\\SOFTWARE\\Valve\\Steam')) {
+        $p = Get-ItemProperty -Path $sp -ErrorAction SilentlyContinue
+        if ($p.SteamPath -and (Test-Path $p.SteamPath)) { $steamExe = Join-Path $p.SteamPath 'steam.exe'; break }
+        if ($p.InstallPath -and (Test-Path $p.InstallPath)) { $steamExe = Join-Path $p.InstallPath 'steam.exe'; break }
+      }
+      if (-not $steamExe -and (Test-Path 'C:\\Program Files (x86)\\Steam\\steam.exe')) { $steamExe = 'C:\\Program Files (x86)\\Steam\\steam.exe' }
+      if ($steamExe) {
+        $steamDir = Split-Path $steamExe
+        $results.Add([PSCustomObject]@{ name='Steam'; target=$steamExe; args=''; workDir=$steamDir; source='steam'; iconPng=(Resolve-IconPng $steamExe) })
+        $libs = [System.Collections.Generic.List[string]]::new()
+        $libs.Add((Join-Path $steamDir 'steamapps'))
+        $vdf = Join-Path $steamDir 'steamapps\\libraryfolders.vdf'
+        if (Test-Path $vdf) {
+          Select-String -Path $vdf -Pattern '"path"\\s+"([^"]+)"' | ForEach-Object {
+            $lp = $_.Matches.Groups[1].Value -replace '\\\\\\\\', '\\'
+            $libs.Add((Join-Path $lp 'steamapps'))
+          }
+        }
+        foreach ($lib in ($libs | Select-Object -Unique)) {
+          if (-not (Test-Path $lib)) { continue }
+          Get-ChildItem -Path $lib -Filter 'appmanifest_*.acf' -File | ForEach-Object {
+            $txt = Get-Content -LiteralPath $_.FullName -Raw
+            if ($txt -match '"appid"\\s+"(\\d+)"' -and $txt -match '"name"\\s+"([^"]+)"') {
+              $aid = $Matches[1]
+              $aname = $Matches[2].Trim()
+              if ($aname -and $aname -notmatch 'Steamworks Common Redistributables|Proton') {
+                $stImg = ''
+                foreach ($cand in @(
+                  (Join-Path $steamDir ("appcache\\librarycache\\" + $aid + "_icon.jpg")),
+                  (Join-Path $steamDir ("appcache\\librarycache\\" + $aid + "\\icon.jpg"))
+                )) { if (Test-Path $cand) { $stImg = $cand; break } }
+                $ico = Resolve-IconPng $(if ($stImg) { $stImg } else { $steamExe })
+                $results.Add([PSCustomObject]@{ name=$aname; target="steam://rungameid/$aid"; args=''; workDir=''; source='steam'; iconPng=$ico })
+              }
+            }
+          }
+        }
+      }
+
+      # 4. Epic Games Installed
+      $epicManDir = 'C:\\ProgramData\\Epic\\EpicGamesLauncher\\Data\\Manifests'
+      if (Test-Path $epicManDir) {
+        Get-ChildItem -Path $epicManDir -Filter '*.item' -File | ForEach-Object {
+          try {
+            $ej = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+            if ($ej.DisplayName -and $ej.AppName) {
+              $exeFull = if ($ej.InstallLocation -and $ej.LaunchExecutable) { Join-Path $ej.InstallLocation $ej.LaunchExecutable } else { '' }
+              $epUri = if ($ej.CatalogNamespace -and $ej.CatalogItemId) { "com.epicgames.launcher://apps/$($ej.CatalogNamespace)%3A$($ej.CatalogItemId)%3A$($ej.AppName)?action=launch&silent=true" } else { $exeFull }
+              if ($epUri) {
+                $ico = Resolve-IconPng $exeFull
+                $results.Add([PSCustomObject]@{ name=[string]$ej.DisplayName; target=$epUri; args=''; workDir=[string]$ej.InstallLocation; source='epic'; iconPng=$ico })
+              }
+            }
+          } catch {}
+        }
+      }
+
+      # 5. Standalone Game Folders (C:\\Games, D:\\Games, E:\\Games, Riot Games, Garena, Roblox)
+      $gameRoots = @('C:\\Games', 'D:\\Games', 'E:\\Games', 'C:\\Online Games', 'D:\\Online Games', 'C:\\Garena', 'D:\\Garena')
+      foreach ($gr in $gameRoots) {
+        if (-not (Test-Path $gr)) { continue }
+        Get-ChildItem -Path $gr -Directory | ForEach-Object {
+          $gDir = $_.FullName
+          $exe = Get-ChildItem -Path $gDir -Filter '*.exe' -File | Where-Object { $_.Name -notmatch 'unins|crash|unitycrash|redist|vc_redist|dxsetup|update|helper|report' } | Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $exe) {
+            $exe = Get-ChildItem -Path $gDir -Depth 1 -Filter '*.exe' -File | Where-Object { $_.Name -notmatch 'unins|crash|unitycrash|redist|vc_redist|dxsetup|update|helper|report' } | Sort-Object Length -Descending | Select-Object -First 1
+          }
+          if ($exe) {
+            $results.Add([PSCustomObject]@{ name=$_.Name; target=$exe.FullName; args=''; workDir=$exe.DirectoryName; source='auto'; iconPng=(Resolve-IconPng $exe.FullName) })
+          }
+        }
+      }
+      foreach ($riotBase in @('C:\\Riot Games', 'D:\\Riot Games')) {
+        $rc = Join-Path $riotBase 'Riot Client\\RiotClientServices.exe'
+        if (Test-Path $rc) {
+          if (Test-Path (Join-Path $riotBase 'VALORANT')) {
+            $valIco = Join-Path $riotBase 'VALORANT\\live\\VALORANT.exe'
+            $results.Add([PSCustomObject]@{ name='VALORANT'; target=$rc; args='--launch-product=valorant --launch-patchline=live'; workDir=(Split-Path $rc); source='auto'; iconPng=(Resolve-IconPng $(if (Test-Path $valIco) { $valIco } else { $rc })) })
+          }
+          if (Test-Path (Join-Path $riotBase 'League of Legends')) {
+            $lolIco = Join-Path $riotBase 'League of Legends\\LeagueClient.exe'
+            $results.Add([PSCustomObject]@{ name='League of Legends'; target=$rc; args='--launch-product=league_of_legends --launch-patchline=live'; workDir=(Split-Path $rc); source='auto'; iconPng=(Resolve-IconPng $(if (Test-Path $lolIco) { $lolIco } else { $rc })) })
+          }
+        }
+      }
+      $rbxVer = Join-Path $env:LOCALAPPDATA 'Roblox\\Versions'
+      if (Test-Path $rbxVer) {
+        $rbxExe = Get-ChildItem -Path $rbxVer -Recurse -Filter 'RobloxPlayerBeta.exe' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($rbxExe) {
+          $results.Add([PSCustomObject]@{ name='Roblox Player'; target='roblox-player:'; args=''; workDir=''; source='auto'; iconPng=(Resolve-IconPng $rbxExe.FullName) })
+        }
+      }
+
+      # 6. Start Menu Installed Programs (Browsers, Office, Media, Tools, Games)
+      $smDirs = @([Environment]::GetFolderPath('CommonPrograms'), [Environment]::GetFolderPath('Programs')) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+      foreach ($sm in $smDirs) {
+        Get-ChildItem -Path $sm -Filter '*.lnk' -Recurse -Depth 2 -File | ForEach-Object {
+          $bn = [IO.Path]::GetFileNameWithoutExtension($_.Name).Trim()
+          if (-not $bn) { return }
+          $sc = $ws.CreateShortcut($_.FullName)
+          $tp = [string]$sc.TargetPath
+          if (-not $tp -or -not (Test-Path -LiteralPath $tp -PathType Leaf)) { return }
+          if ($tp -notmatch '\\.(exe|bat|cmd)$') { return }
+          if ($tp -match 'Windows\\\\System32|Windows\\\\SysWOW64|WindowsPowerShell|PowerShell' -and $bn -notmatch 'Paint|Calculator|Notepad|WordPad') { return }
+          $icoLoc = if ($sc.IconLocation) { ($sc.IconLocation -split ',')[0].Trim() } else { $tp }
+          if (-not $icoLoc -or -not (Test-Path -LiteralPath $icoLoc -PathType Leaf)) { $icoLoc = $tp }
+          $results.Add([PSCustomObject]@{ name=$bn; target=$tp; args=[string]$sc.Arguments; workDir=[string]$sc.WorkingDirectory; source='startmenu'; iconPng=(Resolve-IconPng $icoLoc) })
+        }
+      }
+
+      # 7. Well-known App Paths Registry (Chrome, Edge, Office, VLC, WinRAR, 7-Zip, etc.)
+      foreach ($regRoot in @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths', 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths')) {
+        Get-ChildItem -Path $regRoot | ForEach-Object {
+          $exeName = $_.PSChildName
+          if ($exeName -match '^(chrome|msedge|brave|firefox|opera|WINWORD|EXCEL|POWERPNT|vlc|WinRAR|7zFM|obs64|Discord|Spotify|Photoshop)\\.exe$') {
+            $exePath = [string](Get-ItemProperty -LiteralPath $_.PSPath).'(default)'
+            if ($exePath) { $exePath = $exePath.Trim('"') }
+            if ($exePath -and (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+              $disp = switch -Regex ($exeName.ToLower()) {
+                'chrome' { 'Google Chrome' }
+                'msedge' { 'Microsoft Edge' }
+                'brave' { 'Brave Browser' }
+                'firefox' { 'Mozilla Firefox' }
+                'opera' { 'Opera Browser' }
+                'winword' { 'Microsoft Word' }
+                'excel' { 'Microsoft Excel' }
+                'powerpnt' { 'Microsoft PowerPoint' }
+                'vlc' { 'VLC Media Player' }
+                'winrar' { 'WinRAR' }
+                '7zfm' { '7-Zip File Manager' }
+                'obs64' { 'OBS Studio' }
+                'discord' { 'Discord' }
+                'spotify' { 'Spotify' }
+                'photoshop' { 'Adobe Photoshop' }
+                default { [IO.Path]::GetFileNameWithoutExtension($exeName) }
+              }
+              $results.Add([PSCustomObject]@{ name=$disp; target=$exePath; args=''; workDir=(Split-Path $exePath); source='registry'; iconPng=(Resolve-IconPng $exePath) })
+            }
+          }
+        }
+      }
+
+      Write-Output '---JSON_START---'
+      Write-Output ($results | ConvertTo-Json -Compress -Depth 3)
+      Write-Output '---JSON_END---'
+    `;
+
+    const scanPsPath = path.join(artemiaStateDir, 'scan_apps.ps1');
+    fs.writeFileSync(scanPsPath, '\ufeff' + ps, 'utf8');
+    const stdout = await new Promise<string>((resolve) => {
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scanPsPath],
+        { timeout: 30000, maxBuffer: 15 * 1024 * 1024, windowsHide: true },
+        (_err, out) => resolve(out || '')
+      );
+    });
+
+    const m = stdout.match(/---JSON_START---([\s\S]*?)---JSON_END---/);
+    let rawItems: any[] = [];
+    if (m?.[1]?.trim()) {
+      const parsed = JSON.parse(m[1].trim());
+      rawItems = Array.isArray(parsed) ? parsed : [parsed];
+    }
+
+    const hiddenSet = new Set(
+      (cachedLauncherConfig.hiddenAppNames || []).map((n) => String(n).toLowerCase().trim())
+    );
+
+    const priorityBySource: Record<string, number> = {
+      system: 0,
+      desktop: 1,
+      steam: 2,
+      epic: 3,
+      auto: 4,
+      registry: 5,
+      startmenu: 6
+    };
+
+    rawItems.sort((a, b) => (priorityBySource[a?.source] ?? 9) - (priorityBySource[b?.source] ?? 9));
+
+    const catalog: LocalLauncherItem[] = [];
+    const seenKeys = new Set<string>();
+
+    for (const raw of rawItems) {
+      const name = String(raw?.name || '').trim();
+      const target = String(raw?.target || '').trim();
+      if (!name || !target) continue;
+      if (raw?.source !== 'system' && SYSTEM_JUNK_APP_REGEX.test(name + ' ' + target)) continue;
+      if (hiddenSet.has(name.toLowerCase())) continue;
+
+      const normKey = name.toLowerCase().replace(/\s*\(64-bit\)|\s*\(x64\)|\s*\(x86\)|\.exe$/gi, '').replace(/[^a-z0-9]+/g, '');
+      if (!normKey || seenKeys.has(normKey)) continue;
+      seenKeys.add(normKey);
+
+      const cat = categorizeAppEntry(name, target, raw?.source || 'auto');
+      catalog.push({
+        id: 'auto_' + normKey + '_' + (catalog.length + 1),
+        name,
+        icon: defaultEmojiForCategory(cat, name),
+        iconDataUrl: loadIconDataUrlFromCache(raw?.iconPng),
+        category: cat,
+        launchTarget: target,
+        args: raw?.args ? String(raw.args).trim() : '',
+        workingDir: raw?.workDir ? String(raw.workDir).trim() : '',
+        source: raw?.source || 'auto',
+        visible: true
+      });
+    }
+
+    // Merge optional custom admin entries if not already detected cleanly
+    for (const custom of cachedLauncherConfig.items || []) {
+      if (custom?.visible === false) continue;
+      const customName = String(custom?.name || '').trim();
+      const normKey = customName.toLowerCase().replace(/[^a-z0-9]+/g, '');
+      if (!normKey || seenKeys.has(normKey)) continue;
+      // Only include admin-pinned custom URLs / items or if exe exists locally
+      const isProtocol = /^(https?|steam|com\.epicgames\.launcher|roblox-player):/i.test(custom.launchTarget || '');
+      const expanded = expandWinEnvVars(custom.launchTarget || '');
+      if (isProtocol || (expanded && fs.existsSync(expanded))) {
+        seenKeys.add(normKey);
+        catalog.push({ ...custom, source: 'admin' });
+      }
+    }
+
+    cachedAutoScanCatalog = catalog;
+
+    const statuses: Record<string, { installed: boolean; resolvedPath: string | null }> = {};
+    for (const adminItem of cachedLauncherConfig.items || []) {
+      const adminKey = String(adminItem.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const matched = catalog.find(
+        (c) => c.id === adminItem.id || c.name.toLowerCase().replace(/[^a-z0-9]+/g, '') === adminKey
+      );
+      statuses[adminItem.id] = {
+        installed: Boolean(matched),
+        resolvedPath: matched ? matched.launchTarget : null
+      };
+    }
+
+    return {
+      catalog,
+      statuses,
+      discoveredApps: catalog.map((c) => ({
+        id: c.id,
+        name: c.name,
+        launchTarget: c.launchTarget,
+        icon: c.icon,
+        iconDataUrl: c.iconDataUrl,
+        category: c.category
+      }))
+    };
+  } catch (err: any) {
+    logToFile('[Launcher Scan] Error: ' + (err?.message || String(err)));
+    return { catalog: cachedAutoScanCatalog, statuses: {}, discoveredApps: [] };
+  }
 }
 
 ipcMain.handle('launcher:get-config', () => {
   return cachedLauncherConfig;
 });
 
-ipcMain.handle('launcher:save-config-local', (_event, cfg: LocalLauncherConfig) => {
+ipcMain.handle('launcher:save-config-local', async (_event, cfg: LocalLauncherConfig) => {
   const prevEnabled = cachedLauncherConfig.launcherEnabled;
   const saved = saveLocalLauncherConfigToDisk(cfg);
   if (mainWindow) {
@@ -3168,49 +3605,85 @@ ipcMain.handle('launcher:save-config-local', (_event, cfg: LocalLauncherConfig) 
         ? `${saved.shopName || "Artemia's Pisonet"} — Game Launcher`
         : 'Artemia Fleet - Station Agent & Maintenance Daemon'
     );
+    const keepUnclosable = Boolean(saved.launcherEnabled && saved.preventLauncherClose !== false);
+    try { mainWindow.setClosable(!keepUnclosable); } catch {}
     if (!prevEnabled && saved.launcherEnabled && !isStationLocked) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+      try {
+        mainWindow.maximize();
+        mainWindow.show();
+        mainWindow.focus();
+      } catch {}
     } else if (prevEnabled && !saved.launcherEnabled && !isStationLocked && !isAnnouncementActive) {
-      mainWindow.hide();
+      try {
+        if (mainWindow.isMaximized()) mainWindow.unmaximize();
+        mainWindow.hide();
+      } catch {}
     }
+  }
+  if (saved.launcherEnabled && saved.cleanDesktopShortcuts !== false) {
+    migrateAndCleanDesktopShortcuts().catch(() => {});
   }
   return true;
 });
 
-ipcMain.handle('launcher:scan-installed', () => {
-  return scanAllLauncherApps();
+ipcMain.handle('launcher:scan-installed', async () => {
+  return runDeepSystemAppScan();
+});
+
+ipcMain.handle('launcher:migrate-desktop', async () => {
+  return migrateAndCleanDesktopShortcuts();
+});
+
+ipcMain.handle('launcher:restore-desktop', async () => {
+  return restoreMigratedDesktopShortcuts();
 });
 
 ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) => {
   try {
-    const { shortcutByName } = collectDesktopAndGameLinks();
-    const resolved = resolveLauncherItemTarget(item, shortcutByName);
-    if (!resolved.installed || !resolved.resolvedPath) {
-      return { success: false, error: `${item?.name || 'App'} wala pa ma-install ani nga PC.` };
-    }
-    const target = resolved.resolvedPath;
-    if (resolved.kind === 'protocol') {
+    let target = String(item?.launchTarget || '').trim();
+    if (!target) return { success: false, error: 'Walay target path.' };
+    target = expandWinEnvVars(target);
+
+    if (/^(https?|steam|com\.epicgames\.launcher|roblox-player|ms-windows-store):/i.test(target)) {
       await shell.openExternal(target);
-    } else if (/\.(lnk|url)$/i.test(target)) {
-      const errMsg = await shell.openPath(target);
-      if (errMsg) return { success: false, error: errMsg };
     } else {
-      const argParts = (item?.args || '').trim() ? item.args!.trim().split(/\s+/) : [];
-      const child = spawn(target, argParts, {
-        cwd: path.dirname(target),
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: false
-      });
-      child.unref();
+      // Handle directory path if specified manually
+      if (fs.existsSync(target) && fs.statSync(target).isDirectory() && !/explorer\.exe$/i.test(target)) {
+        const mainExe = findMainExeInDirectory(target, 0);
+        if (mainExe) target = mainExe;
+      }
+      if (/\.(lnk|url)$/i.test(target)) {
+        const errMsg = await shell.openPath(target);
+        if (errMsg) return { success: false, error: errMsg };
+      } else {
+        const rawArgs = expandWinEnvVars(String(item?.args || '').trim());
+        let argParts: string[] = [];
+        if (rawArgs) {
+          // Preserve single folder argument for explorer/control if path contains spaces!
+          if (/explorer\.exe$/i.test(target) && fs.existsSync(rawArgs)) {
+            argParts = [rawArgs];
+          } else {
+            argParts = rawArgs.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((s) => s.replace(/^"|"$/g, '')) || [rawArgs];
+          }
+        }
+        const cwd = item?.workingDir && fs.existsSync(expandWinEnvVars(item.workingDir))
+          ? expandWinEnvVars(item.workingDir)
+          : (fs.existsSync(target) ? path.dirname(target) : undefined);
+
+        const child = spawn(target, argParts, {
+          cwd,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: false
+        });
+        child.unref();
+      }
     }
 
     if (mainWindow && !isStationLocked) {
       setTimeout(() => {
         try { mainWindow?.minimize(); } catch {}
-      }, 350);
+      }, 300);
     }
     return { success: true, resolvedPath: target };
   } catch (err: any) {
@@ -3767,15 +4240,18 @@ if (!gotLock) {
       notifyServerOffline();
     });
 
-    // 1. Automatic Clean Slate on boot / terminal start
-    setTimeout(() => {
+    // 1. Automatic Clean Slate + Desktop Shortcut Migration on boot / terminal start
+    setTimeout(async () => {
+      if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.cleanDesktopShortcuts !== false) {
+        await migrateAndCleanDesktopShortcuts().catch(() => {});
+      }
       performCleanSlate('startup').then((res) => {
         mainWindow?.webContents.send('maintenance:clean:auto-done', res);
       });
     }, 3500);
 
     // 2. Traditional Pisonet Idle Watchdog (Allan timer relay cuts monitor power; PC remains idle)
-    // Uses dynamic admin-configured idle threshold (default 180s), cleans session, resets volume & restores Game Launcher
+    // Uses dynamic admin-configured idle threshold (default 180s), cleans session, resets volume & restores Big Game Launcher
     setInterval(() => {
       try {
         const threshold = Math.max(60, Number(cachedLauncherConfig.idleTimeoutSeconds) || 180);
@@ -3785,12 +4261,16 @@ if (!gotLock) {
             hasCleanedInCurrentIdleSession = true;
             console.log(`[Pisonet Watchdog] Station idle for ${idleSeconds}s (threshold=${threshold}s). Auto-cleaning & resetting station...`);
             performCleanSlate('idle').then(async (res) => {
+              if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.cleanDesktopShortcuts !== false) {
+                await migrateAndCleanDesktopShortcuts().catch(() => {});
+              }
               if (cachedLauncherConfig.resetVolumePercent !== null && cachedLauncherConfig.resetVolumePercent !== undefined) {
                 await setWindowsMasterVolume(cachedLauncherConfig.resetVolumePercent);
               }
               if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.autoRestoreOnIdle && !isStationLocked && !isAnnouncementActive && mainWindow) {
                 try {
                   if (mainWindow.isMinimized()) mainWindow.restore();
+                  mainWindow.maximize();
                   mainWindow.show();
                   mainWindow.focus();
                 } catch {}
