@@ -73,9 +73,9 @@ function scheduleAutoOtaIfOutdated(authSocket: AuthenticatedSocket, pc: { id: st
     const downloadUrl = 'https://artemia-pisonet-backend.onrender.com/download/client/app.asar';
     console.log(`[Auto-OTA] Station ${pc.name} (${pc.id}) running version "${effectiveVer || 'legacy-v1.0.0'}". Pushing v${latestNow}...`);
 
-    // Agents >= 1.0.10 have fixed /FO CSV tasklist & /T process-tree wait barrier in applyClientUpdate.
-    // Older agents (<= 1.0.9) upgrade via the hardened server batch script so slower PCs never hit SingletonLock races.
-    if (effectiveVer && compareSemver(effectiveVer, '1.0.10') >= 0) {
+    // Agents >= 1.0.12 use WSH GUI-subsystem updater (avoids Windows DETACHED_PROCESS tasklist|find stall).
+    // Older agents (<= 1.0.11) upgrade via the server WSH updater script so slower PCs never stall on tasklist|find or SingletonLock.
+    if (effectiveVer && compareSemver(effectiveVer, '1.0.12') >= 0) {
       authSocket.emit('agent:client-update:run', {
         reqId: 'auto_ota_' + Date.now(),
         targetPcId: pc.id,
@@ -105,39 +105,38 @@ try {
   Invoke-WebRequest -Uri "https://raw.githubusercontent.com/bitangholkent2006-sketch/Artemia-Pisonet/artemia-pisonet/releases/app.asar" -OutFile $tempAsar -UseBasicParsing -TimeoutSec 25
 }
 if ((Test-Path $tempAsar) -and ((Get-Item $tempAsar).Length -gt 100000)) {
-  $batPath = Join-Path $env:TEMP ("artemia_ota_" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".bat")
+  $vbsPath = Join-Path $env:TEMP ("artemia_ota_" + [guid]::NewGuid().ToString("N").Substring(0,8) + ".vbs")
+  $exeName = Split-Path $exePath -Leaf
   $q = [char]34
-  $lines = @(
-    "@echo off",
-    "set $($q)ELECTRON_RUN_AS_NODE=$($q)",
-    "set /a retries=0",
-    "set /a wait_tries=0",
-    "ping -n 2 127.0.0.1 >nul",
-    "taskkill /F /T /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
-    ":wait_exit",
-    "tasklist /FO CSV /NH /FI $($q)IMAGENAME eq Artemia Customer Terminal.exe$($q) 2>NUL | find /I $($q)Artemia Customer Terminal.exe$($q) >NUL",
-    "if errorlevel 1 goto retry_copy",
-    "set /a wait_tries+=1",
-    "if %wait_tries% GEQ 15 goto retry_copy",
-    "taskkill /F /T /IM $($q)Artemia Customer Terminal.exe$($q) >nul 2>&1",
-    "ping -n 2 127.0.0.1 >nul",
-    "goto wait_exit",
-    ":retry_copy",
-    "copy /Y $($q)$tempAsar$($q) $($q)$targetAsar$($q) >nul 2>&1",
-    "if not errorlevel 1 goto copy_ok",
-    "set /a retries+=1",
-    "if %retries% GEQ 15 goto copy_ok",
-    "ping -n 2 127.0.0.1 >nul",
-    "goto retry_copy",
-    ":copy_ok",
-    "del /f /q $($q)$tempAsar$($q) >nul 2>&1",
-    "ping -n 3 127.0.0.1 >nul",
-    "start $($q)$($q) /D $($q)$targetDir$($q) $($q)$exePath$($q)",
-    "del /f /q $($q)%~f0$($q) >nul 2>&1",
-    "exit"
+  $vbsLines = @(
+    'Dim sh, fso, wmi, col, p, r',
+    ('Set sh = CreateObject(' + $q + 'WScript.Shell' + $q + ')'),
+    ('Set fso = CreateObject(' + $q + 'Scripting.FileSystemObject' + $q + ')'),
+    'On Error Resume Next',
+    ('sh.Environment(' + $q + 'PROCESS' + $q + ').Remove ' + $q + 'ELECTRON_RUN_AS_NODE' + $q),
+    ('Set wmi = GetObject(' + $q + 'winmgmts:\\\\.\\root\\cimv2' + $q + ')'),
+    ('Set col = wmi.ExecQuery(' + $q + 'SELECT ProcessId FROM Win32_Process WHERE Name=' + "'" + $exeName + "'" + $q + ')'),
+    'If Err.Number = 0 Then',
+    '  For Each p In col : p.Terminate : Next',
+    'Else',
+    '  Err.Clear',
+    ('  sh.Run ' + $q + 'taskkill /F /IM ' + $q + $q + $exeName + $q + $q + $q + ', 0, True'),
+    'End If',
+    'WScript.Sleep 1000',
+    'For r = 1 To 20',
+    '  Err.Clear',
+    ('  fso.CopyFile ' + $q + $tempAsar + $q + ', ' + $q + $targetAsar + $q + ', True'),
+    '  If Err.Number = 0 Then Exit For',
+    '  WScript.Sleep 400',
+    'Next',
+    ('If fso.FileExists(' + $q + $tempAsar + $q + ') Then fso.DeleteFile ' + $q + $tempAsar + $q + ', True'),
+    'WScript.Sleep 600',
+    ('sh.CurrentDirectory = ' + $q + $targetDir + $q),
+    ('sh.Run ' + $q + $q + $q + $exePath + $q + $q + $q + ', 1, False'),
+    'fso.DeleteFile WScript.ScriptFullName, True'
   )
-  Set-Content -Path $batPath -Value $lines -Encoding ASCII -Force
-  Start-Process -FilePath "cmd.exe" -ArgumentList "/c $($q)$batPath$($q)" -WindowStyle Hidden
+  Set-Content -Path $vbsPath -Value $vbsLines -Encoding ASCII -Force
+  Start-Process -FilePath "wscript.exe" -ArgumentList ('//B //Nologo ' + $q + $vbsPath + $q) -WindowStyle Hidden
 }
 `;
       const encoded = Buffer.from(ps, 'utf16le').toString('base64');

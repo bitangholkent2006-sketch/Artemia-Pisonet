@@ -1,7 +1,7 @@
 {
-  "version": "1.0.11",
+  "version": "1.0.12",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-11T00:05:00.000Z",
+  "releaseDate": "2026-11-11T00:25:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Live CPU/ActiveApp/LAN IP telemetry, reliable lock & announcement window overlay, fix quoted Remote Terminal & Task Manager kill presets, async-safe Auto-Run downloader, multi-PC game updater, File Manager Up navigation, and RemoteInput taskmgr/escaping"
+  "changelog": "Fix Windows OTA self-update relaunch (replace cmd tasklist|find with WSH VBScript updater), fix startup status lock race, and include all v1.0.11 remote control/telemetry/file-manager/game-updater fixes"
 }

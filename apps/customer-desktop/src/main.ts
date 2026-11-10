@@ -50,7 +50,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.11';
+const CLIENT_AGENT_VERSION = '1.0.12';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -78,6 +78,7 @@ class StationMaintenanceAgent {
   private specs: string = 'Standard Gaming Terminal';
   private isConnected = false;
   private isLocked = false;
+  private hasRealtimeStatus = false;
   private isPoweredOff = false;
   private lastUpdateLog: string = 'Station ready. No active background jobs.';
   private announcementTimeout: any = null;
@@ -478,12 +479,14 @@ class StationMaintenanceAgent {
             titleSub.innerHTML = `Station ID: <strong style="color:#38bdf8">${this.pcName}</strong> ${this.specs ? `<span style="font-size:0.75rem; color:#64748b; margin-left:8px;">(${this.specs})</span>` : ''}`;
           }
           this.logMessage(`Station matched in Fleet Database: ID=${current.id}, Name=${this.pcName}`);
-          if (current.status === 'locked') {
-            this.setLockedState(true);
-          } else {
-            this.setLockedState(false);
-            this.isPoweredOff = false;
-            document.getElementById('power-overlay')?.classList.remove('visible');
+          if (!this.hasRealtimeStatus) {
+            if (current.status === 'locked') {
+              this.setLockedState(true);
+            } else {
+              this.setLockedState(false);
+              this.isPoweredOff = false;
+              document.getElementById('power-overlay')?.classList.remove('visible');
+            }
           }
         }
       }
@@ -738,8 +741,10 @@ class StationMaintenanceAgent {
         this.logMessage(`[Power Action] Received: ${payload.action.toUpperCase()} from ${payload.sender || 'Admin'}`);
 
         if (payload.action === 'lock') {
+          this.hasRealtimeStatus = true;
           this.setLockedState(true);
         } else if (payload.action === 'unlock') {
+          this.hasRealtimeStatus = true;
           this.setLockedState(false);
         } else if (payload.action === 'restart') {
           this.handleRestart();
@@ -751,6 +756,7 @@ class StationMaintenanceAgent {
       // Status Synchronization Listeners
       this.socket.on('pc:status', (data: { pcId: string; status: string }) => {
         if (this.matchesThisStation(data.pcId)) {
+          this.hasRealtimeStatus = true;
           this.setLockedState(data.status === 'locked');
           if (this.isPoweredOff && (data.status === 'available' || data.status === 'in-use')) {
             this.isPoweredOff = false;
@@ -761,6 +767,7 @@ class StationMaintenanceAgent {
 
       this.socket.on('pc:status-changed', (data: { pcId: string; status: string }) => {
         if (this.matchesThisStation(data.pcId)) {
+          this.hasRealtimeStatus = true;
           this.setLockedState(data.status === 'locked');
         }
       });

@@ -1923,60 +1923,144 @@ async function applyClientUpdate(downloadUrl: string): Promise<{ success: boolea
       throw new Error(`Downloaded app.asar is too small (${stats.size} bytes). Update aborted.`);
     }
 
-    logToFile(`[OTA Updater] Download complete (${stats.size} bytes). Preparing updater batch script...`);
+    logToFile(`[OTA Updater] Download complete (${stats.size} bytes). Preparing updater script...`);
 
-    const batchScriptPath = path.join(updateDir, `apply_ota_${updateId}.bat`);
+    const vbsScriptPath = path.join(updateDir, `apply_ota_${updateId}.vbs`);
+    const otaLogPath = path.join(os.homedir(), '.artemia', 'ota.log');
     const exePath = process.execPath;
     const exeDir = path.dirname(exePath);
     const exeName = path.basename(exePath);
+    const vbsStr = (s: string) => `"${s.replace(/"/g, '""')}"`;
 
-    // Note: ping -n N works reliably when stdin is redirected (unlike timeout /t which fails immediately under stdio: 'ignore')
-    // Uses tasklist /FO CSV /NH so >25-char executable names are not truncated, and keeps counters outside parenthesized blocks.
-    const batchScript = `@echo off
-chcp 65001 >nul
-set "ELECTRON_RUN_AS_NODE="
-title Artemia Fleet Client Updater
-set /a retries=0
-set /a wait_tries=0
-ping -n 3 127.0.0.1 >nul
+    // Use WSH (wscript.exe, Windows GUI subsystem) instead of cmd.exe with detached:true.
+    // On Windows, Node's DETACHED_PROCESS flag causes console tools (tasklist|find, powershell) to hang/exit silently.
+    const vbsScript = `Option Explicit
+Dim sh, fso, env, logPath, tempAsar, targetAsar, exePath, exeDir, exeName, oldPid
+Set sh = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
+On Error Resume Next
+Set env = sh.Environment("PROCESS")
+env.Remove "ELECTRON_RUN_AS_NODE"
+On Error GoTo 0
 
-:retry_copy
-copy /y "${tempAsar}" "${targetAsar}" >nul 2>&1
-if not errorlevel 1 goto copy_ok
-set /a retries+=1
-if %retries% EQU 3 taskkill /F /T /PID ${process.pid} >nul 2>&1
-if %retries% EQU 6 taskkill /F /T /IM "${exeName}" >nul 2>&1
-if %retries% GEQ 20 goto copy_ok
-ping -n 2 127.0.0.1 >nul
-goto retry_copy
+logPath = ${vbsStr(otaLogPath)}
+tempAsar = ${vbsStr(tempAsar)}
+targetAsar = ${vbsStr(targetAsar)}
+exePath = ${vbsStr(exePath)}
+exeDir = ${vbsStr(exeDir)}
+exeName = ${vbsStr(exeName)}
+oldPid = ${process.pid}
 
-:copy_ok
-del /f /q "${tempAsar}" >nul 2>&1
+Sub WriteLog(msg)
+  On Error Resume Next
+  Dim folder, lf
+  folder = fso.GetParentFolderName(logPath)
+  If Not fso.FolderExists(folder) Then fso.CreateFolder(folder)
+  Set lf = fso.OpenTextFile(logPath, 8, True)
+  lf.WriteLine "[" & Year(Now) & "-" & Right("0" & Month(Now), 2) & "-" & Right("0" & Day(Now), 2) & " " & FormatDateTime(Now, 4) & ":" & Right("0" & Second(Now), 2) & "] " & msg
+  lf.Close
+  On Error GoTo 0
+End Sub
 
-:wait_exit
-tasklist /FO CSV /NH /FI "IMAGENAME eq ${exeName}" 2>NUL | find /I "${exeName}" >NUL
-if errorlevel 1 goto do_launch
-set /a wait_tries+=1
-if %wait_tries% EQU 3 taskkill /F /T /IM "${exeName}" >nul 2>&1
-if %wait_tries% GEQ 15 goto do_launch
-ping -n 2 127.0.0.1 >nul
-goto wait_exit
+Function CountProcsByName(procName)
+  On Error Resume Next
+  Dim wmi, col
+  Set wmi = GetObject("winmgmts:\\\\.\\root\\cimv2")
+  Set col = wmi.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE Name='" & procName & "'")
+  If Err.Number <> 0 Then
+    CountProcsByName = -1
+    Err.Clear
+  Else
+    CountProcsByName = col.Count
+  End If
+  On Error GoTo 0
+End Function
 
-:do_launch
-ping -n 3 127.0.0.1 >nul
-start "" /D "${exeDir}" "${exePath}"
-del /f /q "%~f0" >nul 2>&1
-exit
+Sub TerminateProcsByName(procName)
+  On Error Resume Next
+  Dim wmi, col, p
+  Set wmi = GetObject("winmgmts:\\\\.\\root\\cimv2")
+  Set col = wmi.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE Name='" & procName & "'")
+  If Err.Number = 0 Then
+    For Each p In col
+      p.Terminate
+    Next
+  Else
+    Err.Clear
+    sh.Run "taskkill /F /IM """ & procName & """", 0, True
+  End If
+  On Error GoTo 0
+End Sub
+
+WriteLog "OTA WSH started. OldPid=" & oldPid & " Target=" & targetAsar
+WScript.Sleep 600
+
+Dim w, cnt
+For w = 1 To 15
+  cnt = CountProcsByName(exeName)
+  If cnt = 0 Then Exit For
+  If w = 5 Then
+    WriteLog "Old Electron still active (count=" & cnt & "), terminating..."
+    TerminateProcsByName exeName
+  End If
+  WScript.Sleep 400
+Next
+
+Dim r, copied, copyErr
+copied = False
+copyErr = ""
+On Error Resume Next
+For r = 1 To 20
+  Err.Clear
+  fso.CopyFile tempAsar, targetAsar, True
+  If Err.Number = 0 Then
+    copied = True
+    WriteLog "Copied new app.asar on attempt " & r & " (size=" & fso.GetFile(targetAsar).Size & ")"
+    Exit For
+  End If
+  copyErr = Err.Description
+  If r = 4 Then TerminateProcsByName exeName
+  WScript.Sleep 400
+Next
+On Error GoTo 0
+
+If Not copied Then
+  WriteLog "ERROR copying ASAR: " & copyErr
+End If
+
+On Error Resume Next
+If fso.FileExists(tempAsar) Then fso.DeleteFile tempAsar, True
+On Error GoTo 0
+
+' Ensure no stale instance lingers to hold requestSingleInstanceLock()
+If CountProcsByName(exeName) > 0 Then
+  TerminateProcsByName exeName
+  WScript.Sleep 600
+Else
+  WScript.Sleep 400
+End If
+
+On Error Resume Next
+Err.Clear
+sh.CurrentDirectory = exeDir
+sh.Run """" & exePath & """", 1, False
+If Err.Number = 0 Then
+  WriteLog "Relaunched " & exeName & " cleanly."
+Else
+  WriteLog "ERROR relaunching exe: " & Err.Description
+End If
+fso.DeleteFile WScript.ScriptFullName, True
+On Error GoTo 0
 `;
 
-    fs.writeFileSync(batchScriptPath, batchScript, 'utf8');
+    fs.writeFileSync(vbsScriptPath, vbsScript, 'utf8');
 
-    // Spawn detached updater batch script silently with clean environment
+    // Spawn detached WSH updater silently with clean environment
     isOtaRestarting = true;
     try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
     const cleanEnv = { ...process.env };
     delete cleanEnv.ELECTRON_RUN_AS_NODE;
-    const child = spawn('cmd.exe', ['/c', batchScriptPath], {
+    const child = spawn('wscript.exe', ['//B', '//Nologo', vbsScriptPath], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
@@ -1984,7 +2068,7 @@ exit
     });
     child.unref();
 
-    logToFile(`[OTA Updater] Detached updater batch spawned (${batchScriptPath}). Exiting Electron PID ${process.pid}...`);
+    logToFile(`[OTA Updater] Detached WSH updater spawned (${vbsScriptPath}). Exiting Electron PID ${process.pid}...`);
     setTimeout(() => {
       app.exit(0);
     }, 400);
