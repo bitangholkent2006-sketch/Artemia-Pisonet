@@ -26,12 +26,13 @@ pcRoutes.get('/public', async (c) => {
 // Device HTTP Heartbeat Keepalive (Backup from Electron Main Process so PC never falsely drops offline)
 pcRoutes.post('/heartbeat', async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const { pcId, hardwareId, macAddress } = body;
+  const { pcId, hardwareId, macAddress, ipAddress } = body;
   if (!pcId && !hardwareId && !macAddress) {
     return c.json({ success: false, message: 'pcId or hardwareId required' }, 400);
   }
-  const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  await PcService.recordHeartbeat(pcId || hardwareId || 'pc-01', ip, macAddress, hardwareId);
+  const forwardedIp = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
+  const resolvedIp = (ipAddress && String(ipAddress).trim() !== '127.0.0.1') ? String(ipAddress).trim() : forwardedIp;
+  await PcService.recordHeartbeat(pcId || hardwareId || 'pc-01', resolvedIp, macAddress, hardwareId);
   return c.json({ success: true });
 });
 

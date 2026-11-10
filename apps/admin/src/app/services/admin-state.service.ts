@@ -592,9 +592,9 @@ export class AdminStateService {
     }
   }
 
-  public async triggerGameUpdate(targetPcId: string = 'all', gameKey: string, updateCommand?: string): Promise<{ success: boolean; message: string }> {
+  public async triggerGameUpdate(targetPcId: string = 'all', gameKey: string, updateCommand?: string, targetPcIds?: string[]): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await this.apiClient.triggerGameUpdate(targetPcId, gameKey, updateCommand);
+      const res = await this.apiClient.triggerGameUpdate(targetPcId, gameKey, updateCommand, targetPcIds);
       return { success: res.success, message: res.message };
     } catch (err: any) {
       return { success: false, message: err.message || 'Game update request failed.' };
@@ -658,25 +658,40 @@ export class AdminStateService {
     }
   }
 
+  private matchesStationId(incomingId?: string, targetPcId?: string): boolean {
+    if (!incomingId || !targetPcId) return false;
+    const dId = String(incomingId).toLowerCase().trim();
+    const pId = String(targetPcId).toLowerCase().trim();
+    if (dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId) return true;
+    const pc = this.state.pcs?.find((p) => p.id.toLowerCase() === pId);
+    if (pc && (pc.identifier?.toLowerCase() === dId || pc.name?.toLowerCase() === dId)) return true;
+    return false;
+  }
+
   // Socket-based Request/Response Helpers with timeout
-  public browseDirectory(pcId: string, dirPath: string): Promise<any[]> {
+  public browseDirectoryDetailed(pcId: string, dirPath: string): Promise<{ entries: any[]; error?: string }> {
     return new Promise((resolve) => {
       const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
       const timer = setTimeout(() => {
         cleanup();
-        resolve([]);
+        resolve({ entries: [], error: 'Request timed out (station offline or unreachable).' });
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:fs:list:res', (data: any) => {
-        if (data.reqId === reqId || (data.pcId?.toLowerCase() === pcId.toLowerCase())) {
+        if (data.reqId === reqId || this.matchesStationId(data.pcId, pcId)) {
           clearTimeout(timer);
           cleanup();
-          resolve(data.entries || []);
+          resolve({ entries: data.entries || [], error: data.error });
         }
       });
 
       this.apiClient.emitSocket('maintenance:fs:list:req', { reqId, pcId, path: dirPath });
     });
+  }
+
+  public async browseDirectory(pcId: string, dirPath: string): Promise<any[]> {
+    const res = await this.browseDirectoryDetailed(pcId, dirPath);
+    return res.entries;
   }
 
   public deleteRemoteFile(pcId: string, targetPath: string): Promise<{ success: boolean; message?: string }> {
@@ -688,10 +703,10 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:fs:delete:res', (data: any) => {
-        if (data.reqId === reqId || (data.pcId?.toLowerCase() === pcId.toLowerCase())) {
+        if (data.reqId === reqId || this.matchesStationId(data.pcId, pcId)) {
           clearTimeout(timer);
           cleanup();
-          resolve({ success: data.success, message: data.message });
+          resolve({ success: !!data.success, message: data.message || data.error });
         }
       });
 
@@ -708,7 +723,7 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:process:list:res', (data: any) => {
-        if (data.reqId === reqId || (data.pcId?.toLowerCase() === pcId.toLowerCase())) {
+        if (data.reqId === reqId || this.matchesStationId(data.pcId, pcId)) {
           clearTimeout(timer);
           cleanup();
           resolve(data.processes || []);
@@ -728,10 +743,10 @@ export class AdminStateService {
       }, 8000);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:process:kill:res', (data: any) => {
-        if (data.reqId === reqId || (data.pcId?.toLowerCase() === pcId.toLowerCase())) {
+        if (data.reqId === reqId || this.matchesStationId(data.pcId, pcId)) {
           clearTimeout(timer);
           cleanup();
-          resolve({ success: data.success, message: data.message });
+          resolve({ success: !!data.success, message: data.message || data.error });
         }
       });
 

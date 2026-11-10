@@ -103,25 +103,27 @@ maintenanceRoutes.post('/clean-temp', requireStaff, async (c) => {
 maintenanceRoutes.post('/game-update', requireStaff, async (c) => {
   const staff = c.get('user');
   const body = await c.req.json();
-  const { targetPcId = 'all', gameKey, updateCommand } = body;
+  const { targetPcId = 'all', targetPcIds, gameKey, updateCommand } = body;
 
   if (!gameKey) {
     return c.json({ success: false, message: 'Game key is required (e.g. steam, epic, riot, roblox, lan_sync)' }, 400);
   }
 
+  const targets = Array.isArray(targetPcIds) && targetPcIds.length > 0 ? targetPcIds : [targetPcId];
   const payload = {
-    targetPcId,
+    targetPcId: targets.includes('all') ? 'all' : targets[0],
+    targetPcIds: targets,
     gameKey,
     updateCommand,
     sender: staff?.fullName || staff?.username || 'Admin',
     timestamp: new Date().toISOString()
   };
 
-  dispatchAgentEvent('agent:game:update', payload, targetPcId);
+  dispatchAgentEvent('agent:game:update', payload, targetPcId, targetPcIds);
 
   return c.json({
     success: true,
-    message: `Game update request for '${gameKey}' dispatched to ${targetPcId === 'all' ? 'all stations' : targetPcId}.`
+    message: `Game update request for '${gameKey}' dispatched to ${targets.includes('all') ? 'all stations' : targets.join(', ')}.`
   });
 });
 
@@ -180,11 +182,11 @@ maintenanceRoutes.post('/power', requireStaff, async (c) => {
   const collections = getCollections();
   if (targetPcId !== 'all') {
     if (action === 'lock') {
-      await PcService.togglePcStatus(targetPcId, 'locked', staff.id);
+      await PcService.togglePcStatus(targetPcId, 'locked', staff.id, false);
     } else if (action === 'unlock') {
-      await PcService.togglePcStatus(targetPcId, 'available', staff.id);
+      await PcService.togglePcStatus(targetPcId, 'available', staff.id, false);
     } else if (action === 'shutdown') {
-      await PcService.togglePcStatus(targetPcId, 'offline', staff.id);
+      await PcService.togglePcStatus(targetPcId, 'offline', staff.id, false);
     }
   } else {
     if (action === 'lock') {

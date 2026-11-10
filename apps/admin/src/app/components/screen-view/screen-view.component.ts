@@ -55,12 +55,12 @@ export interface ClickRipple {
           <!-- Refresh Rate / Auto-Streaming Selector -->
           <div class="stream-rate-select">
             <span class="rate-label">Live Stream:</span>
-            <select [(ngModel)]="streamIntervalMs" (change)="onStreamRateChange()">
-              <option [value]="150">⚡ Turbo Extreme (150ms / ~7 FPS)</option>
-              <option [value]="250">🚀 Real-Time Smooth (250ms / 4 FPS)</option>
-              <option [value]="500">⚡ Balanced (500ms / 2 FPS)</option>
-              <option [value]="1000">Normal (1.0s)</option>
-              <option [value]="0">Manual (Click Capture)</option>
+            <select [(ngModel)]="streamIntervalMs" (ngModelChange)="onStreamRateChange()">
+              <option [ngValue]="150">⚡ Turbo Extreme (150ms / ~7 FPS)</option>
+              <option [ngValue]="250">🚀 Real-Time Smooth (250ms / 4 FPS)</option>
+              <option [ngValue]="500">⚡ Balanced (500ms / 2 FPS)</option>
+              <option [ngValue]="1000">Normal (1.0s)</option>
+              <option [ngValue]="0">Manual (Click Capture)</option>
             </select>
           </div>
 
@@ -880,9 +880,9 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (!this.selectedPc) return null;
     const targetId = this.selectedPc.id;
     return this.screenImages[targetId] ||
-           this.screenImages[targetId.toLowerCase()] ||
-           (this.selectedPc.name ? this.screenImages[this.selectedPc.name.toLowerCase()] : null) ||
-           null;
+      this.screenImages[targetId.toLowerCase()] ||
+      (this.selectedPc.name ? this.screenImages[this.selectedPc.name.toLowerCase()] : null) ||
+      null;
   }
 
   // Remote Desktop Control state
@@ -961,7 +961,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       this.addRipple(x, y);
       this.lastActionMessage = `🔘 Right-click (Long-press) at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
-        try { navigator.vibrate(50); } catch {}
+        try { navigator.vibrate(50); } catch { }
       }
       this.adminState.sendRemoteInput({
         pcId: this.selectedPc!.id,
@@ -1029,7 +1029,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   // Bound window capture listener to intercept physical keys
   private boundWindowKeyDown = (e: KeyboardEvent) => this.onGlobalWindowKeyDown(e);
 
-  constructor(public adminState: AdminStateService) {}
+  constructor(public adminState: AdminStateService) { }
 
   public matchesStation(p: any, id: string): boolean {
     if (!p || !id) return false;
@@ -1074,7 +1074,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       this.state = s;
       if (this.state.pcs?.length > 0) {
         if (!this.selectedPcId || !this.state.pcs.some((p: any) => this.matchesStation(p, this.selectedPcId))) {
-          this.selectStation(this.initialPcId || this.state.pcs[0].id);
+          const onlinePc = this.state.pcs.find((p: any) => p.status !== 'offline');
+          this.selectStation(this.initialPcId || onlinePc?.id || this.state.pcs[0].id);
         }
       }
     });
@@ -1145,17 +1146,17 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.isFullscreen = !this.isFullscreen;
     if (this.isFullscreen) {
       try {
-        document.documentElement.requestFullscreen().catch(() => {});
-      } catch {}
+        document.documentElement.requestFullscreen().catch(() => { });
+      } catch { }
       if (!this.isControlEnabled) {
         this.toggleControlMode();
       }
     } else {
       try {
         if (document.fullscreenElement) {
-          document.exitFullscreen().catch(() => {});
+          document.exitFullscreen().catch(() => { });
         }
-      } catch {}
+      } catch { }
     }
   }
 

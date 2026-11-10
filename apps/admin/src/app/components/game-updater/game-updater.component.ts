@@ -441,7 +441,7 @@ export interface StationDownloadState {
               <span class="pulse-dot"></span>
               <span>LATEST CLIENT RELEASE READY ON SERVER</span>
             </div>
-            <span class="ota-ver">v1.0.2</span>
+            <span class="ota-ver">v{{ latestOtaVersion }}</span>
           </div>
           <div class="ota-release-details">
             <div class="ota-detail-item">
@@ -450,7 +450,7 @@ export interface StationDownloadState {
             </div>
             <div class="ota-detail-item">
               <span class="label">Package Size:</span>
-              <span class="val">~176.7 KB (Ultra-light OTA)</span>
+              <span class="val">{{ latestOtaSizeLabel }}</span>
             </div>
             <div class="ota-detail-item">
               <span class="label">Delivery Method:</span>
@@ -1368,6 +1368,8 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
   activeMode: 'downloader' | 'games' | 'client-ota' = 'downloader';
   isPushingOta = false;
   stationOtaStatus: { [pcId: string]: string } = {};
+  latestOtaVersion = '1.0.11';
+  latestOtaSizeLabel = 'Ultra-light OTA';
 
   // --- Downloader State ---
   targetMode: 'all' | 'selected' = 'all';
@@ -1473,7 +1475,24 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
 
   constructor(public adminState: AdminStateService) {}
 
+  private findStation(pcId?: string): PC | undefined {
+    if (!pcId) return undefined;
+    const lower = pcId.toLowerCase();
+    return this.state.pcs?.find((p: PC) =>
+      p.id?.toLowerCase() === lower || p.identifier?.toLowerCase() === lower || p.name?.toLowerCase() === lower
+    );
+  }
+
   ngOnInit() {
+    this.adminState.getClientUpdateInfo().then((info) => {
+      if (info?.success && info.data) {
+        if (info.data.version) this.latestOtaVersion = info.data.version;
+        if (info.data.sizeBytes > 0) {
+          this.latestOtaSizeLabel = `~${(info.data.sizeBytes / 1024).toFixed(1)} KB (Ultra-light OTA)`;
+        }
+      }
+    }).catch(() => {});
+
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
       if (this.selectedPcIds.length === 0 && s.pcs?.length > 0) {
@@ -1499,13 +1518,14 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
     // 1. Listen for Live Download Progress
     this.dlProgSub = this.adminState.apiClient.onSocketEvent('maintenance:download:progress', (data: any) => {
       if (!data?.pcId) return;
-      const pc = this.state.pcs?.find((p: PC) => p.id === data.pcId || p.identifier === data.pcId);
+      const pc = this.findStation(data.pcId);
+      const key = pc ? pc.id : data.pcId;
       const name = pc ? pc.name : data.pcId;
       const downloadedMb = (Number(data.downloadedBytes || 0) / (1024 * 1024)).toFixed(1);
       const totalMb = data.totalBytes > 0 ? (Number(data.totalBytes) / (1024 * 1024)).toFixed(1) : 'Unknown';
 
-      this.stationDownloads[data.pcId] = {
-        pcId: data.pcId,
+      this.stationDownloads[key] = {
+        pcId: key,
         pcName: name,
         percent: data.percent ?? 0,
         downloadedMb,
@@ -1517,17 +1537,18 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
     // 2. Listen for Download Result (Completion / Error)
     this.dlResSub = this.adminState.apiClient.onSocketEvent('maintenance:download:res', (data: any) => {
       if (!data?.pcId) return;
-      const pc = this.state.pcs?.find((p: PC) => p.id === data.pcId || p.identifier === data.pcId);
+      const pc = this.findStation(data.pcId);
+      const key = pc ? pc.id : data.pcId;
       const name = pc ? pc.name : data.pcId;
 
       if (data.success) {
-        const cur = this.stationDownloads[data.pcId] || {
-          pcId: data.pcId,
+        const cur = this.stationDownloads[key] || {
+          pcId: key,
           pcName: name,
           downloadedMb: '0',
           totalMb: '0'
         };
-        this.stationDownloads[data.pcId] = {
+        this.stationDownloads[key] = {
           ...cur,
           percent: 100,
           status: 'completed',
@@ -1542,13 +1563,13 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
           type: 'success'
         });
       } else {
-        const cur = this.stationDownloads[data.pcId] || {
-          pcId: data.pcId,
+        const cur = this.stationDownloads[key] || {
+          pcId: key,
           pcName: name,
           downloadedMb: '0',
           totalMb: '0'
         };
-        this.stationDownloads[data.pcId] = {
+        this.stationDownloads[key] = {
           ...cur,
           status: 'failed',
           error: data.error || 'Napakyas ang pag-download'
@@ -1565,8 +1586,8 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
 
     // 3. Listen for Game Update Logs
     this.socketSub = this.adminState.apiClient.onSocketEvent('maintenance:game:status', (data: any) => {
-      const pc = this.state.pcs?.find((p: PC) => p.id === data.pcId);
-      const name = pc ? pc.name : data.pcId || 'Station';
+      const pc = this.findStation(data.pcId);
+      const name = pc ? pc.name : data.pcName || data.pcId || 'Station';
       this.consoleLogs.unshift({
         timestamp: new Date(),
         pcName: name,
@@ -1578,7 +1599,8 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
     // 4. Listen for Live OTA Client Update Status
     this.otaStatusSub = this.adminState.apiClient.onSocketEvent('maintenance:client-update:status', (data: any) => {
       if (!data?.pcId) return;
-      const pc = this.state.pcs?.find((p: PC) => p.id === data.pcId || p.identifier === data.pcId);
+      const pc = this.findStation(data.pcId);
+      const key = pc ? pc.id : data.pcId;
       const name = pc ? pc.name : data.pcId;
 
       let tag = 'Updating...';
@@ -1591,7 +1613,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
       } else if (data.status === 'done') {
         tag = 'Updated 🟢';
       }
-      this.stationOtaStatus[data.pcId] = tag;
+      this.stationOtaStatus[key] = tag;
 
       this.consoleLogs.unshift({
         timestamp: new Date(),
@@ -1790,11 +1812,12 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
     }
 
     this.isDispatching = true;
-    const targetScope = this.areAllSelected ? 'all' : this.selectedPcIds[0];
+    const targetScope = this.areAllSelected ? 'all' : (this.selectedPcIds.length === 1 ? this.selectedPcIds[0] : 'all');
+    const targetIds = this.areAllSelected ? ['all'] : [...this.selectedPcIds];
     const customCmd = (this.selectedGameKey === 'lan_sync' || this.selectedGameKey === 'custom') ? this.customSyncCommand : undefined;
 
     try {
-      const res = await this.adminState.triggerGameUpdate(targetScope, this.selectedGameKey, customCmd);
+      const res = await this.adminState.triggerGameUpdate(targetScope, this.selectedGameKey, customCmd, targetIds);
       if (res.success) {
         this.statusNotice = `Batch update request dispatched to ${this.selectedPcIds.length} stations!`;
         this.noticeType = 'success';

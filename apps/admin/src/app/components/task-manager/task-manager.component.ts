@@ -462,7 +462,8 @@ export class TaskManagerComponent implements OnInit, OnDestroy, OnChanges {
       this.state = s;
       if (this.state.pcs?.length > 0) {
         if (!this.selectedPcId || !this.state.pcs.some((p: any) => p.id === this.selectedPcId)) {
-          this.selectedPcId = this.initialPcId || this.state.pcs[0].id;
+          const onlinePc = this.state.pcs.find((p: any) => p.status !== 'offline');
+          this.selectedPcId = this.initialPcId || onlinePc?.id || this.state.pcs[0].id;
           this.refreshProcesses();
         }
       }
@@ -524,11 +525,11 @@ export class TaskManagerComponent implements OnInit, OnDestroy, OnChanges {
   async killPreset(type: 'games' | 'browsers') {
     if (!this.selectedPcId) return;
     const targets = type === 'games'
-      ? ['dota2.exe', 'valorant.exe', 'RobloxPlayerBeta.exe', 'LeagueClient.exe', 'dnplayer.exe', 'HD-Player.exe']
-      : ['chrome.exe', 'msedge.exe', 'firefox.exe', 'opera.exe'];
+      ? ['dota2.exe', 'valorant.exe', 'VALORANT-Win64-Shipping.exe', 'ros64.exe', 'RobloxPlayerBeta.exe', 'crossfire.exe', 'LeagueClient.exe', 'cs2.exe', 'dnplayer.exe', 'HD-Player.exe']
+      : ['chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe', 'opera.exe'];
 
     const cmd = targets.map(t => `taskkill /F /IM "${t}" 2>$null`).join('; ');
-    const res = await this.adminState.executeRemoteCommand(this.selectedPcId, cmd, 'powershell');
+    await this.adminState.executeRemoteCommand(this.selectedPcId, cmd, 'powershell');
     this.feedbackMessage = `Sent terminate signal for all ${type} to ${this.selectedPc?.name}.`;
     this.feedbackType = 'success';
     setTimeout(() => this.refreshProcesses(), 1500);

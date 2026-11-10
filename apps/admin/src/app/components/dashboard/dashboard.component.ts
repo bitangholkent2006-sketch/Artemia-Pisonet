@@ -1319,8 +1319,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
     });
 
     this.fpsBoostSub = this.adminState.onFpsBoostResult((data: any) => {
+      const pcLabel = data.pcName || data.pcId?.toUpperCase() || 'Station';
+      if (data.success === false) {
+        this.showNotice(`⚠️ [FPS Boost Failed] ${pcLabel}: ${data.error || 'Optimization script error'}`, 'warn');
+        return;
+      }
       const freedMb = Math.round(data.freedRamMb || 0);
-      const pcLabel = data.pcName || data.pcId?.toUpperCase();
       const plan = data.powerPlan || 'Ultimate Performance';
       const games = data.boostedGames && data.boostedGames.length > 0 ? ` • Boosted: ${data.boostedGames.join(', ')}` : '';
       this.showNotice(`⚡ [FPS Boost Complete] ${pcLabel}: Nabawi ang ${freedMb} MB RAM • ${plan} Activated${games}!`, 'success');
@@ -1487,7 +1491,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
     const nextStatus: PCStatus = pc.status === 'locked' ? 'available' : 'locked';
     pc.status = nextStatus;
     this.showNotice(nextStatus === 'locked' ? `🔒 Gi-LOCK ang ${pc.name} alang sa maintenance.` : `🔓 Na-UNLOCK ang ${pc.name}. Normal desktop restored.`, 'info');
-    await this.adminState.togglePcStatus(pc.id, nextStatus);
     await this.adminState.executePowerAction(pc.id, nextStatus === 'locked' ? 'lock' : 'unlock');
   }
 

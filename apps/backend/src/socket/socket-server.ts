@@ -244,6 +244,16 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       PcService.recordHeartbeat(pcId).catch(() => {});
     }
 
+    const resolveClientIp = (reportedIp?: string): string => {
+      const clean = (val?: string) => String(val || '').replace(/^::ffff:/i, '').trim();
+      const rep = clean(reportedIp);
+      if (rep && rep !== '127.0.0.1' && rep !== '::1') return rep;
+      const fwd = socket.handshake.headers?.['x-forwarded-for'];
+      const fwdIp = clean(Array.isArray(fwd) ? fwd[0] : String(fwd || '').split(',')[0]);
+      if (fwdIp && fwdIp !== '127.0.0.1' && fwdIp !== '::1') return fwdIp;
+      return clean(socket.handshake.address) || '127.0.0.1';
+    };
+
     const handleStationRegister = async (data: { pcId?: string; name?: string; specs?: string; ipAddress?: string; macAddress?: string; hardwareId?: string; clientVersion?: string }) => {
       // Save clientVersion synchronously BEFORE awaiting DB so concurrent heartbeats never misclassify client as legacy-v1.0.0
       if (data?.clientVersion) {
@@ -254,7 +264,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       const pc = await PcService.autoDiscoverOrRegisterPc(
         rawId,
         rawName,
-        data?.ipAddress || (socket.handshake.address?.replace('::ffff:', '') || '127.0.0.1'),
+        resolveClientIp(data?.ipAddress),
         data?.specs,
         data?.macAddress,
         data?.hardwareId
@@ -293,7 +303,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     // PC Terminal Heartbeat Event & Telemetry
-    authSocket.on('pc:heartbeat', async (data: { pcId: string; telemetry?: any; macAddress?: string; hardwareId?: string; clientVersion?: string }) => {
+    authSocket.on('pc:heartbeat', async (data: { pcId: string; telemetry?: any; ipAddress?: string; macAddress?: string; hardwareId?: string; clientVersion?: string }) => {
       const targetId = authSocket.data.pcId || pcId || data?.pcId;
       if (targetId) {
         if (data?.clientVersion) {
@@ -307,7 +317,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
             );
           }
         }
-        await PcService.recordHeartbeat(targetId, socket.handshake.address?.replace('::ffff:', ''), data?.macAddress, data?.hardwareId);
+        await PcService.recordHeartbeat(targetId, resolveClientIp(data?.ipAddress), data?.macAddress, data?.hardwareId);
         if (data?.telemetry) {
           try {
             const { getCollections } = await import('../database/connection');
@@ -348,7 +358,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
               ]
             };
             const updatedDoc = await collections.pcs.findOneAndUpdate(targetFilter, { $set: updateFields }, { returnDocument: 'after' });
-            const finalPcId = (updatedDoc as any)?.value?.id || targetId;
+            const finalPcId = (updatedDoc as any)?.id || (updatedDoc as any)?.value?.id || targetId;
             broadcastRealtimeEvent('pc:telemetry', { pcId: finalPcId, ...data.telemetry, diskUsage }, 'staff');
           } catch {}
         }
@@ -388,15 +398,17 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
             ]
           };
           const updatedDoc = await collections.pcs.findOneAndUpdate(targetFilter, { $set: updateFields }, { returnDocument: 'after' });
-          const finalPcId = (updatedDoc as any)?.value?.id || targetId;
+          const finalPcId = (updatedDoc as any)?.id || (updatedDoc as any)?.value?.id || targetId;
           broadcastRealtimeEvent('pc:telemetry', { pcId: finalPcId, ...data, diskUsage }, 'staff');
         } catch {}
       }
     });
 
     authSocket.on('admin:join', () => {
-      authSocket.join('staff');
-      authSocket.join('fleet');
+      if (authSocket.data.authType === 'staff') {
+        authSocket.join('staff');
+        authSocket.join('fleet');
+      }
     });
 
     const emitToPcTarget = (eventName: string, payload: any, targetId?: string) => {
@@ -428,7 +440,16 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     authSocket.on('maintenance:game:update', (payload: any) => {
-      emitToPcTarget('agent:game:update', payload, payload.targetPcId || payload.pcId);
+      const targets = Array.isArray(payload.targetPcIds) && payload.targetPcIds.length > 0
+        ? payload.targetPcIds
+        : [payload.targetPcId || payload.pcId || 'all'];
+      if (targets.includes('all') || targets.includes('fleet')) {
+        io?.to('fleet').emit('agent:game:update', { ...payload, targetPcId: 'all' });
+      } else {
+        targets.forEach((tid: string) => {
+          emitToPcTarget('agent:game:update', { ...payload, targetPcId: tid }, tid);
+        });
+      }
     });
 
     authSocket.on('agent:game:status', (status: any) => {

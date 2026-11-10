@@ -7,6 +7,12 @@ import { PCStatus } from '@pisonet/shared';
 import { AuditService } from './audit.service';
 
 export class PcService {
+  private static isValidLanIp(ip?: string): boolean {
+    if (!ip) return false;
+    const trimmed = String(ip).replace(/^::ffff:/i, '').trim();
+    return !!trimmed && trimmed !== '127.0.0.1' && trimmed !== '::1' && trimmed !== 'localhost';
+  }
+
   private static watchdogInterval: NodeJS.Timeout | null = null;
   private static ioInstance: any = null;
   public static readonly HEARTBEAT_TIMEOUT_MS = 60000; // 60 seconds without heartbeat & no live socket = offline
@@ -153,11 +159,12 @@ export class PcService {
 
     if (pc) {
       // Existing physical station updating status/heartbeat
+      const cleanIp = ipAddress?.replace(/^::ffff:/i, '').trim();
       const updates: Partial<DbPC> = {
         connectionState: 'connected',
         status: pc.status === 'offline' ? (pc.activeSessionId ? 'in-use' : 'available') : pc.status,
         lastHeartbeat: now,
-        ipAddress: ipAddress || pc.ipAddress,
+        ipAddress: PcService.isValidLanIp(cleanIp) ? cleanIp : (pc.ipAddress || '127.0.0.1'),
         specs: specs || pc.specs,
         updatedAt: now
       };
@@ -324,7 +331,8 @@ export class PcService {
   public static async togglePcStatus(
     pcId: string,
     newStatus: PCStatus,
-    staffId = 'system'
+    staffId = 'system',
+    emitPowerCommand = true
   ): Promise<DbPC | null> {
     const collections = getCollections();
     const existingPc = await collections.pcs.findOne({ id: pcId });
@@ -364,8 +372,8 @@ export class PcService {
         broadcastRealtimeEvent('pc:updated', safePc);
         broadcastRealtimeEvent('pc:status', { pcId, status: newStatus, pc: safePc });
         broadcastRealtimeEvent('pc:status-changed', { pcId, status: newStatus, activeCustomerName: safePc.activeCustomerName });
-        if (newStatus === 'locked' || newStatus === 'available') {
-          broadcastRealtimeEvent('agent:power:run', { targetPcId: pcId, action: newStatus === 'locked' ? 'lock' : 'unlock', sender: 'Staff' });
+        if (emitPowerCommand && (newStatus === 'locked' || newStatus === 'available')) {
+          broadcastRealtimeEvent('agent:power:run', { targetPcId: pcId, action: newStatus === 'locked' ? 'lock' : 'unlock', sender: 'Staff' }, `pc:${pcId.toLowerCase()}`);
         }
       } catch (err) {
         console.warn('Socket broadcast error in togglePcStatus:', err);
@@ -417,7 +425,10 @@ export class PcService {
       connectionState: 'connected',
       updatedAt: now
     };
-    if (ipAddress) updates['ipAddress'] = ipAddress;
+    const cleanIp = ipAddress?.replace(/^::ffff:/i, '').trim();
+    if (cleanIp && (PcService.isValidLanIp(cleanIp) || !pc.ipAddress)) {
+      updates['ipAddress'] = cleanIp;
+    }
     if (cleanHardwareId && !pc.hardwareId) updates['hardwareId'] = cleanHardwareId;
     if (cleanMac && cleanMac !== '00:00:00:00:00:00' && cleanMac !== 'AUTO-DISCOVERED' && !pc.macAddress) updates['macAddress'] = cleanMac;
 

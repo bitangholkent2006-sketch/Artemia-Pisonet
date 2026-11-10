@@ -11,6 +11,7 @@ export interface PisonetDesktopApi {
     version: string;
     hostname: string;
     specs?: string;
+    ipAddress?: string;
     macAddress?: string;
     hardwareId?: string;
     customName?: string;
@@ -37,7 +38,7 @@ export interface PisonetDesktopApi {
   killProcess: (pid?: number, name?: string) => Promise<{ success: boolean; error?: string }>;
   captureScreen: (options?: { width?: number; height?: number; quality?: number; skipFallback?: boolean }) => Promise<{ base64Image: string; error?: string }>;
   getDiskDrives: () => Promise<{ drives: any[] }>;
-  getHardwareHealth: () => Promise<{ cpuModel: string; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string }>;
+  getHardwareHealth: () => Promise<{ cpuModel: string; cpuPercent: number; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string; activeApp: string }>;
   downloadFile: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
   onDownloadProgress: (callback: (data: any) => void) => void;
   onCleanAutoDone?: (callback: (data: any) => void) => void;

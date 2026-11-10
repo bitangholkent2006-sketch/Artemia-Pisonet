@@ -88,6 +88,9 @@ export class ApiClientService {
       this.socket.on('connect', () => {
         this.connectionStatusSubject.next('connected');
         this.isBackendLiveSubject.next(true);
+        if (this.token) {
+          this.socket?.emit('admin:join');
+        }
         // Re-attach all registered listeners on reconnection
         for (const [event, listeners] of this.eventListeners.entries()) {
           for (const cb of listeners) {
@@ -371,10 +374,10 @@ export class ApiClientService {
     });
   }
 
-  public async triggerGameUpdate(targetPcId: string = 'all', gameKey: string, updateCommand?: string) {
+  public async triggerGameUpdate(targetPcId: string = 'all', gameKey: string, updateCommand?: string, targetPcIds?: string[]) {
     return this.request<{ success: boolean; message: string }>('/api/v1/maintenance/game-update', {
       method: 'POST',
-      body: JSON.stringify({ targetPcId, gameKey, updateCommand })
+      body: JSON.stringify({ targetPcId, targetPcIds, gameKey, updateCommand })
     });
   }
 

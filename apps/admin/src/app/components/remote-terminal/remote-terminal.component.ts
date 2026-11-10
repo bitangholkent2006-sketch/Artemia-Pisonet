@@ -407,8 +407,8 @@ export class RemoteTerminalComponent implements OnInit, OnDestroy, OnChanges {
     });
 
     this.socketSub = this.adminState.apiClient.onSocketEvent('maintenance:command:result', (res: any) => {
-      const pc = this.state.pcs?.find((p: PC) => p.id === res.pcId);
-      const name = pc ? pc.name : res.pcId || 'Station';
+      const pc = this.state.pcs?.find((p: PC) => p.id?.toLowerCase() === res.pcId?.toLowerCase());
+      const name = pc ? pc.name : res.pcName || res.pcId || 'Station';
       this.history.push({
         targetName: name,
         command: res.command || 'Command executed',

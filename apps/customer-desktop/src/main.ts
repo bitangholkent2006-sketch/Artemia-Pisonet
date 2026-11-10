@@ -13,6 +13,7 @@ interface WindowWithDesktop extends Window {
       version: string;
       hostname: string;
       specs?: string;
+      ipAddress?: string;
       macAddress?: string;
       hardwareId?: string;
       customName?: string;
@@ -36,9 +37,9 @@ interface WindowWithDesktop extends Window {
     deletePath: (targetPath: string) => Promise<{ success: boolean; error?: string }>;
     listProcesses: () => Promise<{ processes: any[]; error?: string }>;
     killProcess: (pid?: number, name?: string) => Promise<{ success: boolean; error?: string }>;
-    captureScreen: () => Promise<{ base64Image: string; error?: string }>;
+    captureScreen: (options?: { width?: number; height?: number; quality?: number; skipFallback?: boolean }) => Promise<{ base64Image: string; error?: string }>;
     getDiskDrives: () => Promise<{ drives: any[] }>;
-    getHardwareHealth?: () => Promise<{ cpuModel: string; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string }>;
+    getHardwareHealth?: () => Promise<{ cpuModel: string; cpuPercent: number; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuStatus: string; ssdModel: string; ssdStatus: string; activeApp: string }>;
     downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
     onDownloadProgress?: (callback: (data: any) => void) => void;
     onCleanAutoDone?: (callback: (data: any) => void) => void;
@@ -49,7 +50,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.10';
+const CLIENT_AGENT_VERSION = '1.0.11';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -73,6 +74,7 @@ class StationMaintenanceAgent {
   private identifier: string = '';
   private hardwareId: string = '';
   private macAddress: string = '';
+  private ipAddress: string = '';
   private specs: string = 'Standard Gaming Terminal';
   private isConnected = false;
   private isLocked = false;
@@ -376,6 +378,7 @@ class StationMaintenanceAgent {
         if (info) {
           if (info.hardwareId) this.hardwareId = info.hardwareId;
           if (info.macAddress) this.macAddress = info.macAddress;
+          if (info.ipAddress) this.ipAddress = info.ipAddress;
           if (info.specs) this.specs = info.specs;
 
           if (info.customStationId && !paramId) {
@@ -413,6 +416,7 @@ class StationMaintenanceAgent {
         pcId: this.pcId,
         name: this.pcName,
         specs: this.specs,
+        ipAddress: this.ipAddress,
         macAddress: this.macAddress,
         hardwareId: this.hardwareId,
         clientVersion: CLIENT_AGENT_VERSION
@@ -663,6 +667,7 @@ class StationMaintenanceAgent {
           pcId: activeId,
           name: this.pcName,
           specs: this.specs,
+          ipAddress: this.ipAddress,
           macAddress: this.macAddress,
           hardwareId: this.hardwareId,
           clientVersion: CLIENT_AGENT_VERSION
@@ -670,6 +675,7 @@ class StationMaintenanceAgent {
         this.socket?.emit('pc:heartbeat', {
           pcId: activeId,
           telemetry: this.telemetry,
+          ipAddress: this.ipAddress,
           macAddress: this.macAddress,
           hardwareId: this.hardwareId,
           clientVersion: CLIENT_AGENT_VERSION
@@ -797,7 +803,7 @@ class StationMaintenanceAgent {
         this.socket?.emit('agent:command:result', {
           id: payload.id || payload.reqId,
           reqId: payload.reqId || payload.id,
-          pcId: payload.targetPcId || this.pcId,
+          pcId: this.dbPcId || this.pcId || payload.targetPcId,
           pcName: this.pcName,
           command: payload.command,
           output: res.output,
@@ -832,7 +838,7 @@ class StationMaintenanceAgent {
 
         this.socket?.emit('agent:clean:result', {
           reqId: payload.reqId,
-          pcId: payload.targetPcId || this.pcId,
+          pcId: this.dbPcId || this.pcId || payload.targetPcId,
           pcName: this.pcName,
           deletedBytes: res.deletedBytes,
           cleanedPaths: res.cleanedPaths,
@@ -842,10 +848,13 @@ class StationMaintenanceAgent {
       });
 
       // 3. Game Auto-Updater Relay
-      this.socket.on('agent:game:update', async (payload: { gameId?: string; gameKey?: string; command?: string; updateCommand?: string; targetPcId?: string }) => {
+      this.socket.on('agent:game:update', async (payload: { gameId?: string; gameKey?: string; command?: string; updateCommand?: string; targetPcId?: string; targetPcIds?: string[] }) => {
         const game = payload.gameId || payload.gameKey || 'game';
         const cmd = payload.command || payload.updateCommand;
-        if (!this.matchesThisStation(payload.targetPcId)) {
+        const list = Array.isArray(payload.targetPcIds) && payload.targetPcIds.length > 0
+          ? payload.targetPcIds
+          : [payload.targetPcId];
+        if (!list.some((id) => this.matchesThisStation(id))) {
           return;
         }
         this.logMessage(`[Game Updater] Launching auto-update for ${game.toUpperCase()}...`);
@@ -864,7 +873,7 @@ class StationMaintenanceAgent {
         this.socket?.emit('agent:game:status', {
           gameId: game,
           gameKey: game,
-          pcId: payload.targetPcId || this.pcId,
+          pcId: this.dbPcId || payload.targetPcId || this.pcId,
           pcName: this.pcName,
           status: res.status,
           message: res.log,
@@ -1022,7 +1031,7 @@ class StationMaintenanceAgent {
       desktopWindow.pisonetDesktop?.onDownloadProgress?.((progress: any) => {
         this.socket?.emit('agent:download:progress', {
           ...progress,
-          pcId: this.pcId
+          pcId: this.dbPcId || this.pcId
         });
       });
 
@@ -1033,7 +1042,7 @@ class StationMaintenanceAgent {
         this.showToast(`🧹 Auto-Clean Slate (${res.reason}): Freed ${freedMb} MB. Station ready for next player!`, 'success', 5);
         this.socket?.emit('agent:clean:result', {
           reqId: `auto-${res.reason}-${Date.now()}`,
-          pcId: this.pcId,
+          pcId: this.dbPcId || this.pcId,
           pcName: this.pcName,
           deletedBytes: res.deletedBytes,
           cleanedPaths: res.cleanedPaths,
@@ -1042,8 +1051,11 @@ class StationMaintenanceAgent {
         });
       });
 
-      this.socket.on('agent:download:run', async (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; targetPcId?: string }) => {
-        if (!this.matchesThisStation(payload.targetPcId)) return;
+      this.socket.on('agent:download:run', async (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; targetPcId?: string; targetPcIds?: string[] }) => {
+        const list = Array.isArray(payload.targetPcIds) && payload.targetPcIds.length > 0
+          ? payload.targetPcIds
+          : [payload.targetPcId];
+        if (!list.some((id) => this.matchesThisStation(id))) return;
         this.logMessage(`[Downloader] Starting download: ${payload.url}`);
         this.showToast(`📥 Downloading: ${payload.filename || 'installer'}...`, 'info', 6);
         let res: any;
@@ -1063,7 +1075,7 @@ class StationMaintenanceAgent {
 
         this.socket?.emit('agent:download:res', {
           reqId: payload.reqId,
-          pcId: payload.targetPcId || this.pcId,
+          pcId: this.dbPcId || this.pcId || payload.targetPcId,
           ...res,
           timestamp: new Date().toISOString()
         });
@@ -1207,6 +1219,8 @@ class StationMaintenanceAgent {
         const hw = await desktopWindow.pisonetDesktop.getHardwareHealth();
         if (hw) {
           this.telemetry.cpuModel = hw.cpuModel || this.telemetry.cpuModel;
+          if (typeof hw.cpuPercent === 'number') this.telemetry.cpuPercent = hw.cpuPercent;
+          if (hw.activeApp) this.telemetry.activeApp = hw.activeApp;
           this.telemetry.ramTotalGb = hw.ramTotalGb || this.telemetry.ramTotalGb;
           this.telemetry.ramUsedGb = hw.ramUsedGb || this.telemetry.ramUsedGb;
           this.telemetry.ramPercent = hw.ramPercent || this.telemetry.ramPercent;
@@ -1222,13 +1236,16 @@ class StationMaintenanceAgent {
   }
 
   private startTelemetryLoop() {
-    // 1. Initial telemetry inspection
+    // 1. Initial telemetry inspection (plus fast follow-up once main-process activeApp/CPU warm up)
     this.refreshHardwareHealth();
+    setTimeout(() => {
+      this.refreshHardwareHealth();
+    }, 3500);
 
-    // 2. Periodic background telemetry refresh (every 20 seconds, non-blocking)
+    // 2. Periodic background telemetry refresh (every 15 seconds, non-blocking)
     setInterval(() => {
       this.refreshHardwareHealth();
-    }, 20000);
+    }, 15000);
 
     // 3. Ultra-reliable, non-blocking heartbeat loop (every 5 seconds)
     setInterval(() => {
@@ -1246,6 +1263,7 @@ class StationMaintenanceAgent {
 
       this.socket.emit('pc:heartbeat', {
         pcId: activeId,
+        ipAddress: this.ipAddress,
         macAddress: this.macAddress,
         hardwareId: this.hardwareId,
         clientVersion: CLIENT_AGENT_VERSION,

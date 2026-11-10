@@ -610,7 +610,8 @@ export class FileManagerComponent implements OnInit, OnDestroy, OnChanges {
       this.state = s;
       if (this.state.pcs?.length > 0) {
         if (!this.selectedPcId || !this.state.pcs.some((p: any) => p.id === this.selectedPcId)) {
-          this.selectedPcId = this.initialPcId || this.state.pcs[0].id;
+          const onlinePc = this.state.pcs.find((p: any) => p.status !== 'offline');
+          this.selectedPcId = this.initialPcId || onlinePc?.id || this.state.pcs[0].id;
           this.loadDirectory();
         }
       }
@@ -629,7 +630,8 @@ export class FileManagerComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   get isRootPath(): boolean {
-    return this.currentPath === 'C:\\\\' || this.currentPath === 'D:\\\\' || this.currentPath === 'C:' || this.currentPath === 'D:';
+    const clean = this.currentPath.trim().replace(/\\+$/, '');
+    return /^[a-zA-Z]:$/.test(clean) || clean === '' || clean === '/';
   }
 
   selectStation(pcId: string) {
@@ -643,14 +645,15 @@ export class FileManagerComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   navigateUp() {
-    const parts = this.currentPath.replace(/\\\\$/, '').split(/\\\\|\//);
+    const clean = this.currentPath.trim().replace(/\\+$/, '');
+    const parts = clean.split(/\\|\//).filter(Boolean);
     if (parts.length <= 1) {
-      this.currentPath = 'C:\\\\';
+      this.currentPath = (parts[0] ? `${parts[0]}\\` : 'C:\\');
     } else {
       parts.pop();
-      this.currentPath = parts.join('\\\\') || 'C:\\\\';
-      if (!this.currentPath.endsWith('\\\\') && this.currentPath.length === 2) {
-        this.currentPath += '\\\\';
+      this.currentPath = parts.join('\\');
+      if (/^[a-zA-Z]:$/.test(this.currentPath)) {
+        this.currentPath += '\\';
       }
     }
     this.loadDirectory();
@@ -663,9 +666,21 @@ export class FileManagerComponent implements OnInit, OnDestroy, OnChanges {
 
   async loadDirectory() {
     if (!this.selectedPcId) return;
+    if (this.selectedPc?.status === 'offline') {
+      this.entries = [];
+      this.feedbackMessage = `${this.selectedPc.name} is offline. Pagpili ug online PC sa ibabaw.`;
+      this.feedbackType = 'error';
+      return;
+    }
     this.isLoading = true;
+    this.feedbackMessage = null;
     try {
-      this.entries = await this.adminState.browseDirectory(this.selectedPcId, this.currentPath);
+      const res = await this.adminState.browseDirectoryDetailed(this.selectedPcId, this.currentPath);
+      this.entries = res.entries || [];
+      if (res.error) {
+        this.feedbackMessage = res.error;
+        this.feedbackType = 'error';
+      }
     } finally {
       this.isLoading = false;
     }

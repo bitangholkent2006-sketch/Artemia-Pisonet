@@ -90,7 +90,8 @@ function sendMainHeartbeat() {
   const payload = {
     pcId: runtimeStationInfo.pcId || id.customStationId || process.env.COMPUTERNAME || os.hostname(),
     hardwareId: runtimeStationInfo.hardwareId || id.hardwareId,
-    macAddress: runtimeStationInfo.macAddress || id.macAddress
+    macAddress: runtimeStationInfo.macAddress || id.macAddress,
+    ipAddress: getPrimaryLanIp()
   };
   postJsonKeepalive('/api/v1/pcs/heartbeat', payload).catch(() => {});
 }
@@ -314,11 +315,15 @@ function createWindow() {
     }
   });
 
-  // Intercept window close to keep background agent running silently in system tray
+  // Intercept window close to keep background agent running silently in system tray (or prevent hiding when locked)
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
-      mainWindow?.hide();
+      if (!isStationLocked) {
+        mainWindow?.hide();
+      } else {
+        presentOverlayWindow();
+      }
       return false;
     }
   });
@@ -358,18 +363,33 @@ ipcMain.handle('window:hide-to-tray', () => {
   return true;
 });
 
+function presentOverlayWindow() {
+  if (!mainWindow) return;
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.setVisibleOnAllWorkspaces(true);
+    mainWindow.show();
+    mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+    mainWindow.setFullScreen(true);
+    mainWindow.moveTop();
+    mainWindow.focus();
+    app.focus({ steal: true });
+  } catch {}
+}
+
 ipcMain.handle('window:set-lock-mode', (_event, locked: boolean) => {
   isStationLocked = locked;
   if (mainWindow) {
     if (locked) {
-      mainWindow.setFullScreen(true);
-      mainWindow.setAlwaysOnTop(true, 'screen-saver');
-      mainWindow.show();
-      mainWindow.focus();
+      try { mainWindow.setClosable(false); } catch {}
+      presentOverlayWindow();
     } else {
+      try { mainWindow.setClosable(true); } catch {}
       mainWindow.setFullScreen(false);
       mainWindow.setAlwaysOnTop(false);
-      mainWindow.hide();
+      if (!isAnnouncementActive) {
+        mainWindow.hide();
+      }
     }
   }
   return true;
@@ -379,10 +399,7 @@ ipcMain.handle('window:set-announcement-mode', (_event, active: boolean) => {
   isAnnouncementActive = active;
   if (mainWindow) {
     if (active) {
-      mainWindow.setFullScreen(true);
-      mainWindow.setAlwaysOnTop(true, 'screen-saver');
-      mainWindow.show();
-      mainWindow.focus();
+      presentOverlayWindow();
     } else {
       // If not locked, return silently to hidden background!
       if (!isStationLocked) {
@@ -394,6 +411,31 @@ ipcMain.handle('window:set-announcement-mode', (_event, active: boolean) => {
   }
   return true;
 });
+
+// Local LAN IPv4 extraction for real station address
+function getPrimaryLanIp(): string {
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const [name, addrs] of Object.entries(interfaces)) {
+      if (!addrs) continue;
+      if (/vEthernet|virtual|vmware|vbox|hamachi|loopback|pseudo|wsl|zerotier|tailscale/i.test(name)) continue;
+      for (const addr of addrs) {
+        if (!addr.internal && addr.family === 'IPv4' && addr.address && addr.address !== '127.0.0.1') {
+          return addr.address;
+        }
+      }
+    }
+    for (const addrs of Object.values(interfaces)) {
+      if (!addrs) continue;
+      for (const addr of addrs) {
+        if (!addr.internal && addr.family === 'IPv4' && addr.address && addr.address !== '127.0.0.1') {
+          return addr.address;
+        }
+      }
+    }
+  } catch {}
+  return '';
+}
 
 // Hardware MAC extraction for physical machine uniqueness
 function getPrimaryMacAddress(): string {
@@ -490,6 +532,7 @@ ipcMain.handle('system:get-info', () => {
     version: app.getVersion(),
     hostname,
     specs: `${cpuModel} • ${totalMemGb}GB RAM`,
+    ipAddress: getPrimaryLanIp(),
     macAddress: identity.macAddress,
     hardwareId: identity.hardwareId,
     customName: identity.customName,
@@ -578,12 +621,13 @@ ipcMain.handle('maintenance:execute-command', async (_event, command: string, ty
     const shell = type === 'cmd' ? 'cmd.exe' : 'powershell.exe';
     const shellArgs = type === 'cmd' ? ['/c', command] : ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command];
 
-    exec(`${shell} ${type === 'cmd' ? '/c' : '-Command'} "${command.replace(/"/g, '`"')}"`, {
+    execFile(shell, shellArgs, {
       timeout: 60000,
-      maxBuffer: 10 * 1024 * 1024
+      maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true
     }, (error, stdout, stderr) => {
       const output = (stdout || '') + (stderr ? `\n[STDERR] ${stderr}` : '');
-      const exitCode = error ? (error.code || 1) : 0;
+      const exitCode = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
       resolve({
         output: output.trim() || (exitCode === 0 ? 'Command executed successfully (no output).' : 'Command completed with error.'),
         exitCode,
@@ -796,7 +840,7 @@ function performCleanSlate(reason: 'startup' | 'idle' | 'manual' | 'admin' = 'ma
 
       console.log(`[Clean Slate] Cleanup complete (${reason}). Freed ${Math.round(deletedBytes / (1024 * 1024))} MB.`);
       resolve({
-        deletedBytes: deletedBytes || 104857600,
+        deletedBytes,
         cleanedPaths,
         reason,
         error: error ? error.message : undefined
@@ -863,21 +907,23 @@ $tweaks += "Trimmed Working Set RAM: freed $freedMb MB"
 # 2. Power Plan to Ultimate or High Performance
 $powerPlanName = "High Performance"
 try {
-  powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null | Out-Null
+  powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 *>$null
   $schemes = powercfg /list
-  $ult = $schemes | Select-String "Ultimate"
+  $ult = $schemes | Select-String "Ultimate" | Select-Object -First 1
   if ($ult) {
-    $guid = ($ult -split '\\s+')[3]
-    powercfg /setactive $guid
-    $powerPlanName = "Ultimate Performance"
+    $guid = ($ult.ToString() -split '\\s+')[3]
+    if ($guid) {
+      powercfg /setactive $guid *>$null
+      $powerPlanName = "Ultimate Performance"
+    }
   } else {
-    powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+    powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c *>$null
   }
   $tweaks += "Activated $powerPlanName plan"
 } catch {}
 
 # 3. Game Process Priority Elevation
-$gameNames = @('valorant', 'riotclientservices', 'dota2', 'cs2', 'robloxplayerbeta', 'pointblank', 'crossfire', 'leagueclient', 'genshinimpact', 'gta5', 'fivem', 'fortniteclient-win64-shipping', 'apex', 'pubg', 'steam')
+$gameNames = @('valorant', 'valorant-win64-shipping', 'riotclientservices', 'dota2', 'cs2', 'csgo', 'ros64', 'robloxplayerbeta', 'pointblank', 'crossfire', 'leagueclient', 'league of legends', 'genshinimpact', 'gta5', 'fivem', 'fortniteclient-win64-shipping', 'farlight84', 'apex', 'pubg', 'dnplayer', 'hd-player', 'minecraft', 'steam')
 $boosted = @()
 foreach ($g in $gameNames) {
   $procs = Get-Process -Name $g -ErrorAction SilentlyContinue
@@ -947,7 +993,7 @@ $sw.Stop()
       });
     }
 
-    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], { timeout: 15000 }, (err, stdout, stderr) => {
+    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], { timeout: 25000, windowsHide: true }, (err, stdout, stderr) => {
       if (err || !stdout) {
         return resolve({
           success: false,
@@ -960,7 +1006,9 @@ $sw.Stop()
         });
       }
       try {
-        const parsed = JSON.parse(stdout.trim());
+        const lines = stdout.trim().split(/\r?\n/);
+        const jsonLine = [...lines].reverse().find((l) => l.trim().startsWith('{')) || stdout.trim();
+        const parsed = JSON.parse(jsonLine);
         resolve({
           success: parsed.success ?? true,
           freedRamMb: parsed.freedRamMb || 0,
@@ -969,14 +1017,15 @@ $sw.Stop()
           tweaksApplied: Array.isArray(parsed.tweaksApplied) ? parsed.tweaksApplied : [],
           elapsedMs: parsed.elapsedMs || 0
         });
-      } catch {
+      } catch (parseErr: any) {
         resolve({
-          success: true,
-          freedRamMb: 500,
-          powerPlan: 'Ultimate Performance',
+          success: false,
+          freedRamMb: 0,
+          powerPlan: 'Default',
           boostedGames: [],
-          tweaksApplied: ['System and memory optimized'],
-          elapsedMs: 500
+          tweaksApplied: [],
+          elapsedMs: 0,
+          error: 'Invalid boost output: ' + (parseErr?.message || stdout.slice(0, 120))
         });
       }
     });
@@ -991,14 +1040,16 @@ ipcMain.handle('maintenance:fps-boost', async () => {
 ipcMain.handle('maintenance:update-game', async (_event, gameId: string, customCommand?: string) => {
   return new Promise((resolve) => {
     if (customCommand) {
-      exec(customCommand, (err, stdout) => {
+      exec(customCommand, { windowsHide: true }, (err, stdout, stderr) => {
         resolve({
           status: err ? 'failed' : 'completed',
-          log: (stdout || err?.message || 'Custom update command finished.').trim()
+          log: (stdout || stderr || err?.message || 'Custom update command finished.').trim()
         });
       });
       return;
     }
+
+    const findExisting = (candidates: string[]) => candidates.find((p) => fs.existsSync(p));
 
     // Default game launcher actions
     let cmd = '';
@@ -1019,21 +1070,56 @@ ipcMain.handle('maintenance:update-game', async (_event, gameId: string, customC
         cmd = 'start roblox-player:';
         break;
       case 'valorant':
-      case 'riot':
-        cmd = 'start "" "C:\\Riot Games\\Riot Client\\RiotClientServices.exe" --launch-product=valorant --launch-patchline=live';
+      case 'riot': {
+        const riotPath = findExisting([
+          'C:\\Riot Games\\Riot Client\\RiotClientServices.exe',
+          'D:\\Riot Games\\Riot Client\\RiotClientServices.exe',
+          'E:\\Riot Games\\Riot Client\\RiotClientServices.exe'
+        ]);
+        if (!riotPath) {
+          resolve({ status: 'failed', log: 'Riot Client not found on C:\\, D:\\, or E:\\.' });
+          return;
+        }
+        cmd = `start "" "${riotPath}" --launch-product=valorant --launch-patchline=live`;
         break;
+      }
       case 'epic':
         cmd = 'start com.epicgames.launcher:';
         break;
-      case 'genshin':
-        cmd = 'start "" "C:\\Program Files\\Genshin Impact\\launcher.exe"';
+      case 'emulator': {
+        const emuPath = findExisting([
+          'C:\\LDPlayer\\LDPlayer9\\dnplayer.exe',
+          'D:\\LDPlayer\\LDPlayer9\\dnplayer.exe',
+          'C:\\LDPlayer\\LDPlayer4.0\\dnplayer.exe',
+          'C:\\Program Files\\BlueStacks_nxt\\HD-Player.exe',
+          'C:\\Program Files\\BlueStacks\\HD-Player.exe'
+        ]);
+        if (!emuPath) {
+          resolve({ status: 'failed', log: 'No LDPlayer/BlueStacks emulator installation found.' });
+          return;
+        }
+        cmd = `start "" "${emuPath}"`;
         break;
+      }
+      case 'genshin': {
+        const giPath = findExisting([
+          'C:\\Program Files\\Genshin Impact\\launcher.exe',
+          'D:\\Games\\Genshin Impact\\launcher.exe',
+          'C:\\Program Files\\HoYoPlay\\launcher.exe'
+        ]);
+        if (!giPath) {
+          resolve({ status: 'failed', log: 'Genshin Impact / HoYoPlay launcher not found.' });
+          return;
+        }
+        cmd = `start "" "${giPath}"`;
+        break;
+      }
       default:
         cmd = 'start steam://';
         break;
     }
 
-    exec(cmd, (err) => {
+    exec(cmd, { windowsHide: true }, (err) => {
       resolve({
         status: err ? 'failed' : 'in-progress',
         log: err ? `Failed to launch ${gameId}: ${err.message}` : `Launcher for ${gameId} triggered successfully on station.`
@@ -1405,6 +1491,20 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
       ];
 
       const helperExe = possiblePaths.find(p => fs.existsSync(p));
+      const kLower = (payload.key || '').toLowerCase();
+      const escapeSendKeysText = (txt: string) => txt.replace(/([{}()[\]+^%~])/g, '{$1}');
+
+      if (type === 'key' && (kLower === 'taskmgr' || kLower === '^+{esc}')) {
+        if (process.platform === 'win32') {
+          const psTaskMgr = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void TaskMgr() { keybd_event(0x11,0,0,UIntPtr.Zero); keybd_event(0x10,0,0,UIntPtr.Zero); keybd_event(0x1B,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x1B,0,2,UIntPtr.Zero); keybd_event(0x10,0,2,UIntPtr.Zero); keybd_event(0x11,0,2,UIntPtr.Zero); } }'; [K]::TaskMgr();`;
+          execFile('powershell.exe', ['-NoProfile', '-Command', psTaskMgr], { windowsHide: true }, (err) => {
+            resolve({ success: !err, x: targetX, y: targetY, error: err?.message });
+          });
+        } else {
+          resolve({ success: false, error: 'Platform not supported' });
+        }
+        return;
+      }
 
       if (helperExe && process.platform === 'win32') {
         let args: string[] = [];
@@ -1415,7 +1515,12 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
         } else if (type === 'key') {
           args = ['key', payload.key || '{ENTER}'];
         } else if (type === 'text') {
-          args = ['text', payload.text || ''];
+          const rawText = payload.text || '';
+          if (!rawText) {
+            resolve({ success: true });
+            return;
+          }
+          args = ['text', escapeSendKeysText(rawText)];
         }
 
         execFile(helperExe, args, { windowsHide: true }, (err) => {
@@ -1428,11 +1533,16 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
       } else if (process.platform === 'win32') {
         // Fallback to PowerShell Win32 and SendKeys
         let psCmd = '';
-        const kLower = (payload.key || '').toLowerCase();
-        if (type === 'click' || type === 'rclick' || type === 'dclick') {
+        if (type === 'click' || type === 'rclick' || type === 'dclick' || type === 'move' || type === 'down' || type === 'up') {
           const downFlag = type === 'rclick' ? '0x08' : '0x02';
           const upFlag = type === 'rclick' ? '0x10' : '0x04';
-          if (type === 'dclick') {
+          if (type === 'move') {
+            psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); }'; [M]::SetCursorPos(${targetX}, ${targetY});`;
+          } else if (type === 'down') {
+            psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); }'; [M]::SetCursorPos(${targetX}, ${targetY}); [M]::mouse_event(0x02, 0, 0, 0, 0);`;
+          } else if (type === 'up') {
+            psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); }'; [M]::SetCursorPos(${targetX}, ${targetY}); [M]::mouse_event(0x04, 0, 0, 0, 0);`;
+          } else if (type === 'dclick') {
             psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); }'; [M]::SetCursorPos(${targetX}, ${targetY}); [M]::mouse_event(0x02, 0, 0, 0, 0); [M]::mouse_event(0x04, 0, 0, 0, 0); System.Threading.Thread.Sleep(50); [M]::mouse_event(0x02, 0, 0, 0, 0); [M]::mouse_event(0x04, 0, 0, 0, 0);`;
           } else {
             psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class M { [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int e); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); }'; [M]::SetCursorPos(${targetX}, ${targetY}); [M]::mouse_event(${downFlag}, 0, 0, 0, 0); [M]::mouse_event(${upFlag}, 0, 0, 0, 0);`;
@@ -1450,16 +1560,14 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
           psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void WinE() { keybd_event(0x5B,0,0,UIntPtr.Zero); keybd_event(0x45,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x45,0,2,UIntPtr.Zero); keybd_event(0x5B,0,2,UIntPtr.Zero); } }'; [K]::WinE();`;
         } else if (type === 'key' && (kLower === 'altf4' || kLower === '%{f4}')) {
           psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void AltF4() { keybd_event(0x12,0,0,UIntPtr.Zero); keybd_event(0x73,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x73,0,2,UIntPtr.Zero); keybd_event(0x12,0,2,UIntPtr.Zero); } }'; [K]::AltF4();`;
-        } else if (type === 'key' && (kLower === 'taskmgr' || kLower === '^+{esc}')) {
-          psCmd = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void TaskMgr() { keybd_event(0x11,0,0,UIntPtr.Zero); keybd_event(0x10,0,0,UIntPtr.Zero); keybd_event(0x1B,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x1B,0,2,UIntPtr.Zero); keybd_event(0x10,0,2,UIntPtr.Zero); keybd_event(0x11,0,2,UIntPtr.Zero); } }'; [K]::TaskMgr();`;
         } else if (type === 'text' || type === 'key') {
-          const send = type === 'text' ? payload.text : payload.key;
-          psCmd = `(New-Object -ComObject WScript.Shell).SendKeys('${(send || '').replace(/'/g, "''")}');`;
+          const send = type === 'text' ? escapeSendKeysText(payload.text || '') : (payload.key || '');
+          psCmd = `(New-Object -ComObject WScript.Shell).SendKeys('${send.replace(/'/g, "''")}');`;
         }
 
         if (psCmd) {
-          exec(`powershell.exe -NoProfile -Command "${psCmd}"`, (err) => {
-            resolve({ success: !err, x: targetX, y: targetY });
+          execFile('powershell.exe', ['-NoProfile', '-Command', psCmd], { windowsHide: true }, (err) => {
+            resolve({ success: !err, x: targetX, y: targetY, error: err?.message });
           });
         } else {
           resolve({ success: true });
@@ -1525,7 +1633,76 @@ ipcMain.handle('maintenance:get-disk-drives', async () => {
   });
 });
 
-// 10. Hardware Health & Telemetry (GPU, SSD, CPU, RAM)
+// 10. Hardware Health & Telemetry (CPU %, Active App/Game, GPU, SSD, RAM)
+let lastCpuTimes: { idle: number; total: number } | null = null;
+function getCpuUsagePercent(): number {
+  try {
+    const cpus = os.cpus();
+    let idle = 0;
+    let total = 0;
+    for (const c of cpus) {
+      idle += c.times.idle;
+      total += c.times.user + c.times.nice + c.times.sys + c.times.irq + c.times.idle;
+    }
+    if (!lastCpuTimes) {
+      lastCpuTimes = { idle, total };
+      return 0;
+    }
+    const idleDiff = idle - lastCpuTimes.idle;
+    const totalDiff = total - lastCpuTimes.total;
+    lastCpuTimes = { idle, total };
+    if (totalDiff <= 0) return 0;
+    return Math.max(0, Math.min(100, Math.round(((totalDiff - idleDiff) / totalDiff) * 100)));
+  } catch {
+    return 0;
+  }
+}
+
+let cachedActiveApp = 'Desktop Idle';
+let activeAppRefreshInFlight = false;
+function refreshActiveApp() {
+  if (process.platform !== 'win32' || activeAppRefreshInFlight) return;
+  activeAppRefreshInFlight = true;
+  const ps = `$games = [ordered]@{
+  'robloxplayerbeta'='Roblox';
+  'ros64'='ROS (Rules of Survival)';
+  'valorant-win64-shipping'='Valorant';
+  'valorant'='Valorant';
+  'dota2'='Dota 2';
+  'cs2'='CS2';
+  'csgo'='CS:GO';
+  'league of legends'='League of Legends';
+  'leagueclient'='League Client';
+  'crossfire'='CrossFire';
+  'genshinimpact'='Genshin Impact';
+  'farlight84'='Farlight 84';
+  'dnplayer'='LDPlayer Emulator';
+  'hd-player'='BlueStacks';
+  'minecraft'='Minecraft'
+};
+$procs = Get-Process -ErrorAction SilentlyContinue;
+$found = $null;
+foreach ($k in $games.Keys) {
+  if ($procs | Where-Object { $_.ProcessName -ieq $k } | Select-Object -First 1) { $found = $games[$k]; break }
+}
+if (-not $found) {
+  $win = $procs | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -and $_.ProcessName -notin @('Artemia Customer Terminal','explorer','ApplicationFrameHost','TextInputHost') } | Select-Object -First 1;
+  if ($win) {
+    $t = $win.MainWindowTitle.Trim();
+    if ($t.Length -gt 48) { $t = $t.Substring(0, 48) + '...' }
+    $found = $t
+  }
+}
+if ($found) { Write-Output $found } else { Write-Output 'Desktop Idle' }`;
+  const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+  execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { timeout: 4000, windowsHide: true }, (err, stdout) => {
+    activeAppRefreshInFlight = false;
+    if (!err && stdout && stdout.trim()) {
+      cachedActiveApp = stdout.trim().split(/\r?\n/)[0].trim() || 'Desktop Idle';
+    }
+  });
+}
+
 ipcMain.handle('maintenance:get-hardware-health', () => {
   const cpus = os.cpus();
   const cpuModel = cpus.length > 0 ? cpus[0].model.replace(/\(R\)|\(TM\)/g, '').trim() : 'Gaming CPU';
@@ -1536,57 +1713,60 @@ ipcMain.handle('maintenance:get-hardware-health', () => {
 
   return {
     cpuModel,
+    cpuPercent: getCpuUsagePercent(),
     ramTotalGb: totalMemGb,
     ramUsedGb: usedMemGb,
     ramPercent,
     gpu: cachedHardwareInfo.gpu || 'Discrete GPU',
     gpuStatus: cachedHardwareInfo.gpuStatus || 'OK',
     ssdModel: cachedHardwareInfo.ssdModel || 'Primary SSD',
-    ssdStatus: cachedHardwareInfo.ssdStatus || 'OK'
+    ssdStatus: cachedHardwareInfo.ssdStatus || 'OK',
+    activeApp: cachedActiveApp
   };
 });
 
 // 11. Remote App & File Downloader (Streamed with Realtime Progress & Auto-Run)
 ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string }) => {
-  return new Promise(async (resolve) => {
+  try {
+    const { reqId, url, autoRun, runArgs } = payload;
+    const parsedUrl = new URL(url);
+    let filename = payload.filename || path.basename(parsedUrl.pathname);
+    if (!filename || filename.length < 3 || !filename.includes('.')) {
+      filename = `installer_${Date.now()}.exe`;
+    }
+
+    const defaultDir = path.join(os.homedir(), 'Downloads');
+    if (!fs.existsSync(defaultDir)) {
+      fs.mkdirSync(defaultDir, { recursive: true });
+    }
+
+    const destFile = payload.targetPath && payload.targetPath.trim() ? payload.targetPath.trim() : path.join(defaultDir, filename);
+    const destDir = path.dirname(destFile);
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+
+    const res = await fetch(url);
+    if (!res.ok || !res.body) {
+      return { success: false, error: `HTTP ${res.status}: ${res.statusText}` };
+    }
+
+    const totalBytes = parseInt(res.headers.get('content-length') || '0', 10);
+    let downloadedBytes = 0;
+    let lastReport = 0;
+
+    const fileStream = fs.createWriteStream(destFile);
+    const reader = res.body.getReader();
+
     try {
-      const { reqId, url, autoRun, runArgs } = payload;
-      const parsedUrl = new URL(url);
-      let filename = payload.filename || path.basename(parsedUrl.pathname);
-      if (!filename || filename.length < 3 || !filename.includes('.')) {
-        filename = `installer_${Date.now()}.exe`;
-      }
-
-      const defaultDir = path.join(os.homedir(), 'Downloads');
-      if (!fs.existsSync(defaultDir)) {
-        fs.mkdirSync(defaultDir, { recursive: true });
-      }
-
-      const destFile = payload.targetPath && payload.targetPath.trim() ? payload.targetPath.trim() : path.join(defaultDir, filename);
-      const destDir = path.dirname(destFile);
-      if (!fs.existsSync(destDir)) {
-        fs.mkdirSync(destDir, { recursive: true });
-      }
-
-      const res = await fetch(url);
-      if (!res.ok || !res.body) {
-        resolve({ success: false, error: `HTTP ${res.status}: ${res.statusText}` });
-        return;
-      }
-
-      const totalBytes = parseInt(res.headers.get('content-length') || '0', 10);
-      let downloadedBytes = 0;
-      let lastReport = 0;
-
-      const fileStream = fs.createWriteStream(destFile);
-      const reader = res.body.getReader();
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (value) {
           downloadedBytes += value.length;
-          fileStream.write(Buffer.from(value));
+          if (!fileStream.write(Buffer.from(value))) {
+            await new Promise<void>((resolveDrain) => fileStream.once('drain', resolveDrain));
+          }
 
           const now = Date.now();
           if (now - lastReport > 500) {
@@ -1603,32 +1783,56 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
         }
       }
 
-      fileStream.end();
-
-      let executed = false;
-      let execError = undefined;
-
-      if (autoRun) {
-        try {
-          exec(`start "" "${destFile}" ${runArgs || ''}`);
-          executed = true;
-        } catch (e: any) {
-          execError = e?.message;
-        }
-      }
-
-      resolve({
-        success: true,
-        destPath: destFile,
-        filename,
-        totalBytes: downloadedBytes,
-        executed,
-        execError
+      // MUST wait until WriteStream finishes flushing and closes file handle before Auto-Run!
+      await new Promise<void>((resolveClose, rejectClose) => {
+        fileStream.once('close', resolveClose);
+        fileStream.once('error', rejectClose);
+        fileStream.end();
       });
-    } catch (err: any) {
-      resolve({ success: false, error: err?.message || 'Download failed' });
+    } catch (streamErr) {
+      try { fileStream.destroy(); } catch {}
+      try { if (fs.existsSync(destFile)) fs.unlinkSync(destFile); } catch {}
+      throw streamErr;
     }
-  });
+
+    event.sender.send('maintenance:download:progress', {
+      reqId,
+      downloadedBytes,
+      totalBytes: totalBytes || downloadedBytes,
+      percent: 100,
+      status: 'completed'
+    });
+
+    let executed = false;
+    let execError: string | undefined = undefined;
+
+    if (autoRun) {
+      try {
+        const argParts = (runArgs || '').trim() ? (runArgs || '').trim().split(/\s+/) : [];
+        const proc = spawn(destFile, argParts, {
+          cwd: destDir,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: false
+        });
+        proc.unref();
+        executed = true;
+      } catch (e: any) {
+        execError = e?.message || String(e);
+      }
+    }
+
+    return {
+      success: true,
+      destPath: destFile,
+      filename,
+      totalBytes: downloadedBytes,
+      executed,
+      execError
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Download failed' };
+  }
 });
 
 // 12. OTA Client Updater: Download app.asar, write detached updater batch script, and restart
@@ -1824,8 +2028,18 @@ if (!gotLock) {
     // Automatically register auto-start on Windows so pisonet agent runs on power-on
     setAutoStart(true);
     fetchHardwareInfo();
+    getCpuUsagePercent();
+    refreshActiveApp();
+    setInterval(refreshActiveApp, 12000);
     createWindow();
     createTray();
+
+    // Ensure lock screen stays visible/on top while locked
+    setInterval(() => {
+      if (isStationLocked && mainWindow && (!mainWindow.isVisible() || mainWindow.isMinimized())) {
+        presentOverlayWindow();
+      }
+    }, 2000);
 
     // Main-process HTTP heartbeat every 15s (immune to Chromium renderer sleep/occlusion during fullscreen games)
     setTimeout(sendMainHeartbeat, 2000);
