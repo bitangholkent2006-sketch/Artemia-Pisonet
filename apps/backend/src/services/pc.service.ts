@@ -35,6 +35,8 @@ export class PcService {
     const now = Date.now();
     const stalePcs: string[] = [];
     const alivePcs: string[] = [];
+    const revivedAvailablePcs: string[] = [];
+    const revivedInUsePcs: string[] = [];
 
     // Dynamically evaluate online/offline state using BOTH live WebSocket room presence & heartbeats
     pcs.forEach((pc) => {
@@ -42,6 +44,11 @@ export class PcService {
         // Live Socket.IO connection is active — station is definitely ON & connected
         if (pc.status === 'offline') {
           pc.status = pc.activeSessionId ? 'in-use' : 'available';
+          if (pc.activeSessionId) {
+            revivedInUsePcs.push(pc.id);
+          } else {
+            revivedAvailablePcs.push(pc.id);
+          }
         }
         pc.connectionState = 'connected';
         alivePcs.push(pc.id);
@@ -59,6 +66,20 @@ export class PcService {
       collections.pcs.updateMany(
         { id: { $in: alivePcs } },
         { $set: { lastHeartbeat: new Date(now), connectionState: 'connected', updatedAt: new Date(now) } }
+      ).catch(() => {});
+    }
+
+    if (revivedAvailablePcs.length > 0) {
+      collections.pcs.updateMany(
+        { id: { $in: revivedAvailablePcs } },
+        { $set: { status: 'available', connectionState: 'connected', updatedAt: new Date(now) } }
+      ).catch(() => {});
+    }
+
+    if (revivedInUsePcs.length > 0) {
+      collections.pcs.updateMany(
+        { id: { $in: revivedInUsePcs } },
+        { $set: { status: 'in-use', connectionState: 'connected', updatedAt: new Date(now) } }
       ).catch(() => {});
     }
 

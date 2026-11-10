@@ -265,6 +265,11 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     // Explicit Shutdown / Exit notification from station (transitions offline immediately)
     authSocket.on('pc:going-offline', async (data?: { pcId?: string; hardwareId?: string; macAddress?: string }) => {
       authSocket.data.explicitOffline = true;
+      for (const room of Array.from(authSocket.rooms)) {
+        if (room !== authSocket.id) {
+          authSocket.leave(room);
+        }
+      }
       const targetId = authSocket.data.pcId || data?.pcId || pcId;
       if (targetId || data?.hardwareId) {
         await PcService.markStationExplicitOffline(targetId || '', data?.hardwareId, data?.macAddress);
