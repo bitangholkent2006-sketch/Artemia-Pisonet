@@ -29,6 +29,7 @@ export interface StationDownloadState {
   status: 'queued' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled';
   savedPath?: string;
   executed?: boolean;
+  launchedAppName?: string;
   error?: string;
 }
 
@@ -380,6 +381,13 @@ export interface StationDownloadState {
                   </span>
                 </label>
                 <label class="checkbox-label" style="margin-top: 8px;" *ngIf="autoRunInstaller">
+                  <input type="checkbox" [(ngModel)]="autoLaunchAfterInstall" />
+                  <span class="checkbox-text">
+                    <strong>🚀 Diritso Dula / Abrihon Human Install</strong>
+                    <span class="subtext">Automatic mo-open/play sa dula o app ug mo-update sa Game Launcher pagkahuman install</span>
+                  </span>
+                </label>
+                <label class="checkbox-label" style="margin-top: 8px;" *ngIf="autoRunInstaller">
                   <input type="checkbox" [(ngModel)]="createDesktopShortcut" />
                   <span class="checkbox-text">
                     <strong>Paghimo og Desktop Shortcut (.lnk) para sa Extracted Games</strong>
@@ -449,12 +457,13 @@ export interface StationDownloadState {
                 <div style="display: flex; align-items: center; gap: 6px;">
                   <span class="sp-status-badge" [ngClass]="item.status">
                     {{ item.status === 'downloading' ? 'Downloading (' + item.percent + '%)' :
-                       item.status === 'completed' ? 'Completed ✅' :
+                       item.status === 'installing' ? 'Installing ⏳' :
+                       item.status === 'completed' ? (item.launchedAppName ? 'Playing / Ready 🚀' : 'Completed ✅') :
                        item.status === 'cancelled' ? 'Cancelled 🛑' :
                        item.status === 'failed' ? 'Failed ❌' : 'Queued' }}
                   </span>
                   <button
-                    *ngIf="item.status === 'downloading' || item.status === 'queued'"
+                    *ngIf="item.status === 'downloading' || item.status === 'queued' || item.status === 'installing'"
                     type="button"
                     class="btn-cancel"
                     style="padding: 2px 7px; font-size: 0.68rem;"
@@ -478,7 +487,8 @@ export interface StationDownloadState {
               <!-- Size & Status Details -->
               <div class="sp-footer">
                 <span class="sp-size">{{ item.downloadedMb }} MB / {{ item.totalMb }} MB</span>
-                <span class="sp-extra" *ngIf="item.savedPath" [title]="item.savedPath">Saved: {{ item.savedPath }}</span>
+                <span class="sp-extra" *ngIf="item.launchedAppName">🚀 Gi-abli: {{ item.launchedAppName }}</span>
+                <span class="sp-extra" *ngIf="!item.launchedAppName && item.savedPath" [title]="item.savedPath">Saved: {{ item.savedPath }}</span>
                 <span class="sp-error" *ngIf="item.error">{{ item.error }}</span>
               </div>
             </div>
@@ -1567,6 +1577,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
   downloadFilename: string = 'ChromeStandaloneSetup64.exe';
   downloadTargetDir: string = '';
   autoRunInstaller: boolean = true;
+  autoLaunchAfterInstall: boolean = true;
   createDesktopShortcut: boolean = true;
   addToLauncherAfterDownload: boolean = false;
   silentArgs: string = '/silent /install';
@@ -1654,6 +1665,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
       const totalMb = data.totalBytes > 0 ? (Number(data.totalBytes) / (1024 * 1024)).toFixed(1) : 'Unknown';
       const st: StationDownloadState['status'] =
         data.status === 'cancelled' ? 'cancelled' :
+        data.status === 'installing' ? 'installing' :
         data.status === 'completed' ? 'completed' :
         data.status === 'failed' ? 'failed' : 'downloading';
 
@@ -1689,13 +1701,14 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
           percent: 100,
           status: 'completed',
           savedPath: data.destPath || data.filename,
-          executed: data.executed
+          executed: data.executed,
+          launchedAppName: data.launchedAppName
         };
 
         this.consoleLogs.unshift({
           timestamp: new Date(),
           pcName: name,
-          message: `✅ Natapos ang download: ${data.filename || 'installer'} -> ${data.destPath || ''}${data.executed ? ' (Gisugdan ang installer)' : ''}`,
+          message: `✅ Natapos ang download: ${data.filename || 'installer'} -> ${data.destPath || ''}${data.launchedAppName ? ` | 🚀 Gi-abli dayon ang ${data.launchedAppName}!` : (data.executed ? ' (Na-install na)' : '')}`,
           type: 'success'
         });
       } else if (data.cancelled) {
@@ -2027,7 +2040,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
   }
 
   get activeDownloadsCount(): number {
-    return this.downloadList.filter(d => d.status === 'downloading' || d.status === 'queued').length;
+    return this.downloadList.filter(d => d.status === 'downloading' || d.status === 'queued' || d.status === 'installing').length;
   }
 
   async launchRemoteDownload() {
@@ -2064,6 +2077,10 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
     });
 
     try {
+      const activePreset = this.allPresets.find((p) => p.id === this.selectedPresetId);
+      const cleanHint = (activePreset && activePreset.id !== 'custom')
+        ? activePreset.name.replace(/\s*\(.*?\)\s*/g, '').trim()
+        : (this.downloadFilename || '').replace(/\.(zip|rar|7z|exe|msi)$/i, '').replace(/[_-]*(setup|installer|install|full|client|standalone).*$/i, '').trim();
       const payload = {
         targetPcId,
         targetPcIds,
@@ -2071,6 +2088,8 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
         filename: this.downloadFilename.trim() || undefined,
         targetPath: this.downloadTargetDir.trim() || undefined,
         autoRun: this.autoRunInstaller,
+        autoLaunch: this.autoRunInstaller && this.autoLaunchAfterInstall,
+        launchName: cleanHint || undefined,
         silentArgs: this.silentArgs.trim() || undefined,
         runArgs: this.silentArgs.trim() || undefined,
         createShortcut: this.createDesktopShortcut
@@ -2134,7 +2153,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
   async cancelAllDownloads() {
     this.isCancellingDownload = true;
     try {
-      const active = this.downloadList.filter((d) => d.status === 'downloading' || d.status === 'queued');
+      const active = this.downloadList.filter((d) => d.status === 'downloading' || d.status === 'queued' || d.status === 'installing');
       const uniqueReqIds = Array.from(new Set(active.map((d) => d.reqId).filter(Boolean))) as string[];
 
       if (uniqueReqIds.length > 0) {

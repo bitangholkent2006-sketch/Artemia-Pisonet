@@ -41,7 +41,7 @@ interface WindowWithDesktop extends Window {
     captureScreen: (options?: { width?: number; height?: number; quality?: number; skipFallback?: boolean }) => Promise<{ base64Image: string; error?: string }>;
     getDiskDrives: () => Promise<{ drives: any[] }>;
     getHardwareHealth?: () => Promise<{ cpuModel: string; cpuPercent: number; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuPercent?: number; gpuStatus: string; ssdModel: string; ssdHealthPercent?: number | null; ssdActivePercent?: number; ssdStatus: string; activeApp: string }>;
-    downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean }) => Promise<{ success: boolean; cancelled?: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
+    downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; autoLaunch?: boolean; launchName?: string; runArgs?: string; createShortcut?: boolean }) => Promise<{ success: boolean; cancelled?: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; autoLaunched?: boolean; launchedAppName?: string; execError?: string; error?: string }>;
     cancelDownload?: (reqId?: string) => Promise<{ success: boolean; cancelledCount: number }>;
     searchWinget?: (query: string) => Promise<{ items: Array<{ id: string; name: string; version: string }>; error?: string }>;
     onDownloadProgress?: (callback: (data: any) => void) => void;
@@ -70,7 +70,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.22';
+const CLIENT_AGENT_VERSION = '1.0.23';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -1175,7 +1175,7 @@ class StationMaintenanceAgent {
         });
       });
 
-      this.socket.on('agent:download:run', async (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean; targetPcId?: string; targetPcIds?: string[] }) => {
+      this.socket.on('agent:download:run', async (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; autoLaunch?: boolean; launchName?: string; runArgs?: string; createShortcut?: boolean; targetPcId?: string; targetPcIds?: string[] }) => {
         const list = Array.isArray(payload.targetPcIds) && payload.targetPcIds.length > 0
           ? payload.targetPcIds
           : [payload.targetPcId];
@@ -1190,9 +1190,15 @@ class StationMaintenanceAgent {
         }
 
         if (res.success) {
-          this.logMessage(`[Downloader] Download completed: ${res.destPath}`);
-          this.showToast(`✅ Download Complete: ${res.filename}!`, 'success', 6);
-          setTimeout(() => { this.refreshLauncherScan(); }, 1500);
+          this.logMessage(`[Downloader] Download completed: ${res.destPath}${res.launchedAppName ? ` | Launched: ${res.launchedAppName}` : ''}`);
+          this.showToast(
+            res.launchedAppName
+              ? `🚀 Na-install ug gi-abli dayon ang ${res.launchedAppName}!`
+              : `✅ Download Complete: ${res.filename}!`,
+            'success',
+            6
+          );
+          await this.refreshLauncherScan();
         } else if (res.cancelled) {
           this.logMessage(`[Downloader] Download cancelled by operator (reqId=${payload.reqId}).`);
           this.showToast('🛑 Gi-cancel sa Admin ang download.', 'warn', 4);

@@ -132,7 +132,7 @@ maintenanceRoutes.post('/game-update', requireStaff, async (c) => {
 maintenanceRoutes.post('/download', requireStaff, async (c) => {
   const staff = c.get('user');
   const body = await c.req.json();
-  const { targetPcId = 'all', targetPcIds, url, filename, targetPath, targetDir, autoRun, runArgs, silentArgs, createShortcut } = body;
+  const { targetPcId = 'all', targetPcIds, url, filename, targetPath, targetDir, autoRun, autoLaunch, launchName, runArgs, silentArgs, createShortcut } = body;
 
   if (!url || !url.trim()) {
     return c.json({ success: false, message: 'Download URL is required' }, 400);
@@ -146,6 +146,8 @@ maintenanceRoutes.post('/download', requireStaff, async (c) => {
     filename,
     targetPath: targetPath || targetDir,
     autoRun: !!autoRun,
+    autoLaunch: autoLaunch !== false,
+    launchName: launchName ? String(launchName).trim() : undefined,
     runArgs: runArgs || silentArgs,
     createShortcut: createShortcut !== false,
     sender: staff?.fullName || staff?.username || 'Admin',

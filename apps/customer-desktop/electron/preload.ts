@@ -54,7 +54,7 @@ export interface PisonetDesktopApi {
     ssdStatus: string;
     activeApp: string;
   }>;
-  downloadFile: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean }) => Promise<{ success: boolean; cancelled?: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
+  downloadFile: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; autoLaunch?: boolean; launchName?: string; runArgs?: string; createShortcut?: boolean }) => Promise<{ success: boolean; cancelled?: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; autoLaunched?: boolean; launchedAppName?: string; execError?: string; error?: string }>;
   cancelDownload?: (reqId?: string) => Promise<{ success: boolean; cancelledCount: number }>;
   searchWinget?: (query: string) => Promise<{ items: Array<{ id: string; name: string; version: string }>; error?: string }>;
   onDownloadProgress: (callback: (data: any) => void) => void;

@@ -1,7 +1,7 @@
 {
-  "version": "1.0.22",
+  "version": "1.0.23",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-11T23:11:00.000Z",
+  "releaseDate": "2026-11-12T00:10:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Desktop Replacement Game Launcher OS: Docked desktop work-area replacement (Win+D / game launch safe via HWND_BOTTOM pinning), organized 2-pane desktop UI (Games, Browsers & Chat, Media & Live, Office & Study, File Explorer & Recycle Bin, Desktop Icons/Cards views, Quick Dock, live clock & volume), and crash-free elevated launcher support"
+  "changelog": "Auto-Play / Auto-Launch After Download & Install: Downloaded .zip/.rar/.7z games, standalone .exe apps, .msi/.exe setup installers, and WinGet installs now automatically sync into the Desktop Game Launcher and launch immediately upon install completion"
 }

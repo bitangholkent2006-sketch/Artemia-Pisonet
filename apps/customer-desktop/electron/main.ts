@@ -3061,8 +3061,96 @@ ipcMain.handle('maintenance:cancel-download', (_event, reqId?: string) => {
   return { success: true, cancelledCount };
 });
 
-ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean }) => {
+function normalizeInstallMatchKey(raw: string): string {
+  return String(raw || '')
+    .toLowerCase()
+    .replace(/\.(exe|msi|zip|rar|7z|lnk|url)$/gi, '')
+    .replace(/\b(setup|installer|install|portable|full|client|standalone|win64|win32|x64|x86|64bit|32bit|latest|online)\b/gi, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function runAndWaitForInstaller(
+  cmd: string,
+  args: string[],
+  cwd: string | undefined,
+  ctrl: ActiveDownloadControl,
+  waitMode: 'installer' | 'app'
+): Promise<{ ok: boolean; stillRunning?: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (res: { ok: boolean; stillRunning?: boolean; error?: string }) => {
+      if (!settled) {
+        settled = true;
+        resolve(res);
+      }
+    };
+
+    try {
+      const child = spawn(cmd, args, { cwd, detached: false, stdio: 'ignore', windowsHide: false });
+      ctrl.killChild = () => {
+        try {
+          if (child.pid) exec(`taskkill /F /T /PID ${child.pid} 2>nul`);
+          child.kill('SIGKILL');
+        } catch {}
+      };
+
+      // For non-installer standalone apps, return once confirmed running cleanly after 1.5s
+      const appAliveTimer = waitMode === 'app'
+        ? setTimeout(() => {
+            try { child.unref(); } catch {}
+            finish({ ok: true, stillRunning: true });
+          }, 1500)
+        : null;
+
+      // Safety cap (3 min) for installers so Admin UI never hangs indefinitely
+      const maxWaitTimer = setTimeout(() => {
+        finish({ ok: true, stillRunning: true });
+      }, 180000);
+
+      child.on('error', (err: any) => {
+        if (appAliveTimer) clearTimeout(appAliveTimer);
+        clearTimeout(maxWaitTimer);
+        if (ctrl.cancelled) return finish({ ok: false, error: 'Cancelled' });
+        if (String(err?.code || '') === 'EACCES') {
+          // Elevated setup/app via PowerShell Start-Process (uses ShellExecute UAC cleanly)
+          const escPath = cmd.replace(/'/g, "''");
+          const escArgs = args.map((a) => `'${a.replace(/'/g, "''")}'`).join(', ');
+          const argsExpr = args.length > 0 ? `-ArgumentList @(${escArgs})` : '';
+          const cwdExpr = cwd ? `-WorkingDirectory '${cwd.replace(/'/g, "''")}'` : '';
+          const waitFlag = waitMode === 'installer' ? '-Wait' : '';
+          const psCmd = `Start-Process -FilePath '${escPath}' ${argsExpr} ${cwdExpr} ${waitFlag}`.trim();
+          const psProc = execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', psCmd], { timeout: 180000, windowsHide: true }, (psErr) => {
+            if (ctrl.cancelled) return finish({ ok: false, error: 'Cancelled' });
+            if (psErr) return finish({ ok: false, error: psErr.message || err.message });
+            finish({ ok: true, stillRunning: waitMode === 'app' });
+          });
+          ctrl.killChild = () => {
+            try {
+              if (psProc.pid) exec(`taskkill /F /T /PID ${psProc.pid} 2>nul`);
+              psProc.kill('SIGKILL');
+            } catch {}
+          };
+          return;
+        }
+        finish({ ok: false, error: err?.message || 'Installer launch failed' });
+      });
+
+      child.on('close', () => {
+        if (appAliveTimer) clearTimeout(appAliveTimer);
+        clearTimeout(maxWaitTimer);
+        if (ctrl.cancelled) return finish({ ok: false, error: 'Cancelled' });
+        finish({ ok: true, stillRunning: false });
+      });
+    } catch (e: any) {
+      finish({ ok: false, error: e?.message || 'Installer launch failed' });
+    }
+  });
+}
+
+ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; autoLaunch?: boolean; launchName?: string; runArgs?: string; createShortcut?: boolean }) => {
   const { reqId, autoRun, runArgs, createShortcut } = payload;
+  const shouldAutoLaunch = Boolean(autoRun && payload.autoLaunch !== false);
   const ctrl: ActiveDownloadControl = {
     abortController: new AbortController(),
     cancelled: recentlyCancelledDownloadIds.has(reqId)
@@ -3085,6 +3173,83 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
     };
   };
 
+  let preInstallNames = new Set<string>();
+  const capturePreInstallSnapshot = async () => {
+    if (!shouldAutoLaunch) return;
+    if (cachedAutoScanCatalog.length === 0) {
+      await runDeepSystemAppScan().catch(() => {});
+    }
+    preInstallNames = new Set(cachedAutoScanCatalog.map((c) => normalizeInstallMatchKey(c.name)).filter(Boolean));
+  };
+
+  const findAndAutoLaunchInstalled = async (explicitExe?: string, hints: string[] = []): Promise<string | undefined> => {
+    if (!shouldAutoLaunch || ctrl.cancelled) return undefined;
+    try {
+      if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.cleanDesktopShortcuts !== false) {
+        await migrateAndCleanDesktopShortcuts().catch(() => {});
+      }
+      const scan = await runDeepSystemAppScan();
+      const catalog = scan.catalog || [];
+
+      if (explicitExe && fs.existsSync(explicitExe)) {
+        const matched = catalog.find((c) => String(c.launchTarget || '').toLowerCase() === explicitExe.toLowerCase());
+        const itemToLaunch: LocalLauncherItem = matched || {
+          id: 'dl_auto_' + Date.now(),
+          name: normalizeInstallMatchKey(hints[0] || path.basename(explicitExe, '.exe')) || path.basename(explicitExe, '.exe'),
+          icon: '🎮',
+          category: 'Games',
+          launchTarget: explicitExe,
+          args: '',
+          workingDir: path.dirname(explicitExe),
+          visible: true
+        };
+        const lr = await launchLauncherCatalogItem(itemToLaunch);
+        if (lr.success) return itemToLaunch.name;
+      }
+
+      const candidates = catalog.filter((c) => c.category !== 'Files & System' && c.visible !== false);
+      const hintKeys = hints.map(normalizeInstallMatchKey).filter(Boolean);
+      const hintTokens = Array.from(new Set(hintKeys.flatMap((k) => k.split(/\s+/).filter((t) => t.length >= 2))));
+
+      // 1. Prefer brand-new installed items not present before install
+      const newlyAdded = candidates.filter((c) => {
+        const k = normalizeInstallMatchKey(c.name);
+        return k && !preInstallNames.has(k);
+      });
+
+      const scoreItem = (c: LocalLauncherItem): number => {
+        const nk = normalizeInstallMatchKey(c.name);
+        let score = newlyAdded.includes(c) ? 50 : 0;
+        if (c.category === 'Games') score += 10;
+        for (const hk of hintKeys) {
+          if (nk === hk) score += 80;
+          else if (nk.includes(hk) || hk.includes(nk)) score += 45;
+        }
+        for (const tk of hintTokens) {
+          if (nk.split(/\s+/).includes(tk)) score += 18;
+          else if (nk.includes(tk)) score += 8;
+        }
+        return score;
+      };
+
+      const ranked = (newlyAdded.length > 0 ? newlyAdded : candidates)
+        .map((item) => ({ item, score: scoreItem(item) }))
+        .sort((a, b) => b.score - a.score);
+
+      const best = ranked[0];
+      if (best && (newlyAdded.includes(best.item) || best.score >= 30)) {
+        const lr = await launchLauncherCatalogItem(best.item);
+        if (lr.success) {
+          logToFile(`[Downloader] Auto-launched installed app: ${best.item.name} -> ${best.item.launchTarget}`);
+          return best.item.name;
+        }
+      }
+    } catch (e: any) {
+      logToFile(`[Downloader] Auto-launch scan warning: ${e?.message || e}`);
+    }
+    return undefined;
+  };
+
   try {
     if (ctrl.cancelled) return buildCancelledResponse();
     let url = String(payload.url || '').trim();
@@ -3093,19 +3258,26 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
     if (url.toLowerCase().startsWith('winget://')) {
       const pkgId = url.slice('winget://'.length).trim();
       if (!pkgId) return { success: false, error: 'Missing WinGet Package ID' };
-      event.sender.send('maintenance:download:progress', { reqId, downloadedBytes: 0, totalBytes: 0, percent: 25, status: 'downloading' });
+      await capturePreInstallSnapshot();
+      event.sender.send('maintenance:download:progress', { reqId, downloadedBytes: 0, totalBytes: 0, percent: 45, status: 'installing' });
       return await new Promise((resolve) => {
         const wgProc = execFile(
           'winget',
           ['install', '--id', pkgId, '-e', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'],
           { timeout: 240000, windowsHide: true },
-          (err, stdout, stderr) => {
+          async (err, stdout, stderr) => {
             if (ctrl.cancelled) {
               return resolve(buildCancelledResponse());
             }
             const outText = (stdout || '') + (stderr || '');
             const alreadyInstalled = outText.includes('already installed') || outText.includes('No available upgrade') || (err as any)?.code === -1978335189 || (err as any)?.code === -1978335212;
             const ok = !err || alreadyInstalled;
+            let launchedAppName: string | undefined = undefined;
+            if (ok && shouldAutoLaunch) {
+              await new Promise((r) => setTimeout(r, 800));
+              const pkgShort = pkgId.split('.').slice(1).join(' ') || pkgId;
+              launchedAppName = await findAndAutoLaunchInstalled(undefined, [payload.launchName || '', pkgShort, pkgId]);
+            }
             if (ok) {
               event.sender.send('maintenance:download:progress', { reqId, downloadedBytes: 1, totalBytes: 1, percent: 100, status: 'completed' });
             }
@@ -3115,6 +3287,8 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
               filename: pkgId,
               totalBytes: 0,
               executed: ok,
+              autoLaunched: Boolean(launchedAppName),
+              launchedAppName,
               execError: ok ? undefined : (outText.trim().slice(-220) || err?.message)
             });
           }
@@ -3249,10 +3423,21 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
     });
 
     let executed = false;
+    let autoLaunched = false;
+    let launchedAppName: string | undefined = undefined;
     let execError: string | undefined = undefined;
     let finalDestPath = destFile;
 
     if (autoRun && process.platform === 'win32' && !ctrl.cancelled) {
+      await capturePreInstallSnapshot();
+      event.sender.send('maintenance:download:progress', {
+        reqId,
+        downloadedBytes,
+        totalBytes: totalBytes || downloadedBytes,
+        percent: 100,
+        status: 'installing'
+      });
+
       const lowerExt = path.extname(destFile).toLowerCase();
       if (lowerExt === '.zip' || lowerExt === '.7z' || lowerExt === '.rar') {
         try {
@@ -3287,11 +3472,18 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
           }
 
           if (ctrl.cancelled) return buildCancelledResponse(downloadedBytes, totalBytes);
+          let mainExtractedExe: string | null = null;
           if (createShortcut !== false) {
-            await createDesktopShortcutForExtracted(extractBase, cleanFolderName);
+            mainExtractedExe = await createDesktopShortcutForExtracted(extractBase, cleanFolderName);
+          } else {
+            mainExtractedExe = findMainExeInDirectory(extractBase, 0);
           }
           finalDestPath = extractBase;
           executed = true;
+          if (shouldAutoLaunch) {
+            launchedAppName = await findAndAutoLaunchInstalled(mainExtractedExe || undefined, [payload.launchName || '', cleanFolderName]);
+            autoLaunched = Boolean(launchedAppName);
+          }
         } catch (e: any) {
           if (ctrl.cancelled) return buildCancelledResponse(downloadedBytes, totalBytes);
           execError = e?.message || String(e);
@@ -3299,27 +3491,50 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
       } else if (lowerExt === '.msi') {
         try {
           const msiArgs = (runArgs || '').trim() ? (runArgs || '').trim().split(/\s+/) : ['/qn', '/norestart'];
-          const proc = spawn('msiexec.exe', ['/i', destFile, ...msiArgs], { detached: true, stdio: 'ignore', windowsHide: true });
-          proc.unref();
-          executed = true;
+          const runRes = await runAndWaitForInstaller('msiexec.exe', ['/i', destFile, ...msiArgs], destDir, ctrl, 'installer');
+          if (ctrl.cancelled) return buildCancelledResponse(downloadedBytes, totalBytes);
+          executed = runRes.ok;
+          if (!runRes.ok) execError = runRes.error;
+          if (runRes.ok && shouldAutoLaunch) {
+            await new Promise((r) => setTimeout(r, 900));
+            launchedAppName = await findAndAutoLaunchInstalled(undefined, [payload.launchName || '', filename]);
+            autoLaunched = Boolean(launchedAppName);
+          }
         } catch (e: any) {
           execError = e?.message || String(e);
         }
       } else {
         try {
           const argParts = (runArgs || '').trim() ? (runArgs || '').trim().split(/\s+/) : [];
-          const proc = spawn(destFile, argParts, {
-            cwd: destDir,
-            detached: true,
-            stdio: 'ignore',
-            windowsHide: false
-          });
-          proc.unref();
-          executed = true;
+          const looksLikeInstaller = /setup|install|unins|patch|update|bootstrap|redist|downloader/i.test(filename) || argParts.length > 0;
+          const runRes = await runAndWaitForInstaller(destFile, argParts, destDir, ctrl, looksLikeInstaller ? 'installer' : 'app');
+          if (ctrl.cancelled) return buildCancelledResponse(downloadedBytes, totalBytes);
+          executed = runRes.ok;
+          if (!runRes.ok) execError = runRes.error;
+          if (runRes.ok && shouldAutoLaunch) {
+            if (runRes.stillRunning && !looksLikeInstaller) {
+              // Standalone app exe is already launched & running cleanly
+              if (isDesktopReplacementActive()) sendWindowToDesktopBottom().catch(() => {});
+              launchedAppName = payload.launchName || path.basename(destFile, lowerExt);
+              autoLaunched = true;
+            } else {
+              await new Promise((r) => setTimeout(r, 900));
+              launchedAppName = await findAndAutoLaunchInstalled(undefined, [payload.launchName || '', filename]);
+              autoLaunched = Boolean(launchedAppName);
+            }
+          }
         } catch (e: any) {
           execError = e?.message || String(e);
         }
       }
+
+      event.sender.send('maintenance:download:progress', {
+        reqId,
+        downloadedBytes,
+        totalBytes: totalBytes || downloadedBytes,
+        percent: 100,
+        status: 'completed'
+      });
     }
 
     return {
@@ -3328,6 +3543,8 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
       filename,
       totalBytes: downloadedBytes,
       executed,
+      autoLaunched,
+      launchedAppName,
       execError
     };
   } catch (err: any) {
@@ -4038,7 +4255,7 @@ async function launchExecutableSafely(target: string, argParts: string[], cwd?: 
   });
 }
 
-ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) => {
+async function launchLauncherCatalogItem(item: LocalLauncherItem): Promise<{ success: boolean; resolvedPath?: string; error?: string }> {
   try {
     let target = String(item?.launchTarget || '').trim();
     if (!target) return { success: false, error: 'Walay target path.' };
@@ -4050,7 +4267,6 @@ ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) =
       const res = await launchExecutableSafely('explorer.exe', [target]);
       if (!res.ok) return { success: false, error: res.error || 'Dili ma-abli ang system folder.' };
     } else {
-      // Handle directory path if specified manually
       if (fs.existsSync(target) && fs.statSync(target).isDirectory() && !/explorer\.exe$/i.test(target)) {
         const mainExe = findMainExeInDirectory(target, 0);
         if (mainExe) target = mainExe;
@@ -4062,7 +4278,6 @@ ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) =
         const rawArgs = expandWinEnvVars(String(item?.args || '').trim());
         let argParts: string[] = [];
         if (rawArgs) {
-          // Preserve single folder argument or shell:* specifier for explorer/control cleanly
           if (/explorer\.exe$/i.test(target) && (/^shell:/i.test(rawArgs) || fs.existsSync(rawArgs))) {
             argParts = [rawArgs];
           } else {
@@ -4082,7 +4297,6 @@ ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) =
 
     if (mainWindow && !isStationLocked) {
       if (isDesktopReplacementActive()) {
-        // Keep Desktop Launcher open underneath newly launched window (never leave a blank desktop)
         setTimeout(() => { sendWindowToDesktopBottom().catch(() => {}); }, 180);
         setTimeout(() => { sendWindowToDesktopBottom().catch(() => {}); }, 650);
       } else {
@@ -4095,6 +4309,10 @@ ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) =
   } catch (err: any) {
     return { success: false, error: err?.message || 'Napakyas ang pag-abli sa app.' };
   }
+}
+
+ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) => {
+  return launchLauncherCatalogItem(item);
 });
 
 async function applyDesktopWallpaper(wallpaperUrl: string): Promise<{ success: boolean; localPath?: string; error?: string }> {

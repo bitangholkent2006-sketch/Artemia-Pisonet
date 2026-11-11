@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const FALLBACK_VERSION = '1.0.22';
+const FALLBACK_VERSION = '1.0.23';
 
 export function resolveReleaseFile(relativePath: string): string | null {
   const candidates = [

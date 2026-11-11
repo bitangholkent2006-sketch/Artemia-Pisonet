@@ -71,6 +71,8 @@ export interface RemoteDownloadRequest {
   filename?: string;
   targetPath?: string;
   autoRun?: boolean;
+  autoLaunch?: boolean;
+  launchName?: string;
   runArgs?: string;
   targetPcIds: string[]; // e.g. ['all'] or ['pc-01']
 }
@@ -82,7 +84,7 @@ export interface RemoteDownloadProgress {
   downloadedBytes: number;
   totalBytes: number;
   percent: number;
-  status: 'pending' | 'downloading' | 'completed' | 'failed';
+  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled';
   error?: string;
 }
 
@@ -95,6 +97,8 @@ export interface RemoteDownloadResult {
   filename?: string;
   totalBytes?: number;
   executed?: boolean;
+  autoLaunched?: boolean;
+  launchedAppName?: string;
   error?: string;
   timestamp: string;
 }
