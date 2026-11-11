@@ -99,7 +99,7 @@ export interface RemoteDownloadResult {
   timestamp: string;
 }
 
-export type LauncherCategory = 'Games' | 'Browsers' | 'Files & System' | 'Office & Tools' | 'Tools';
+export type LauncherCategory = 'Games' | 'Browsers' | 'Media' | 'Office' | 'Files & System' | 'Office & Tools' | 'Tools';
 
 export interface LauncherGameItem {
   id: string;

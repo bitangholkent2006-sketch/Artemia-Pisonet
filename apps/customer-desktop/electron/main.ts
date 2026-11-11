@@ -43,6 +43,8 @@ let isOtaRestarting = false;
 let isUpdatingClient = false;
 let isStationLocked = false;
 let isAnnouncementActive = false;
+let currentUiMode: 'launcher' | 'agent' = 'launcher';
+let operatorDesktopPeek = false;
 
 const artemiaStateDir = path.join(os.homedir(), '.artemia');
 const launcherConfigFilePath = path.join(artemiaStateDir, 'launcher_config.json');
@@ -52,7 +54,7 @@ const desktopBackupDir = path.join(artemiaStateDir, 'desktop_shortcuts_backup');
 const migratedShortcutsFilePath = path.join(artemiaStateDir, 'migrated_shortcuts.json');
 const appIconsCacheDir = path.join(artemiaStateDir, 'app_icons');
 
-type LocalLauncherCategory = 'Games' | 'Browsers' | 'Files & System' | 'Office & Tools' | 'Tools';
+type LocalLauncherCategory = 'Games' | 'Browsers' | 'Media' | 'Office' | 'Files & System' | 'Office & Tools' | 'Tools';
 
 interface LocalLauncherItem {
   id: string;
@@ -390,31 +392,30 @@ function createTray() {
           }
         },
         {
-          label: '🎮 Open Game Launcher',
+          label: '🎮 Open Desktop Game Launcher',
           click: () => {
-            if (mainWindow?.isMinimized()) mainWindow.restore();
-            mainWindow?.show();
-            mainWindow?.focus();
+            operatorDesktopPeek = false;
+            currentUiMode = 'launcher';
             mainWindow?.webContents.send('launcher:restored-after-idle');
+            if (isDesktopReplacementActive()) {
+              applyDesktopShellBounds(false);
+              mainWindow?.show();
+              mainWindow?.focus();
+            } else {
+              if (mainWindow?.isMinimized()) mainWindow.restore();
+              mainWindow?.show();
+              mainWindow?.focus();
+            }
           }
         },
         {
           label: 'Show Maintenance Console',
           click: () => {
-            if (mainWindow?.isMinimized()) mainWindow.restore();
-            mainWindow?.show();
-            mainWindow?.focus();
+            operatorDesktopPeek = false;
+            currentUiMode = 'agent';
+            applyAgentConsoleBounds();
           }
         },
-        {
-          label: 'Hide to Background',
-          click: () => {
-            if (!isStationLocked) {
-              mainWindow?.hide();
-            }
-          }
-        },
-        { type: 'separator' },
         {
           label: 'Quit Agent (Operator Password)',
           click: () => {
@@ -432,7 +433,10 @@ function createTray() {
     updateTrayMenu();
 
     tray.on('click', () => {
-      if (mainWindow?.isVisible()) {
+      if (isDesktopReplacementActive()) {
+        mainWindow?.show();
+        mainWindow?.focus();
+      } else if (mainWindow?.isVisible()) {
         if (!isStationLocked) mainWindow.hide();
       } else {
         mainWindow?.show();
@@ -444,32 +448,186 @@ function createTray() {
   }
 }
 
+const DESKTOP_PIN_CS_SOURCE = `using System;
+using System.Runtime.InteropServices;
+
+namespace ArtemiaDesktopPin {
+    public class Program {
+        [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+        static readonly IntPtr HWND_BOTTOM = new IntPtr(1);
+        const uint SWP_NOACTIVATE = 0x0010;
+        const uint SWP_SHOWWINDOW = 0x0040;
+        const uint SWP_NOSENDCHANGING = 0x0400;
+
+        public static int Main(string[] args) {
+            if (args.Length < 5) return 1;
+            long hVal;
+            if (!long.TryParse(args[0], out hVal) || hVal == 0) return 1;
+            int x = int.Parse(args[1]);
+            int y = int.Parse(args[2]);
+            int w = int.Parse(args[3]);
+            int h = int.Parse(args[4]);
+            bool noFocus = args.Length > 5 && args[5] == "bottom";
+            IntPtr hwnd = new IntPtr(hVal);
+            if (IsIconic(hwnd)) {
+                ShowWindow(hwnd, 4); // SW_SHOWNOACTIVATE restore
+            }
+            if (noFocus) {
+                SetWindowPos(hwnd, HWND_BOTTOM, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOSENDCHANGING);
+            } else {
+                SetWindowPos(hwnd, HWND_BOTTOM, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            }
+            return 0;
+        }
+    }
+}`;
+
+const desktopPinExePath = path.join(artemiaStateDir, 'ArtemiaDesktopPin.exe');
+const desktopPinCsPath = path.join(artemiaStateDir, 'ArtemiaDesktopPin.cs');
+let desktopPinBuildPromise: Promise<string | null> | null = null;
+
+function ensureDesktopPinBinary(): Promise<string | null> {
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  if (fs.existsSync(desktopPinExePath)) return Promise.resolve(desktopPinExePath);
+  if (desktopPinBuildPromise) return desktopPinBuildPromise;
+  desktopPinBuildPromise = (async () => {
+    const cscCandidates = [
+      'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',
+      'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe'
+    ];
+    const csc = cscCandidates.find((p) => fs.existsSync(p));
+    if (!csc) return null;
+    try {
+      if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+      fs.writeFileSync(desktopPinCsPath, DESKTOP_PIN_CS_SOURCE, 'utf8');
+      await new Promise<void>((resolve, reject) => {
+        execFile(csc, ['/nologo', '/target:exe', `/out:${desktopPinExePath}`, desktopPinCsPath], { timeout: 15000, windowsHide: true }, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      return fs.existsSync(desktopPinExePath) ? desktopPinExePath : null;
+    } catch {
+      return null;
+    }
+  })().finally(() => { desktopPinBuildPromise = null; });
+  return desktopPinBuildPromise;
+}
+
+function getMainWindowHwndDecimal(): string {
+  if (!mainWindow || mainWindow.isDestroyed()) return '';
+  try {
+    const buf = mainWindow.getNativeWindowHandle();
+    if (buf.length >= 8) return buf.readBigUInt64LE(0).toString();
+    if (buf.length >= 4) return buf.readUInt32LE(0).toString();
+  } catch {}
+  return '';
+}
+
+function isDesktopReplacementActive(): boolean {
+  return Boolean(
+    mainWindow &&
+    !mainWindow.isDestroyed() &&
+    !isQuitting &&
+    !isStationLocked &&
+    !isAnnouncementActive &&
+    !operatorDesktopPeek &&
+    cachedLauncherConfig.launcherEnabled !== false &&
+    currentUiMode === 'launcher'
+  );
+}
+
+async function sendWindowToDesktopBottom(bounds?: Electron.Rectangle) {
+  if (!mainWindow || mainWindow.isDestroyed() || isStationLocked || isAnnouncementActive) return;
+  const wa = bounds || screen.getPrimaryDisplay().workArea;
+  const hwndStr = getMainWindowHwndDecimal();
+  const pinBin = await ensureDesktopPinBinary();
+  if (pinBin && hwndStr) {
+    execFile(pinBin, [hwndStr, String(wa.x), String(wa.y), String(wa.width), String(wa.height), 'bottom'], { timeout: 2500, windowsHide: true }, () => {});
+  } else {
+    try { mainWindow.blur(); } catch {}
+  }
+}
+
+function applyDesktopShellBounds(sendBottom = false) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!isDesktopReplacementActive()) return;
+  try {
+    const wa = screen.getPrimaryDisplay().workArea;
+    mainWindow.setFullScreen(false);
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setClosable(cachedLauncherConfig.preventLauncherClose === false);
+    mainWindow.setMinimizable(false);
+    mainWindow.setMaximizable(false);
+    mainWindow.setMovable(false);
+    mainWindow.setResizable(false);
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.setBounds(wa);
+    if (!mainWindow.isVisible()) mainWindow.showInactive();
+    if (sendBottom) {
+      sendWindowToDesktopBottom(wa).catch(() => {});
+    }
+  } catch {}
+}
+
+function applyAgentConsoleBounds() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    const wa = screen.getPrimaryDisplay().workArea;
+    const w = Math.min(1060, Math.max(820, wa.width - 120));
+    const h = Math.min(720, Math.max(560, wa.height - 90));
+    mainWindow.setFullScreen(false);
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setResizable(true);
+    mainWindow.setMovable(true);
+    mainWindow.setMaximizable(true);
+    mainWindow.setMinimizable(true);
+    mainWindow.setClosable(cachedLauncherConfig.preventLauncherClose === false);
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.setBounds({
+      x: Math.round(wa.x + (wa.width - w) / 2),
+      y: Math.round(wa.y + (wa.height - h) / 2),
+      width: w,
+      height: h
+    });
+    mainWindow.show();
+    mainWindow.focus();
+  } catch {}
+}
+
 function createWindow() {
   const showLauncher = cachedLauncherConfig.launcherEnabled !== false;
   const preventClose = showLauncher && cachedLauncherConfig.preventLauncherClose !== false;
+  const wa = screen.getPrimaryDisplay().workArea;
   mainWindow = new BrowserWindow({
-    width: showLauncher ? 1280 : 980,
-    height: showLauncher ? 760 : 640,
+    x: showLauncher ? wa.x : undefined,
+    y: showLauncher ? wa.y : undefined,
+    width: showLauncher ? wa.width : 980,
+    height: showLauncher ? wa.height : 640,
     minWidth: 480,
     minHeight: 360,
     title: showLauncher
-      ? `${cachedLauncherConfig.shopName || "Artemia's Pisonet"} — Game Launcher`
+      ? `${cachedLauncherConfig.shopName || "Artemia's Pisonet"} — Desktop`
       : 'Artemia Fleet - Station Agent & Maintenance Daemon',
-    frame: !showLauncher, // Remove native [X] Close button when Big Game Launcher is active
+    frame: !showLauncher, // Remove native window border/close when Desktop Launcher is active
     transparent: false,
     backgroundColor: '#07090e',
     show: false,
     kiosk: false,
     fullscreen: false,
     alwaysOnTop: false,
-    minimizable: true,
+    minimizable: !showLauncher,
+    maximizable: !showLauncher,
     closable: !preventClose,
-    movable: true,
-    resizable: true,
+    movable: !showLauncher,
+    resizable: !showLauncher,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
       sandbox: false, // Allow preload full access to ipcRenderer
       preload: path.join(__dirname, 'preload.js')
     }
@@ -482,7 +640,11 @@ function createWindow() {
       (input.control && (input.key.toLowerCase() === 'w' || input.key.toLowerCase() === 'q'));
     if (isCloseShortcut && cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
       event.preventDefault();
-      try { mainWindow?.minimize(); } catch {}
+      if (isDesktopReplacementActive()) {
+        sendWindowToDesktopBottom().catch(() => {});
+      } else {
+        try { mainWindow?.minimize(); } catch {}
+      }
     }
   });
 
@@ -509,30 +671,41 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     if (mainWindow) {
-      if (cachedLauncherConfig.launcherEnabled) {
-        try {
-          mainWindow.maximize();
-          mainWindow.setClosable(cachedLauncherConfig.preventLauncherClose === false);
-        } catch {}
-      }
-      mainWindow.show();
-      // Keep Game Launcher open & maximized when enabled; otherwise silently hide to tray after 1.2s
-      if (!cachedLauncherConfig.launcherEnabled) {
-        setTimeout(() => {
-          if (mainWindow && !isStationLocked && !isAnnouncementActive && !cachedLauncherConfig.launcherEnabled) {
-            mainWindow.hide();
-          }
-        }, 1200);
+      if (cachedLauncherConfig.launcherEnabled && currentUiMode === 'launcher') {
+        applyDesktopShellBounds(false);
+        mainWindow.show();
+      } else {
+        mainWindow.show();
+        if (!cachedLauncherConfig.launcherEnabled) {
+          setTimeout(() => {
+            if (mainWindow && !isStationLocked && !isAnnouncementActive && !cachedLauncherConfig.launcherEnabled) {
+              mainWindow.hide();
+            }
+          }, 1200);
+        }
       }
     }
   });
 
-  // Intercept window close: customers can ONLY minimize the Game Launcher, never close/exit it!
+  // Intercept Win+D / Show Desktop minimize so Desktop Launcher instantly stays pinned as the Windows Desktop
+  mainWindow.on('minimize', () => {
+    if (isDesktopReplacementActive()) {
+      setTimeout(() => {
+        if (isDesktopReplacementActive()) {
+          applyDesktopShellBounds(true);
+        }
+      }, 95);
+    }
+  });
+
+  // Intercept window close: Desktop Replacement Launcher stays docked; only authorized Operator Exit closes it!
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
       if (isStationLocked) {
         presentOverlayWindow();
+      } else if (isDesktopReplacementActive()) {
+        sendWindowToDesktopBottom().catch(() => {});
       } else if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
         mainWindow?.minimize();
       } else {
@@ -549,11 +722,19 @@ function createWindow() {
 
 // Window Controls
 ipcMain.handle('window:minimize', () => {
-  mainWindow?.minimize();
+  if (isDesktopReplacementActive()) {
+    sendWindowToDesktopBottom().catch(() => {});
+  } else {
+    mainWindow?.minimize();
+  }
   return true;
 });
 
 ipcMain.handle('window:maximize', () => {
+  if (isDesktopReplacementActive()) {
+    applyDesktopShellBounds(false);
+    return true;
+  }
   if (mainWindow?.isMaximized()) {
     mainWindow?.unmaximize();
   } else {
@@ -562,10 +743,27 @@ ipcMain.handle('window:maximize', () => {
   return true;
 });
 
-// Close / Hide in UI minimizes instead of closing when Big Game Launcher is active
+ipcMain.handle('window:set-ui-mode', (_event, mode: 'launcher' | 'agent') => {
+  currentUiMode = mode === 'agent' ? 'agent' : 'launcher';
+  operatorDesktopPeek = false;
+  if (!isStationLocked && !isAnnouncementActive) {
+    if (currentUiMode === 'launcher' && cachedLauncherConfig.launcherEnabled !== false) {
+      applyDesktopShellBounds(false);
+      mainWindow?.show();
+      mainWindow?.focus();
+    } else {
+      applyAgentConsoleBounds();
+    }
+  }
+  return true;
+});
+
+// Close / Hide in UI keeps Desktop docked when Desktop Launcher is active
 ipcMain.handle('window:close', () => {
   if (!isStationLocked) {
-    if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
+    if (isDesktopReplacementActive()) {
+      sendWindowToDesktopBottom().catch(() => {});
+    } else if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
       mainWindow?.minimize();
     } else {
       mainWindow?.hide();
@@ -576,7 +774,9 @@ ipcMain.handle('window:close', () => {
 
 ipcMain.handle('window:hide-to-tray', () => {
   if (!isStationLocked) {
-    if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
+    if (isDesktopReplacementActive()) {
+      sendWindowToDesktopBottom().catch(() => {});
+    } else if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
       mainWindow?.minimize();
     } else {
       mainWindow?.hide();
@@ -990,6 +1190,22 @@ async function verifyOperatorPasswordOnlineOrCached(password: string): Promise<{
   return { success: false, error: 'Dili ma-verify ang password (sayop ang password o walay internet connection).' };
 }
 
+ipcMain.handle('operator:peek-desktop', async (_event, password: string) => {
+  const check = await verifyOperatorPasswordOnlineOrCached(password || '');
+  if (!check.success) {
+    return { success: false, error: check.error || 'Sayop ang password.' };
+  }
+  operatorDesktopPeek = true;
+  if (mainWindow && !isStationLocked) {
+    try {
+      mainWindow.setMinimizable(true);
+      mainWindow.minimize();
+    } catch {}
+  }
+  logToFile('[Operator] Temporarily minimized Desktop Launcher to show Windows Desktop.');
+  return { success: true };
+});
+
 ipcMain.handle('operator:verify-and-exit', async (_event, payload: { password: string; removeProtection?: boolean }) => {
   const check = await verifyOperatorPasswordOnlineOrCached(payload?.password || '');
   if (!check.success) {
@@ -1016,20 +1232,21 @@ ipcMain.handle('window:set-lock-mode', (_event, locked: boolean) => {
   isStationLocked = locked;
   if (mainWindow) {
     if (locked) {
+      operatorDesktopPeek = false;
       try { mainWindow.setClosable(false); } catch {}
       presentOverlayWindow();
       startKioskInputBlocker().catch(() => {});
     } else {
       stopKioskInputBlocker();
+      operatorDesktopPeek = false;
       const keepUnclosable = Boolean(cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false);
       try { mainWindow.setClosable(!keepUnclosable); } catch {}
       mainWindow.setFullScreen(false);
       mainWindow.setAlwaysOnTop(false);
       if (cachedLauncherConfig.launcherEnabled) {
-        try {
-          mainWindow.maximize();
-          mainWindow.show();
-        } catch {}
+        currentUiMode = 'launcher';
+        applyDesktopShellBounds(false);
+        try { mainWindow.show(); } catch {}
       } else if (!isAnnouncementActive) {
         mainWindow.hide();
       }
@@ -1044,11 +1261,13 @@ ipcMain.handle('window:set-announcement-mode', (_event, active: boolean) => {
     if (active) {
       presentOverlayWindow();
     } else {
-      // Return to background only when Game Launcher is disabled; otherwise keep Launcher accessible
+      // Return cleanly to Desktop Shell if launcher is active; otherwise hide to background
       if (!isStationLocked) {
         mainWindow.setFullScreen(false);
         mainWindow.setAlwaysOnTop(false);
-        if (!cachedLauncherConfig.launcherEnabled) {
+        if (isDesktopReplacementActive()) {
+          applyDesktopShellBounds(false);
+        } else if (!cachedLauncherConfig.launcherEnabled) {
           mainWindow.hide();
         }
       }
@@ -3161,37 +3380,45 @@ function findMainExeInDirectory(dir: string, depth = 0): string | null {
   return null;
 }
 
-const SYSTEM_JUNK_APP_REGEX = /unins|uninst|uninstall|remove|repair|readme|license|eula|changelog|documentation|manual|release\s*notes|what'?s\s*new|\bhelp\b|support\s*center|feedback|crash|reporter|redist|vcredist|dxsetup|directx|dotnet|sdk\b|powershell|command\s*prompt|\bcmd\.exe|registry\s*editor|regedit|task\s*manager|event\s*viewer|resource\s*monitor|performance\s*monitor|services\.msc|computer\s*management|defrag|recovery|windows\s*security|windows\s*backup|artemia|speech\s*recognition|narrator|magnifier|steps\s*recorder|live\s*captions|voice\s*access|language\s*preferences|configuration\s*tools|reset\s*utility|\bonedrive\b|sticky\s*notes|\binstaller\b|cert\s*kit|performance\s*(analyzer|recorder|toolkit)|gpuview/i;
+const SYSTEM_JUNK_APP_REGEX = /unins|uninst|uninstall|remove|repair|readme|license|eula|changelog|documentation|manual|release\s*notes|what'?s\s*new|\bhelp\b|support\s*center|feedback|crash|reporter|redist|vcredist|dxsetup|directx|dotnet|sdk\b|powershell|command\s*prompt|\bcmd\.exe|registry\s*editor|regedit|task\s*manager|event\s*viewer|resource\s*monitor|performance\s*monitor|services\.msc|computer\s*management|defrag|recovery|windows\s*security|windows\s*backup|artemia|speech\s*recognition|narrator|magnifier|steps\s*recorder|live\s*captions|voice\s*access|language\s*preferences|configuration\s*tools|reset\s*utility|\bonedrive\b|sticky\s*notes|\binstaller\b|cert\s*kit|performance\s*(analyzer|recorder|toolkit)|gpuview|idle\s*\(|python\s*\d|node\.js|git\s*(bash|cmd|gui)|cmake|mingw|msys|jdk|configure\s*java|about\s*java|java\s*check|edge\s*update|google\s*update|system\s*information|character\s*map|wordpad\s*readme|\bwebsite\b|\bhomepage\b|\bvisit\b|diagnostic|troubleshoot|telemetry|auto.?update/i;
 
 function categorizeAppEntry(name: string, targetPath: string, source: string): LocalLauncherCategory {
   if (source === 'system') return 'Files & System';
+  if (source === 'office_sys') return 'Office';
   const combo = `${name} ${targetPath}`.toLowerCase();
   if (
     source === 'steam' ||
     source === 'epic' ||
-    /\\games\\|\\online games\\|\\riot games\\|\\garena\\|\\steamlibrary\\|\\xboxgames\\|\\roblox\\/.test(combo) ||
-    /\b(ros|rules of survival|valorant|league of legends|dota|counter-strike|counter strike|cs2|csgo|crossfire|roblox|minecraft|gta|grand theft|genshin|honkai|pubg|apex|fortnite|overwatch|call of duty|farlight|blood strike|mir4|ran|cabal|mu online|dragon nest|left 4 dead|nba|tekken|naruto|bluestacks|ldplayer|nox|memu|gameloop|steam|epic games|riot|battle\.net|ea app|ubisoft|garena|special force|point blank|cabal)\b/i.test(combo)
+    /\\games\\|\\online games\\|\\riot games\\|\\garena\\|\\steamlibrary\\|\\xboxgames\\|\\roblox\\|\\mirae labs/.test(combo) ||
+    /\b(ros|rules of survival|mirae|valorant|league of legends|dota|counter-strike|counter strike|cs2|csgo|crossfire|roblox|minecraft|gta|grand theft|genshin|honkai|pubg|apex|fortnite|overwatch|call of duty|farlight|blood strike|mir4|ran|cabal|mu online|dragon nest|left 4 dead|nba|tekken|naruto|bluestacks|ldplayer|nox|memu|gameloop|steam|epic games|riot|battle\.net|ea app|ubisoft|garena|special force|point blank)\b/i.test(combo)
   ) {
     return 'Games';
   }
   if (/\b(chrome|edge|brave|firefox|opera|vivaldi|discord|messenger|telegram|whatsapp|zoom|teams|skype|viber|twitch)\b/i.test(combo)) {
     return 'Browsers';
   }
+  if (/\b(vlc|spotify|tiktok|obs|capcut|potplayer|kmplayer|itunes|audacity|clipchamp|filmora|premiere|mediaplayer|media player|kodi|foobar|winamp|music|video)\b/i.test(combo)) {
+    return 'Media';
+  }
+  if (/\b(word|excel|powerpoint|onenote|outlook|wps|libreoffice|acrobat|foxit|pdf|notepad|calculator|paint|snipping|photoshop|canva)\b/i.test(combo)) {
+    return 'Office';
+  }
   return 'Tools';
 }
 
 function defaultEmojiForCategory(cat: LocalLauncherCategory, name: string): string {
   const n = name.toLowerCase();
+  if (/recycle bin/.test(n)) return '🗑️';
   if (/file explorer|this pc|downloads|documents/.test(n)) return '📁';
   if (/sound|audio/.test(n)) return '🔊';
   if (/calc/.test(n)) return '🧮';
   if (/notepad/.test(n)) return '📝';
   if (/paint/.test(n)) return '🎨';
-  if (cat === 'Files & System') return '⚙️';
+  if (cat === 'Files & System') return '🖥️';
   if (cat === 'Games') return '🎮';
   if (cat === 'Browsers') return '🌐';
-  if (/word|excel|powerpoint|wps|acrobat|pdf/.test(n)) return '📄';
-  if (/vlc|media|spotify|music/.test(n)) return '🎬';
+  if (cat === 'Media') return '🎬';
+  if (cat === 'Office') return '📄';
   return '🛠️';
 }
 
@@ -3395,21 +3622,22 @@ async function runDeepSystemAppScan(): Promise<{
         return ''
       }
 
-      # 1. Essential System & File Explorer Apps
+      # 1. Essential System, File Explorer & Study Tools
       $explorerExe = Join-Path $env:WINDIR 'explorer.exe'
       $sysApps = @(
-        @{ name='File Explorer (This PC)'; target=$explorerExe; args=''; icon=$explorerExe },
-        @{ name='Downloads Folder'; target=$explorerExe; args=(Join-Path $env:USERPROFILE 'Downloads'); icon=$explorerExe },
-        @{ name='Documents Folder'; target=$explorerExe; args=([Environment]::GetFolderPath('MyDocuments')); icon=$explorerExe },
-        @{ name='Sound / Audio Settings'; target=(Join-Path $env:WINDIR 'System32\\control.exe'); args='mmsys.cpl sounds'; icon=(Join-Path $env:WINDIR 'System32\\SndVol.exe') },
-        @{ name='Calculator'; target='calc.exe'; args=''; icon=(Join-Path $env:WINDIR 'System32\\calc.exe') },
-        @{ name='Notepad'; target=(Join-Path $env:WINDIR 'System32\\notepad.exe'); args=''; icon=(Join-Path $env:WINDIR 'System32\\notepad.exe') },
-        @{ name='Paint'; target=(Join-Path $env:WINDIR 'System32\\mspaint.exe'); args=''; icon=(Join-Path $env:WINDIR 'System32\\mspaint.exe') }
+        @{ name='File Explorer (This PC)'; target=$explorerExe; args=''; icon=$explorerExe; src='system' },
+        @{ name='Downloads Folder'; target=$explorerExe; args=(Join-Path $env:USERPROFILE 'Downloads'); icon=$explorerExe; src='system' },
+        @{ name='Documents Folder'; target=$explorerExe; args=([Environment]::GetFolderPath('MyDocuments')); icon=$explorerExe; src='system' },
+        @{ name='Recycle Bin'; target=$explorerExe; args='shell:RecycleBinFolder'; icon=''; src='system' },
+        @{ name='Sound / Audio Settings'; target=(Join-Path $env:WINDIR 'System32\\control.exe'); args='mmsys.cpl sounds'; icon=(Join-Path $env:WINDIR 'System32\\SndVol.exe'); src='system' },
+        @{ name='Calculator'; target='calc.exe'; args=''; icon=(Join-Path $env:WINDIR 'System32\\calc.exe'); src='office_sys' },
+        @{ name='Notepad'; target=(Join-Path $env:WINDIR 'System32\\notepad.exe'); args=''; icon=(Join-Path $env:WINDIR 'System32\\notepad.exe'); src='office_sys' },
+        @{ name='Paint'; target=(Join-Path $env:WINDIR 'System32\\mspaint.exe'); args=''; icon=(Join-Path $env:WINDIR 'System32\\mspaint.exe'); src='office_sys' }
       )
       foreach ($sa in $sysApps) {
-        $png = Resolve-IconPng $sa.icon
-        if (-not $png) { $png = Resolve-IconPng $explorerExe }
-        $results.Add([PSCustomObject]@{ name=$sa.name; target=$sa.target; args=$sa.args; workDir=''; source='system'; iconPng=$png })
+        $png = if ($sa.icon) { Resolve-IconPng $sa.icon } else { '' }
+        if (-not $png -and $sa.name -ne 'Recycle Bin') { $png = Resolve-IconPng $explorerExe }
+        $results.Add([PSCustomObject]@{ name=$sa.name; target=$sa.target; args=$sa.args; workDir=''; source=$sa.src; iconPng=$png })
       }
 
       # 2. Migrated Desktop Vault + Any Current Desktop Shortcuts
@@ -3614,12 +3842,13 @@ async function runDeepSystemAppScan(): Promise<{
 
     const priorityBySource: Record<string, number> = {
       system: 0,
-      desktop: 1,
-      steam: 2,
-      epic: 3,
-      auto: 4,
-      registry: 5,
-      startmenu: 6
+      office_sys: 1,
+      desktop: 2,
+      steam: 3,
+      epic: 4,
+      auto: 5,
+      registry: 6,
+      startmenu: 7
     };
 
     rawItems.sort((a, b) => (priorityBySource[a?.source] ?? 9) - (priorityBySource[b?.source] ?? 9));
@@ -3631,12 +3860,13 @@ async function runDeepSystemAppScan(): Promise<{
       const name = String(raw?.name || '').trim();
       const target = String(raw?.target || '').trim();
       if (!name || !target) continue;
-      if (raw?.source !== 'system' && SYSTEM_JUNK_APP_REGEX.test(name + ' ' + target)) continue;
+      const isBuiltInSys = raw?.source === 'system' || raw?.source === 'office_sys';
+      if (!isBuiltInSys && SYSTEM_JUNK_APP_REGEX.test(name + ' ' + target)) continue;
       if (hiddenSet.has(name.toLowerCase())) continue;
 
       const normKey = name
         .toLowerCase()
-        .replace(/^microsoft\s+/i, '')
+        .replace(/^(microsoft|google|mozilla)\s+/i, '')
         .replace(/\s*\(64-bit\)|\s*\(x64\)|\s*\(x86\)|\.exe$/gi, '')
         .replace(/[^a-z0-9]+/g, '');
       if (!normKey || seenKeys.has(normKey)) continue;
@@ -3714,22 +3944,22 @@ ipcMain.handle('launcher:save-config-local', async (_event, cfg: LocalLauncherCo
   if (mainWindow) {
     mainWindow.setTitle(
       saved.launcherEnabled
-        ? `${saved.shopName || "Artemia's Pisonet"} — Game Launcher`
+        ? `${saved.shopName || "Artemia's Pisonet"} — Desktop`
         : 'Artemia Fleet - Station Agent & Maintenance Daemon'
     );
     const keepUnclosable = Boolean(saved.launcherEnabled && saved.preventLauncherClose !== false);
     try { mainWindow.setClosable(!keepUnclosable); } catch {}
     if (!prevEnabled && saved.launcherEnabled && !isStationLocked) {
+      operatorDesktopPeek = false;
+      currentUiMode = 'launcher';
+      applyDesktopShellBounds(false);
       try {
-        mainWindow.maximize();
         mainWindow.show();
         mainWindow.focus();
       } catch {}
     } else if (prevEnabled && !saved.launcherEnabled && !isStationLocked && !isAnnouncementActive) {
-      try {
-        if (mainWindow.isMaximized()) mainWindow.unmaximize();
-        mainWindow.hide();
-      } catch {}
+      applyAgentConsoleBounds();
+      try { mainWindow.hide(); } catch {}
     }
   }
   if (saved.launcherEnabled && saved.cleanDesktopShortcuts !== false) {
@@ -3750,14 +3980,75 @@ ipcMain.handle('launcher:restore-desktop', async () => {
   return restoreMigratedDesktopShortcuts();
 });
 
+async function launchExecutableSafely(target: string, argParts: string[], cwd?: string): Promise<{ ok: boolean; error?: string }> {
+  if ((/^[a-z]:\\/i.test(target) || target.startsWith('\\\\')) && !fs.existsSync(target)) {
+    return { ok: false, error: `Wala makita ang file: ${path.basename(target)}` };
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean, error?: string) => {
+      if (!settled) {
+        settled = true;
+        resolve({ ok, error });
+      }
+    };
+
+    try {
+      const child = spawn(target, argParts, {
+        cwd,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false
+      });
+
+      const timer = setTimeout(() => {
+        try { child.unref(); } catch {}
+        finish(true);
+      }, 280);
+
+      child.on('error', async (err: any) => {
+        clearTimeout(timer);
+        const code = String(err?.code || '');
+        logToFile(`[Launcher] spawn(${target}) error (${code || err?.message})`);
+        if (code !== 'EACCES') {
+          return finish(false, err?.message || 'Dili ma-abli ang app.');
+        }
+        try {
+          if (argParts.length === 0) {
+            const shellErr = await shell.openPath(target);
+            if (!shellErr) return finish(true);
+          }
+          // Elevated manifest fallback via ShellExecute (Start-Process handles UAC cleanly)
+          const escPath = target.replace(/'/g, "''");
+          const escArgs = argParts.map((a) => `'${a.replace(/'/g, "''")}'`).join(', ');
+          const argsExpr = argParts.length > 0 ? `-ArgumentList @(${escArgs})` : '';
+          const cwdExpr = cwd ? `-WorkingDirectory '${cwd.replace(/'/g, "''")}'` : '';
+          const cmd = `Start-Process -FilePath '${escPath}' ${argsExpr} ${cwdExpr}`.trim();
+          execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', cmd], { timeout: 10000, windowsHide: true }, (psErr) => {
+            if (psErr) finish(false, psErr.message || err?.message);
+            else finish(true);
+          });
+        } catch (fallbackErr: any) {
+          finish(false, fallbackErr?.message || err?.message || 'Dili ma-abli ang app.');
+        }
+      });
+    } catch (syncErr: any) {
+      finish(false, syncErr?.message || 'Dili ma-abli ang app.');
+    }
+  });
+}
+
 ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) => {
   try {
     let target = String(item?.launchTarget || '').trim();
     if (!target) return { success: false, error: 'Walay target path.' };
     target = expandWinEnvVars(target);
 
-    if (/^(https?|steam|com\.epicgames\.launcher|roblox-player|ms-windows-store):/i.test(target)) {
+    if (/^(https?|steam|com\.epicgames\.launcher|roblox-player|ms-windows-store|ms-settings):/i.test(target)) {
       await shell.openExternal(target);
+    } else if (/^shell:/i.test(target)) {
+      const res = await launchExecutableSafely('explorer.exe', [target]);
+      if (!res.ok) return { success: false, error: res.error || 'Dili ma-abli ang system folder.' };
     } else {
       // Handle directory path if specified manually
       if (fs.existsSync(target) && fs.statSync(target).isDirectory() && !/explorer\.exe$/i.test(target)) {
@@ -3771,8 +4062,8 @@ ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) =
         const rawArgs = expandWinEnvVars(String(item?.args || '').trim());
         let argParts: string[] = [];
         if (rawArgs) {
-          // Preserve single folder argument for explorer/control if path contains spaces!
-          if (/explorer\.exe$/i.test(target) && fs.existsSync(rawArgs)) {
+          // Preserve single folder argument or shell:* specifier for explorer/control cleanly
+          if (/explorer\.exe$/i.test(target) && (/^shell:/i.test(rawArgs) || fs.existsSync(rawArgs))) {
             argParts = [rawArgs];
           } else {
             argParts = rawArgs.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((s) => s.replace(/^"|"$/g, '')) || [rawArgs];
@@ -3782,20 +4073,23 @@ ipcMain.handle('launcher:launch-item', async (_event, item: LocalLauncherItem) =
           ? expandWinEnvVars(item.workingDir)
           : (fs.existsSync(target) ? path.dirname(target) : undefined);
 
-        const child = spawn(target, argParts, {
-          cwd,
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: false
-        });
-        child.unref();
+        const launched = await launchExecutableSafely(target, argParts, cwd);
+        if (!launched.ok) {
+          return { success: false, error: launched.error || 'Napakyas ang pag-abli sa app.' };
+        }
       }
     }
 
     if (mainWindow && !isStationLocked) {
-      setTimeout(() => {
-        try { mainWindow?.minimize(); } catch {}
-      }, 300);
+      if (isDesktopReplacementActive()) {
+        // Keep Desktop Launcher open underneath newly launched window (never leave a blank desktop)
+        setTimeout(() => { sendWindowToDesktopBottom().catch(() => {}); }, 180);
+        setTimeout(() => { sendWindowToDesktopBottom().catch(() => {}); }, 650);
+      } else {
+        setTimeout(() => {
+          try { mainWindow?.minimize(); } catch {}
+        }, 300);
+      }
     }
     return { success: true, resolvedPath: target };
   } catch (err: any) {
@@ -4319,7 +4613,16 @@ if (!gotLock) {
     applyInstallProtection();
     ensureKioskLockBinary().catch(() => {});
     ensureVolumeCtlBinary().catch(() => {});
+    ensureDesktopPinBinary().catch(() => {});
     startGuardianWatchdog();
+
+    screen.on('display-metrics-changed', () => {
+      if (isDesktopReplacementActive()) {
+        setTimeout(() => {
+          if (isDesktopReplacementActive()) applyDesktopShellBounds(false);
+        }, 450);
+      }
+    });
 
     fetchHardwareInfo();
     setInterval(fetchHardwareInfo, 15000);
@@ -4380,9 +4683,10 @@ if (!gotLock) {
                 await setWindowsMasterVolume(cachedLauncherConfig.resetVolumePercent);
               }
               if (cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.autoRestoreOnIdle && !isStationLocked && !isAnnouncementActive && mainWindow) {
+                operatorDesktopPeek = false;
+                currentUiMode = 'launcher';
+                applyDesktopShellBounds(false);
                 try {
-                  if (mainWindow.isMinimized()) mainWindow.restore();
-                  mainWindow.maximize();
                   mainWindow.show();
                   mainWindow.focus();
                 } catch {}

@@ -64,11 +64,13 @@ interface WindowWithDesktop extends Window {
     launchGame?: (item: any) => Promise<{ success: boolean; resolvedPath?: string; error?: string }>;
     applyWallpaper?: (wallpaperUrl: string) => Promise<{ success: boolean; localPath?: string; error?: string }>;
     setVolumePercent?: (percent: number) => Promise<{ success: boolean; error?: string }>;
+    setUiMode?: (mode: 'launcher' | 'agent') => Promise<boolean>;
+    peekWindowsDesktop?: (password: string) => Promise<{ success: boolean; error?: string }>;
     onLauncherRestoredIdle?: (callback: () => void) => void;
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.21';
+const CLIENT_AGENT_VERSION = '1.0.22';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -146,10 +148,12 @@ class StationMaintenanceAgent {
   };
   private detectedCatalog: any[] = [];
   private launcherScanStatuses: Record<string, { installed: boolean; resolvedPath?: string | null }> = {};
-  private launcherCategory: 'all' | 'Files & System' | 'Games' | 'Browsers' | 'Tools' = 'all';
+  private launcherCategory: 'all' | 'Files & System' | 'Games' | 'Browsers' | 'Media' | 'Office' | 'Tools' = 'all';
+  private launcherViewMode: 'cards' | 'icons' = (localStorage.getItem('artemia_launcher_view') === 'icons' ? 'icons' : 'cards');
   private launcherSearch = '';
   private uiMode: 'launcher' | 'agent' = 'launcher';
   private lastAppliedWallpaperUrl = localStorage.getItem('artemia_applied_wallpaper_url') || '';
+  private clockTimer: any = null;
 
   private telemetry = {
     cpuPercent: 0,
@@ -1567,6 +1571,7 @@ class StationMaintenanceAgent {
       launcherShell.style.display = mode === 'launcher' ? 'flex' : 'none';
       agentShell.style.display = mode === 'agent' ? 'flex' : 'none';
     }
+    desktopWindow.pisonetDesktop?.setUiMode?.(mode).catch(() => {});
   }
 
   private applyLauncherConfigToDom() {
@@ -1592,7 +1597,7 @@ class StationMaintenanceAgent {
     const bgEl = document.getElementById('launcher-wallpaper-bg');
     if (bgEl) {
       const wp = String(cfg.wallpaperUrl || '').trim();
-      bgEl.style.backgroundImage = wp ? `linear-gradient(180deg, rgba(7,9,14,0.72), rgba(7,9,14,0.92)), url("${wp.replace(/"/g, '%22')}")` : '';
+      bgEl.style.backgroundImage = wp ? `linear-gradient(180deg, rgba(7,9,14,0.34), rgba(7,9,14,0.70)), url("${wp.replace(/"/g, '%22')}")` : '';
     }
 
     const backToLauncherBtn = document.getElementById('btn-open-launcher');
@@ -1611,85 +1616,131 @@ class StationMaintenanceAgent {
     return Array.isArray(this.launcherConfig?.items) ? this.launcherConfig.items : [];
   }
 
+  private getNormalizedCategory(item: any): 'Games' | 'Browsers' | 'Media' | 'Office' | 'Files & System' | 'Tools' {
+    const cat = String(item?.category || 'Tools');
+    if (cat === 'Games' || cat === 'Browsers' || cat === 'Media' || cat === 'Office' || cat === 'Files & System') return cat;
+    if (cat === 'Office & Tools') return 'Office';
+    return 'Tools';
+  }
+
   private renderCategoryPillsCounts(allItems: any[]) {
     const visibleItems = allItems.filter((it) => it?.visible !== false);
     const counts: Record<string, number> = {
       all: visibleItems.length,
-      Games: visibleItems.filter((x) => x.category === 'Games').length,
-      Browsers: visibleItems.filter((x) => x.category === 'Browsers').length,
-      'Files & System': visibleItems.filter((x) => x.category === 'Files & System').length,
-      Tools: visibleItems.filter((x) => x.category !== 'Games' && x.category !== 'Browsers' && x.category !== 'Files & System').length
+      Games: visibleItems.filter((x) => this.getNormalizedCategory(x) === 'Games').length,
+      Browsers: visibleItems.filter((x) => this.getNormalizedCategory(x) === 'Browsers').length,
+      Media: visibleItems.filter((x) => this.getNormalizedCategory(x) === 'Media').length,
+      Office: visibleItems.filter((x) => this.getNormalizedCategory(x) === 'Office').length,
+      'Files & System': visibleItems.filter((x) => this.getNormalizedCategory(x) === 'Files & System').length,
+      Tools: visibleItems.filter((x) => this.getNormalizedCategory(x) === 'Tools').length
     };
     const labels: Record<string, string> = {
-      all: '🌟 Tanang Apps',
+      all: '🏠 Tanang Desktop',
       Games: '🎮 Games',
       Browsers: '🌐 Browsers & Chat',
-      'Files & System': '📁 File Explorer & System',
-      Tools: '🛠️ Office, Media & Tools'
+      Media: '🎬 Media & Live',
+      Office: '📄 Office & Study',
+      'Files & System': '📁 File Explorer & PC',
+      Tools: '🛠️ Utilities'
     };
     document.querySelectorAll('.l-cat-pill').forEach((btn) => {
       const k = btn.getAttribute('data-lcat') || 'all';
       const cnt = counts[k] ?? 0;
-      btn.textContent = `${labels[k] || k} (${cnt})`;
+      btn.innerHTML = `<span>${labels[k] || k}</span><span class="l-nav-cnt">${cnt}</span>`;
     });
   }
 
-  private renderLauncherCardHtml(item: any): string {
+  private renderLauncherCardHtml(item: any, compact = false): string {
     const iconHtml = item.iconDataUrl
       ? `<img src="${this.escapeHtml(item.iconDataUrl)}" alt="" class="l-real-icon" />`
       : `<span>${this.escapeHtml(item.icon || '🎮')}</span>`;
-    const isSystemOrExplorer = item.category === 'Files & System';
-    const actionLabel = isSystemOrExplorer ? '📂 ABRIHI' : '▶ PLAY / OPEN';
-    const sourceLabel = item.source === 'steam' ? 'Steam Game'
-      : item.source === 'epic' ? 'Epic Game'
-      : item.source === 'system' ? 'Windows System'
-      : item.source === 'desktop' ? 'Desktop Shortcut'
-      : (item.category || 'App');
+    const cat = this.getNormalizedCategory(item);
+    const isSystemOrExplorer = cat === 'Files & System';
+    const actionLabel = isSystemOrExplorer ? '📂 ABRIHI' : '▶ OPEN';
+    const sourceLabel = item.source === 'steam' ? 'Steam'
+      : item.source === 'epic' ? 'Epic'
+      : item.source === 'system' || item.source === 'office_sys' ? 'Windows'
+      : item.source === 'desktop' ? 'Shortcut'
+      : cat;
+    if (this.launcherViewMode === 'icons' || compact) {
+      return `
+        <div class="launcher-icon-tile ${isSystemOrExplorer ? 'sys-card' : ''} ${compact ? 'quick-tile' : ''}" data-launch-id="${this.escapeHtml(item.id)}" title="${this.escapeHtml(item.name)}">
+          <div class="l-icon">${iconHtml}</div>
+          <div class="l-tile-name">${this.escapeHtml(item.name)}</div>
+        </div>
+      `;
+    }
     return `
       <div class="launcher-card ${isSystemOrExplorer ? 'sys-card' : ''}" data-launch-id="${this.escapeHtml(item.id)}">
         <div class="l-card-top">
           <div class="l-icon">${iconHtml}</div>
-          <span class="l-badge ready">● Ready</span>
+          <span class="l-badge ready">${this.escapeHtml(sourceLabel)}</span>
         </div>
         <div class="l-name" title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)}</div>
-        <div class="l-cat">${this.escapeHtml(sourceLabel)}</div>
         <button type="button" class="l-play-btn">${actionLabel}</button>
       </div>
     `;
+  }
+
+  private async triggerLaunchItem(item: any) {
+    if (!item) return;
+    if (desktopWindow.pisonetDesktop?.launchGame) {
+      const res = await desktopWindow.pisonetDesktop.launchGame(item);
+      if (res.success) {
+        this.showToast(`🚀 Gi-abli ang ${item.name}!`, 'success', 3);
+      } else {
+        this.showToast(`⚠️ ${res.error || `${item.name} dili ma-abli.`}`, 'warn', 5);
+      }
+    } else {
+      this.showToast(`🎮 Launching ${item.name}...`, 'info', 3);
+    }
   }
 
   private renderLauncherGrid() {
     const grid = document.getElementById('launcher-cards-grid');
     if (!grid) return;
 
+    grid.className = this.launcherViewMode === 'icons' ? 'launcher-cards-grid desktop-icons-mode' : 'launcher-cards-grid';
     const items = this.getActiveLauncherItems();
     this.renderCategoryPillsCounts(items);
 
     const q = this.launcherSearch.trim().toLowerCase();
-    const filtered = items.filter((it) => {
-      if (it?.visible === false) return false;
-      if (this.launcherCategory === 'Tools') {
-        if (it.category === 'Games' || it.category === 'Browsers' || it.category === 'Files & System') return false;
-      } else if (this.launcherCategory !== 'all' && it.category !== this.launcherCategory) {
-        return false;
-      }
-      if (q && !String(it.name || '').toLowerCase().includes(q) && !String(it.category || '').toLowerCase().includes(q)) return false;
-      return true;
-    });
+    const filtered = items
+      .filter((it) => {
+        if (it?.visible === false) return false;
+        const cat = this.getNormalizedCategory(it);
+        if (this.launcherCategory !== 'all' && cat !== this.launcherCategory) return false;
+        if (q && !String(it.name || '').toLowerCase().includes(q) && !cat.toLowerCase().includes(q)) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const ac = this.getNormalizedCategory(a);
+        const bc = this.getNormalizedCategory(b);
+        if (ac === 'Files & System' && bc === 'Files & System') return 0; // Preserve intuitive Explorer folder order
+        return String(a.name || '').localeCompare(String(b.name || ''));
+      });
 
     if (filtered.length === 0) {
-      grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:48px 20px; color:#94a3b8; border:1px dashed rgba(255,255,255,0.12); border-radius:16px;">${items.length === 0 ? '⏳ Nag-scan sa tanang installed games ug apps ani nga PC...' : 'Walay nakit-an nga app o dula sa kani nga search/category.'}</div>`;
+      grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:48px 20px; color:#cbd5e1; background:rgba(15,23,42,0.72); border:1px dashed rgba(255,255,255,0.18); border-radius:16px;">${items.length === 0 ? '⏳ Nag-scan sa tanang installed games, File Explorer ug apps ani nga PC...' : 'Walay nakit-an nga app o dula sa kani nga search/category.'}</div>`;
       return;
     }
 
     if (this.launcherCategory === 'all' && !q) {
+      const sysList = filtered.filter((x) => this.getNormalizedCategory(x) === 'Files & System');
       const sections: Array<{ title: string; list: any[] }> = [
-        { title: '📁 File Explorer & System Utilities', list: filtered.filter((x) => x.category === 'Files & System') },
-        { title: '🎮 Installed Games', list: filtered.filter((x) => x.category === 'Games') },
-        { title: '🌐 Browsers & Communication', list: filtered.filter((x) => x.category === 'Browsers') },
-        { title: '🛠️ Office, Media & Other Apps', list: filtered.filter((x) => x.category !== 'Files & System' && x.category !== 'Games' && x.category !== 'Browsers') }
+        { title: '🎮 Games & Game Launchers', list: filtered.filter((x) => this.getNormalizedCategory(x) === 'Games') },
+        { title: '🌐 Browsers & Chat', list: filtered.filter((x) => this.getNormalizedCategory(x) === 'Browsers') },
+        { title: '🎬 Media & Streaming', list: filtered.filter((x) => this.getNormalizedCategory(x) === 'Media') },
+        { title: '📄 Office & Study Apps', list: filtered.filter((x) => this.getNormalizedCategory(x) === 'Office') },
+        { title: '🛠️ Utilities & Other Apps', list: filtered.filter((x) => this.getNormalizedCategory(x) === 'Tools') }
       ];
-      grid.innerHTML = sections
+      const quickFolderStrip = sysList.length > 0
+        ? `
+          <div class="l-section-hdr" style="margin-top:0;">📁 File Explorer &amp; Quick System Access <span class="l-sec-cnt">${sysList.length}</span></div>
+          <div class="l-quick-strip">${sysList.map((it) => this.renderLauncherCardHtml(it, true)).join('')}</div>
+        `
+        : '';
+      grid.innerHTML = quickFolderStrip + sections
         .filter((s) => s.list.length > 0)
         .map((s) => `
           <div class="l-section-hdr">${s.title} <span class="l-sec-cnt">${s.list.length}</span></div>
@@ -1699,21 +1750,11 @@ class StationMaintenanceAgent {
       grid.innerHTML = filtered.map((item) => this.renderLauncherCardHtml(item)).join('');
     }
 
-    grid.querySelectorAll('.launcher-card').forEach((cardEl) => {
-      cardEl.addEventListener('click', async () => {
+    grid.querySelectorAll('[data-launch-id]').forEach((cardEl) => {
+      cardEl.addEventListener('click', () => {
         const id = cardEl.getAttribute('data-launch-id');
         const item = items.find((x) => x.id === id);
-        if (!item) return;
-        if (desktopWindow.pisonetDesktop?.launchGame) {
-          const res = await desktopWindow.pisonetDesktop.launchGame(item);
-          if (res.success) {
-            this.showToast(`🚀 Gi-abli ang ${item.name}!`, 'success', 4);
-          } else {
-            this.showToast(`⚠️ ${res.error || `${item.name} dili ma-abli.`}`, 'warn', 5);
-          }
-        } else {
-          this.showToast(`🎮 Launching ${item.name}...`, 'info', 3);
-        }
+        if (item) this.triggerLaunchItem(item);
       });
     });
   }
@@ -1819,93 +1860,149 @@ class StationMaintenanceAgent {
         }
         .btn-action:hover { background: rgba(51, 65, 85, 0.8); color: #fff; }
 
-        /* SHOP GAME LAUNCHER HUB STYLES */
+        /* SHOP DESKTOP LAUNCHER OS STYLES */
         .agent-shell, .launcher-shell { display: flex; flex-direction: column; height: 100vh; width: 100vw; position: relative; overflow: hidden; }
         .launcher-wallpaper-bg {
           position: absolute; inset: 0; background-size: cover; background-position: center;
           background-color: #07090e; z-index: 0; pointer-events: none;
         }
         .launcher-header {
-          position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-          padding: 16px 28px; background: rgba(10, 15, 29, 0.86); backdrop-filter: blur(18px);
-          border-bottom: 1px solid rgba(56, 189, 248, 0.22); -webkit-app-region: drag;
+          position: relative; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+          padding: 10px 20px; background: rgba(9, 13, 24, 0.78); backdrop-filter: blur(18px);
+          border-bottom: 1px solid rgba(56, 189, 248, 0.22);
         }
-        .launcher-header button, .launcher-header input, .station-header button { -webkit-app-region: no-drag; }
-        .launcher-brand { display: flex; align-items: center; gap: 12px; }
+        .launcher-brand { display: flex; align-items: center; gap: 11px; }
         .launcher-logo {
-          width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, #06b6d4, #6366f1);
-          display: flex; align-items: center; justify-content: center; font-size: 1.4rem;
-          box-shadow: 0 0 18px rgba(6, 182, 212, 0.45);
+          width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, #06b6d4, #6366f1);
+          display: flex; align-items: center; justify-content: center; font-size: 1.2rem;
+          box-shadow: 0 0 16px rgba(6, 182, 212, 0.4);
         }
-        .launcher-shop-title { font-size: 1.25rem; font-weight: 900; color: #f8fafc; letter-spacing: 0.3px; }
-        .launcher-station-sub { font-size: 0.76rem; color: #94a3b8; display: flex; align-items: center; gap: 8px; }
-        .launcher-rules-banner {
-          position: relative; z-index: 2; margin: 14px 26px 0; padding: 11px 18px; border-radius: 12px;
-          background: linear-gradient(90deg, rgba(6, 182, 212, 0.14), rgba(99, 102, 241, 0.14));
-          border: 1px solid rgba(56, 189, 248, 0.35); color: #e0f2fe; font-size: 0.88rem; font-weight: 700;
-          display: flex; align-items: center; gap: 10px; backdrop-filter: blur(10px);
-        }
-        .launcher-toolbar {
-          position: relative; z-index: 2; padding: 14px 26px 8px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-        }
-        .launcher-cats { display: flex; gap: 8px; flex-wrap: wrap; }
-        .l-cat-pill {
-          background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); color: #cbd5e1;
-          padding: 8px 16px; border-radius: 999px; font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: 0.15s;
-        }
-        .l-cat-pill.active, .l-cat-pill:hover {
-          background: rgba(6, 182, 212, 0.25); border-color: #38bdf8; color: #fff;
-        }
+        .launcher-shop-title { font-size: 1.05rem; font-weight: 900; color: #f8fafc; letter-spacing: 0.3px; }
+        .launcher-station-sub { font-size: 0.72rem; color: #94a3b8; display: flex; align-items: center; gap: 6px; }
+        .desktop-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981; display: inline-block; }
+        .desktop-search-wrap { flex: 1; max-width: 420px; min-width: 210px; }
         .launcher-search {
-          background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.14); color: #f8fafc;
-          padding: 8px 14px; border-radius: 10px; font-size: 0.85rem; min-width: 240px; outline: none;
+          width: 100%; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.16); color: #f8fafc;
+          padding: 8px 14px; border-radius: 10px; font-size: 0.84rem; outline: none;
         }
-        .launcher-search:focus { border-color: #38bdf8; }
-        .launcher-grid-wrap {
-          position: relative; z-index: 2; flex: 1; overflow-y: auto; padding: 12px 26px 26px;
+        .launcher-search:focus { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,0.2); }
+        .desktop-vol-box {
+          display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 9px;
+          background: rgba(15, 23, 42, 0.78); border: 1px solid rgba(255, 255, 255, 0.12); font-size: 0.76rem; color: #e2e8f0;
         }
+        .desktop-vol-slider { width: 70px; accent-color: #38bdf8; cursor: pointer; }
+        .desktop-clock {
+          font-family: Consolas, monospace; font-size: 0.8rem; font-weight: 800; color: #e0f2fe;
+          background: rgba(15, 23, 42, 0.78); border: 1px solid rgba(56, 189, 248, 0.22);
+          padding: 6px 11px; border-radius: 9px; white-space: nowrap;
+        }
+        .launcher-desktop-body { position: relative; z-index: 2; flex: 1; display: flex; overflow: hidden; min-height: 0; }
+        .launcher-sidebar {
+          width: 236px; flex-shrink: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 12px;
+          padding: 14px 12px; background: rgba(8, 12, 23, 0.74); backdrop-filter: blur(18px);
+          border-right: 1px solid rgba(255, 255, 255, 0.08); overflow-y: auto;
+        }
+        .sidebar-label {
+          font-size: 0.68rem; font-weight: 800; letter-spacing: 0.08em; color: #64748b; padding: 0 8px 6px; text-transform: uppercase;
+        }
+        .launcher-cats { display: flex; flex-direction: column; gap: 5px; }
+        .l-cat-pill {
+          display: flex; align-items: center; justify-content: space-between; width: 100%;
+          background: rgba(15, 23, 42, 0.45); border: 1px solid transparent; color: #cbd5e1;
+          padding: 9px 11px; border-radius: 10px; font-size: 0.81rem; font-weight: 700; cursor: pointer; transition: 0.14s; text-align: left;
+        }
+        .l-cat-pill:hover { background: rgba(30, 41, 59, 0.82); color: #fff; }
+        .l-cat-pill.active {
+          background: linear-gradient(90deg, rgba(6, 182, 212, 0.28), rgba(37, 99, 235, 0.22));
+          border-color: rgba(56, 189, 248, 0.55); color: #fff;
+        }
+        .l-nav-cnt {
+          background: rgba(255, 255, 255, 0.09); color: #94a3b8; border-radius: 999px;
+          padding: 1px 7px; font-size: 0.7rem; font-weight: 800;
+        }
+        .l-cat-pill.active .l-nav-cnt { background: rgba(56, 189, 248, 0.26); color: #e0f2fe; }
+        .view-switch-row {
+          display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px 0 4px;
+          border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .l-view-btn {
+          background: rgba(15, 23, 42, 0.72); border: 1px solid rgba(255, 255, 255, 0.12); color: #94a3b8;
+          padding: 6px 8px; border-radius: 8px; font-size: 0.74rem; font-weight: 700; cursor: pointer;
+        }
+        .l-view-btn.active { border-color: #38bdf8; color: #e0f2fe; background: rgba(6, 182, 212, 0.22); }
+        .quick-dock-box { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 10px; display: flex; flex-direction: column; gap: 5px; }
+        .quick-dock-btn {
+          display: flex; align-items: center; gap: 8px; width: 100%; background: rgba(30, 41, 59, 0.55);
+          border: 1px solid rgba(255, 255, 255, 0.08); color: #e2e8f0; padding: 7px 10px; border-radius: 9px;
+          font-size: 0.76rem; font-weight: 700; cursor: pointer; text-align: left;
+        }
+        .quick-dock-btn:hover { background: rgba(6, 182, 212, 0.22); border-color: rgba(56, 189, 248, 0.45); color: #fff; }
+        .launcher-main-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+        .launcher-rules-banner {
+          margin: 12px 20px 0; padding: 9px 15px; border-radius: 10px;
+          background: linear-gradient(90deg, rgba(6, 182, 212, 0.2), rgba(99, 102, 241, 0.18));
+          border: 1px solid rgba(56, 189, 248, 0.38); color: #e0f2fe; font-size: 0.83rem; font-weight: 700;
+          display: flex; align-items: center; gap: 8px; backdrop-filter: blur(12px);
+        }
+        .launcher-grid-wrap { flex: 1; overflow-y: auto; padding: 16px 22px 26px; }
         .launcher-cards-grid {
-          display: grid; grid-template-columns: repeat(auto-fill, minmax(195px, 1fr)); gap: 16px;
+          display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 13px;
+        }
+        .launcher-cards-grid.desktop-icons-mode {
+          grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 14px;
+        }
+        .l-quick-strip {
+          grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: 10px;
+          margin-bottom: 4px;
         }
         .l-section-hdr {
           grid-column: 1 / -1; display: flex; align-items: center; gap: 10px;
-          font-size: 0.92rem; font-weight: 900; color: #e2e8f0; letter-spacing: 0.4px;
-          margin-top: 10px; padding-bottom: 6px; border-bottom: 1px solid rgba(56, 189, 248, 0.2);
+          font-size: 0.88rem; font-weight: 900; color: #f1f5f9; letter-spacing: 0.3px;
+          margin-top: 10px; padding-bottom: 6px; border-bottom: 1px solid rgba(56, 189, 248, 0.24);
+          text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
         }
-        .l-section-hdr:first-child { margin-top: 0; }
         .l-sec-cnt {
-          background: rgba(56, 189, 248, 0.18); color: #38bdf8; border-radius: 999px;
-          padding: 2px 9px; font-size: 0.72rem; font-weight: 800;
+          background: rgba(56, 189, 248, 0.24); color: #e0f2fe; border-radius: 999px;
+          padding: 1px 8px; font-size: 0.7rem; font-weight: 800;
         }
         .launcher-card {
-          background: rgba(15, 23, 42, 0.86); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px;
-          padding: 16px; display: flex; flex-direction: column; gap: 8px; cursor: pointer;
+          background: rgba(12, 18, 34, 0.76); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px;
+          padding: 13px; display: flex; flex-direction: column; gap: 7px; cursor: pointer;
           transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease; backdrop-filter: blur(12px);
         }
-        .launcher-card.sys-card { border-color: rgba(245, 158, 11, 0.26); }
         .launcher-card:hover {
-          transform: translateY(-3px); border-color: #38bdf8; box-shadow: 0 12px 26px rgba(2, 132, 199, 0.28);
+          transform: translateY(-3px); border-color: #38bdf8; background: rgba(15, 23, 42, 0.9); box-shadow: 0 10px 24px rgba(2, 132, 199, 0.3);
         }
-        .launcher-card.missing { opacity: 0.65; border-style: dashed; }
+        .launcher-icon-tile {
+          background: rgba(10, 15, 29, 0.56); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 13px;
+          padding: 12px 8px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 7px;
+          cursor: pointer; transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease; backdrop-filter: blur(8px);
+        }
+        .launcher-icon-tile:hover {
+          transform: translateY(-2px); border-color: #38bdf8; background: rgba(15, 23, 42, 0.85);
+        }
+        .launcher-icon-tile.quick-tile { border-color: rgba(245, 158, 11, 0.28); }
+        .l-tile-name {
+          font-size: 0.78rem; font-weight: 700; color: #f8fafc; line-height: 1.25;
+          display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+          text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+        }
         .l-card-top { display: flex; align-items: center; justify-content: space-between; }
         .l-icon {
-          width: 52px; height: 52px; border-radius: 13px; background: rgba(30, 41, 59, 0.9);
-          display: flex; align-items: center; justify-content: center; font-size: 1.8rem; overflow: hidden;
+          width: 46px; height: 46px; border-radius: 11px; background: rgba(30, 41, 59, 0.85);
+          display: flex; align-items: center; justify-content: center; font-size: 1.65rem; overflow: hidden;
         }
-        .l-real-icon { width: 38px; height: 38px; object-fit: contain; }
-        .l-badge { font-size: 0.68rem; font-weight: 800; padding: 3px 8px; border-radius: 999px; }
-        .l-badge.ready { background: rgba(16, 185, 129, 0.16); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
-        .l-badge.missing { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
+        .l-real-icon { width: 34px; height: 34px; object-fit: contain; }
+        .l-badge { font-size: 0.65rem; font-weight: 800; padding: 2px 7px; border-radius: 999px; }
+        .l-badge.ready { background: rgba(56, 189, 248, 0.16); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.3); }
         .l-name {
-          font-size: 0.98rem; font-weight: 800; color: #f8fafc; margin-top: 2px;
+          font-size: 0.9rem; font-weight: 800; color: #f8fafc; margin-top: 2px;
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
-        .l-cat { font-size: 0.72rem; color: #94a3b8; font-weight: 600; }
         .l-play-btn {
-          margin-top: 6px; padding: 9px 12px; border-radius: 10px; border: none;
-          background: linear-gradient(135deg, #06b6d4, #2563eb); color: #fff; font-weight: 800; font-size: 0.82rem; cursor: pointer;
+          margin-top: 4px; padding: 7px 10px; border-radius: 9px; border: none;
+          background: linear-gradient(135deg, #06b6d4, #2563eb); color: #fff; font-weight: 800; font-size: 0.78rem; cursor: pointer;
         }
-        .launcher-card.missing .l-play-btn { background: #1e293b; color: #94a3b8; }
 
         /* FULL SCREEN LOCK OVERLAY */
         .lock-overlay {
@@ -2155,6 +2252,7 @@ class StationMaintenanceAgent {
           <input id="operator-exit-password" type="password" class="operator-exit-input" placeholder="Admin / Operator Password..." autocomplete="current-password" />
           <div id="operator-exit-error" class="operator-exit-error"></div>
           <div class="operator-exit-actions">
+            <button id="btn-op-peek-desktop" class="btn-op-unlock" style="background:#0284c7;">🖥️ Temporarily Show Windows Desktop</button>
             <button id="btn-op-verify-quit" class="btn-op-exit">🚪 Verify &amp; Exit Agent</button>
             <button id="btn-op-verify-unprotect" class="btn-op-unlock">🔓 Unlock Delete Protection &amp; Exit (For Uninstall)</button>
             <button id="btn-op-cancel" class="btn-op-cancel">Cancel</button>
@@ -2168,7 +2266,7 @@ class StationMaintenanceAgent {
         <div id="power-sub" class="power-sub">Ang kini nga computer gi-shutdown na sa operator.</div>
       </div>
 
-      <!-- CUSTOMER SHOP GAME LAUNCHER HUB -->
+      <!-- CUSTOMER DESKTOP REPLACEMENT LAUNCHER SHELL -->
       <div id="launcher-shell" class="launcher-shell" style="display:none;">
         <div id="launcher-wallpaper-bg" class="launcher-wallpaper-bg"></div>
         <header class="launcher-header">
@@ -2177,36 +2275,65 @@ class StationMaintenanceAgent {
             <div>
               <div id="launcher-shop-title" class="launcher-shop-title">Artemia's Pisonet</div>
               <div class="launcher-station-sub">
-                <span>Station: <strong id="launcher-station-pill" style="color:#38bdf8;">${this.escapeHtml(this.pcName)}</strong></span>
-                <span>• Pindota ang PLAY aron mo-abli dayon ang dula</span>
+                <span class="desktop-live-dot"></span>
+                <span><strong id="launcher-station-pill" style="color:#38bdf8;">${this.escapeHtml(this.pcName)}</strong> • Desktop Launcher</span>
               </div>
             </div>
           </div>
+
+          <div class="desktop-search-wrap">
+            <input id="launcher-search-input" type="text" class="launcher-search" placeholder="🔍 Pangita og dula, browser, File Explorer..." />
+          </div>
+
           <div class="header-actions">
+            <label class="desktop-vol-box" title="Speaker Volume">
+              <span>🔊</span>
+              <input id="launcher-vol-slider" type="range" min="0" max="100" value="60" class="desktop-vol-slider" />
+            </label>
+            <div id="launcher-live-clock" class="desktop-clock">--:--</div>
             <button class="btn-minimize" id="btn-launcher-rescan" title="I-scan balik ang installed games">🔄 Rescan</button>
-            <button class="btn-minimize" id="btn-launcher-minimize" title="Minimize to Taskbar">➖ Minimize</button>
-            <button class="btn-minimize" id="btn-launcher-to-agent" title="Admin / Maintenance Console" style="border-color: rgba(56, 189, 248, 0.35);">⚙️ Agent</button>
+            <button class="btn-minimize" id="btn-launcher-to-agent" title="Admin / Maintenance Console" style="border-color: rgba(56, 189, 248, 0.35);">⚙️ Admin</button>
           </div>
         </header>
 
-        <div id="launcher-rules-banner" class="launcher-rules-banner" style="display:none;">
-          <span>📢</span>
-          <span id="launcher-rules-text"></span>
-        </div>
+        <div class="launcher-desktop-body">
+          <aside class="launcher-sidebar">
+            <div>
+              <div class="sidebar-label">Desktop Categories</div>
+              <div class="launcher-cats">
+                <button type="button" class="l-cat-pill active" data-lcat="all"><span>🏠 Tanang Desktop</span><span class="l-nav-cnt">0</span></button>
+                <button type="button" class="l-cat-pill" data-lcat="Games"><span>🎮 Games</span><span class="l-nav-cnt">0</span></button>
+                <button type="button" class="l-cat-pill" data-lcat="Browsers"><span>🌐 Browsers &amp; Chat</span><span class="l-nav-cnt">0</span></button>
+                <button type="button" class="l-cat-pill" data-lcat="Media"><span>🎬 Media &amp; Live</span><span class="l-nav-cnt">0</span></button>
+                <button type="button" class="l-cat-pill" data-lcat="Office"><span>📄 Office &amp; Study</span><span class="l-nav-cnt">0</span></button>
+                <button type="button" class="l-cat-pill" data-lcat="Files & System"><span>📁 File Explorer &amp; PC</span><span class="l-nav-cnt">0</span></button>
+                <button type="button" class="l-cat-pill" data-lcat="Tools"><span>🛠️ Utilities</span><span class="l-nav-cnt">0</span></button>
+              </div>
+              <div class="view-switch-row">
+                <button type="button" id="btn-view-cards" class="l-view-btn ${this.launcherViewMode === 'cards' ? 'active' : ''}">🗂️ Cards</button>
+                <button type="button" id="btn-view-icons" class="l-view-btn ${this.launcherViewMode === 'icons' ? 'active' : ''}">🖥️ Icons</button>
+              </div>
+            </div>
 
-        <div class="launcher-toolbar">
-          <div class="launcher-cats">
-            <button type="button" class="l-cat-pill active" data-lcat="all">🌟 Tanang Apps</button>
-            <button type="button" class="l-cat-pill" data-lcat="Files & System">📁 File Explorer &amp; System</button>
-            <button type="button" class="l-cat-pill" data-lcat="Games">🎮 Games</button>
-            <button type="button" class="l-cat-pill" data-lcat="Browsers">🌐 Browsers &amp; Chat</button>
-            <button type="button" class="l-cat-pill" data-lcat="Tools">🛠️ Office, Media &amp; Tools</button>
-          </div>
-          <input id="launcher-search-input" type="text" class="launcher-search" placeholder="🔍 Pangita og dula, app, o File Explorer..." />
-        </div>
+            <div class="quick-dock-box">
+              <div class="sidebar-label" style="padding-bottom:2px;">⚡ Quick PC Dock</div>
+              <button type="button" class="quick-dock-btn" data-quick-dock="explorer">💻 This PC (Files)</button>
+              <button type="button" class="quick-dock-btn" data-quick-dock="downloads">📥 Downloads</button>
+              <button type="button" class="quick-dock-btn" data-quick-dock="recycle">🗑️ Recycle Bin</button>
+              <button type="button" class="quick-dock-btn" data-quick-dock="sound">🔊 Sound Settings</button>
+            </div>
+          </aside>
 
-        <div class="launcher-grid-wrap">
-          <div id="launcher-cards-grid" class="launcher-cards-grid"></div>
+          <main class="launcher-main-pane">
+            <div id="launcher-rules-banner" class="launcher-rules-banner" style="display:none;">
+              <span>📢</span>
+              <span id="launcher-rules-text"></span>
+            </div>
+
+            <div class="launcher-grid-wrap">
+              <div id="launcher-cards-grid" class="launcher-cards-grid"></div>
+            </div>
+          </main>
         </div>
       </div>
 
@@ -2268,9 +2395,6 @@ class StationMaintenanceAgent {
       </div>
     `;
 
-    document.getElementById('btn-launcher-minimize')?.addEventListener('click', () => {
-      desktopWindow.pisonetDesktop?.minimize();
-    });
     document.getElementById('btn-launcher-rescan')?.addEventListener('click', async () => {
       await this.refreshLauncherScan();
       this.showToast('🔄 Na-rescan na ang installed games ug apps!', 'info', 3);
@@ -2282,6 +2406,51 @@ class StationMaintenanceAgent {
       this.switchUiMode('launcher');
       this.refreshLauncherScan();
     });
+    document.getElementById('btn-view-cards')?.addEventListener('click', () => {
+      this.launcherViewMode = 'cards';
+      localStorage.setItem('artemia_launcher_view', 'cards');
+      document.getElementById('btn-view-cards')?.classList.add('active');
+      document.getElementById('btn-view-icons')?.classList.remove('active');
+      this.renderLauncherGrid();
+    });
+    document.getElementById('btn-view-icons')?.addEventListener('click', () => {
+      this.launcherViewMode = 'icons';
+      localStorage.setItem('artemia_launcher_view', 'icons');
+      document.getElementById('btn-view-icons')?.classList.add('active');
+      document.getElementById('btn-view-cards')?.classList.remove('active');
+      this.renderLauncherGrid();
+    });
+    document.querySelectorAll('.quick-dock-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const key = btn.getAttribute('data-quick-dock');
+        const items = this.getActiveLauncherItems();
+        let targetItem: any = null;
+        if (key === 'explorer') targetItem = items.find((x) => /file explorer|this pc/i.test(x.name)) || { id: 'qk_exp', name: 'File Explorer', launchTarget: 'C:\\Windows\\explorer.exe', args: '', category: 'Files & System' };
+        if (key === 'downloads') targetItem = items.find((x) => /downloads folder/i.test(x.name)) || { id: 'qk_dl', name: 'Downloads', launchTarget: 'C:\\Windows\\explorer.exe', args: '%USERPROFILE%\\Downloads', category: 'Files & System' };
+        if (key === 'recycle') targetItem = items.find((x) => /recycle bin/i.test(x.name)) || { id: 'qk_bin', name: 'Recycle Bin', launchTarget: 'shell:RecycleBinFolder', args: '', category: 'Files & System' };
+        if (key === 'sound') targetItem = items.find((x) => /sound|audio/i.test(x.name)) || { id: 'qk_snd', name: 'Sound Settings', launchTarget: 'C:\\Windows\\System32\\control.exe', args: 'mmsys.cpl sounds', category: 'Files & System' };
+        if (targetItem) this.triggerLaunchItem(targetItem);
+      });
+    });
+    const volSlider = document.getElementById('launcher-vol-slider') as HTMLInputElement | null;
+    if (volSlider) {
+      volSlider.addEventListener('change', () => {
+        const pct = Number(volSlider.value);
+        if (Number.isFinite(pct)) desktopWindow.pisonetDesktop?.setVolumePercent?.(pct).catch(() => {});
+      });
+    }
+    const updateClock = () => {
+      const clockEl = document.getElementById('launcher-live-clock');
+      if (clockEl) {
+        const now = new Date();
+        const t = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const d = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+        clockEl.innerText = `${t} • ${d}`;
+      }
+    };
+    updateClock();
+    if (this.clockTimer) clearInterval(this.clockTimer);
+    this.clockTimer = setInterval(updateClock, 15000);
     document.getElementById('launcher-search-input')?.addEventListener('input', (ev: any) => {
       this.launcherSearch = String(ev?.target?.value || '');
       this.renderLauncherGrid();
@@ -2371,6 +2540,23 @@ class StationMaintenanceAgent {
 
     document.getElementById('btn-operator-exit')?.addEventListener('click', openOperatorExitModal);
     document.getElementById('btn-op-cancel')?.addEventListener('click', closeOperatorExitModal);
+    document.getElementById('btn-op-peek-desktop')?.addEventListener('click', async () => {
+      const input = document.getElementById('operator-exit-password') as HTMLInputElement | null;
+      const errEl = document.getElementById('operator-exit-error');
+      const pwd = input?.value || '';
+      if (!pwd.trim()) {
+        if (errEl) errEl.innerText = 'Palihog isulod ang Admin / Operator Password.';
+        return;
+      }
+      if (!desktopWindow.pisonetDesktop?.peekWindowsDesktop) return;
+      const res = await desktopWindow.pisonetDesktop.peekWindowsDesktop(pwd);
+      if (res?.success) {
+        closeOperatorExitModal();
+        this.showToast('🖥️ Gi-abli temporaryo ang Windows Desktop.', 'info', 4);
+      } else if (errEl) {
+        errEl.innerText = res?.error || 'Sayop ang password.';
+      }
+    });
     document.getElementById('btn-op-verify-quit')?.addEventListener('click', () => submitOperatorExit(false));
     document.getElementById('btn-op-verify-unprotect')?.addEventListener('click', () => submitOperatorExit(true));
     document.getElementById('operator-exit-password')?.addEventListener('keydown', (ev) => {

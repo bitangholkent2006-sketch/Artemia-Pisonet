@@ -210,9 +210,11 @@ import {
             <input type="text" class="form-input" [(ngModel)]="newItem.name" placeholder="Extra Website / App Name" />
             <select class="form-input" [(ngModel)]="newItem.category">
               <option value="Games">🎮 Games</option>
-              <option value="Browsers">🌐 Browsers</option>
+              <option value="Browsers">🌐 Browsers &amp; Chat</option>
+              <option value="Media">🎬 Media &amp; Live</option>
+              <option value="Office">📄 Office &amp; Study</option>
               <option value="Files & System">📁 Files &amp; System</option>
-              <option value="Tools">🛠️ Office &amp; Tools</option>
+              <option value="Tools">🛠️ Utilities</option>
             </select>
             <input type="text" class="form-input" [(ngModel)]="newItem.launchTarget" placeholder="URL o custom .exe path" />
             <button type="button" class="btn btn-success btn-sm" (click)="addNewItem()">💾 Save Pin</button>

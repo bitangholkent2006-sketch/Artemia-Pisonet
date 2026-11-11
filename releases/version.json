@@ -1,7 +1,7 @@
 {
-  "version": "1.0.21",
+  "version": "1.0.22",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-11T22:28:00.000Z",
+  "releaseDate": "2026-11-11T23:11:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Remote Downloader Cancel Button: Cancel individual PC or all active downloads mid-stream cleanly with partial file cleanup, AbortController, and Winget/Extractor process termination"
+  "changelog": "Desktop Replacement Game Launcher OS: Docked desktop work-area replacement (Win+D / game launch safe via HWND_BOTTOM pinning), organized 2-pane desktop UI (Games, Browsers & Chat, Media & Live, Office & Study, File Explorer & Recycle Bin, Desktop Icons/Cards views, Quick Dock, live clock & volume), and crash-free elevated launcher support"
 }
