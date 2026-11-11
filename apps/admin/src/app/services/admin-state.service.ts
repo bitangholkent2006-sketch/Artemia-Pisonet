@@ -623,10 +623,10 @@ export class AdminStateService {
     runArgs?: string;
     silentArgs?: string;
     createShortcut?: boolean;
-  }): Promise<{ success: boolean; message: string }> {
+  }): Promise<{ success: boolean; message: string; payload?: any }> {
     try {
       const res = await this.apiClient.triggerRemoteDownload(payload);
-      return { success: res.success, message: res.message };
+      return { success: res.success, message: res.message, payload: res.payload };
     } catch (err: any) {
       return { success: false, message: err.message || 'Download dispatch failed.' };
     }
@@ -680,6 +680,16 @@ export class AdminStateService {
       });
       this.apiClient.emitSocket('maintenance:winget:search:req', { reqId, query });
     });
+  }
+
+  public async cancelRemoteDownload(payload: { targetPcId?: string; targetPcIds?: string[]; reqId?: string }): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await this.apiClient.cancelRemoteDownload(payload);
+      return { success: !!res?.success, message: res?.message || 'Cancel signal sent.' };
+    } catch (err: any) {
+      this.apiClient.emitSocket('maintenance:download:cancel', payload);
+      return { success: true, message: err?.message || 'Cancel dispatched via socket.' };
+    }
   }
 
   public async pushClientUpdate(targetPcId: string = 'all'): Promise<{ success: boolean; message: string }> {

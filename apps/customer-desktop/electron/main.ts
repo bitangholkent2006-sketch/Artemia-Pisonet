@@ -2806,9 +2806,68 @@ function createDesktopShortcutForExtracted(extractDir: string, shortcutName: str
   });
 }
 
+interface ActiveDownloadControl {
+  abortController: AbortController;
+  killChild?: () => void;
+  destFile?: string;
+  cancelled: boolean;
+}
+const activeDownloads = new Map<string, ActiveDownloadControl>();
+const recentlyCancelledDownloadIds = new Set<string>();
+
+ipcMain.handle('maintenance:cancel-download', (_event, reqId?: string) => {
+  let cancelledCount = 0;
+  const key = reqId ? String(reqId).trim() : '';
+  if (key) {
+    recentlyCancelledDownloadIds.add(key);
+    setTimeout(() => recentlyCancelledDownloadIds.delete(key), 60000);
+    const ctrl = activeDownloads.get(key);
+    if (ctrl) {
+      ctrl.cancelled = true;
+      try { ctrl.abortController.abort(new Error('Download cancelled by Admin')); } catch {}
+      try { ctrl.killChild?.(); } catch {}
+      cancelledCount++;
+    }
+  } else {
+    for (const [id, ctrl] of activeDownloads.entries()) {
+      recentlyCancelledDownloadIds.add(id);
+      setTimeout(() => recentlyCancelledDownloadIds.delete(id), 60000);
+      ctrl.cancelled = true;
+      try { ctrl.abortController.abort(new Error('Download cancelled by Admin')); } catch {}
+      try { ctrl.killChild?.(); } catch {}
+      cancelledCount++;
+    }
+  }
+  logToFile(`[Downloader] Cancel requested (reqId=${key || 'ALL'}, aborted=${cancelledCount})`);
+  return { success: true, cancelledCount };
+});
+
 ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean }) => {
+  const { reqId, autoRun, runArgs, createShortcut } = payload;
+  const ctrl: ActiveDownloadControl = {
+    abortController: new AbortController(),
+    cancelled: recentlyCancelledDownloadIds.has(reqId)
+  };
+  activeDownloads.set(reqId, ctrl);
+  let partialDestFile = '';
+
+  const buildCancelledResponse = (downloaded = 0, total = 0) => {
+    event.sender.send('maintenance:download:progress', {
+      reqId,
+      downloadedBytes: downloaded,
+      totalBytes: total,
+      percent: 0,
+      status: 'cancelled'
+    });
+    return {
+      success: false,
+      cancelled: true,
+      error: 'Gi-cancel sa Admin ang download.'
+    };
+  };
+
   try {
-    const { reqId, autoRun, runArgs, createShortcut } = payload;
+    if (ctrl.cancelled) return buildCancelledResponse();
     let url = String(payload.url || '').trim();
 
     // 1. Handle winget://PackageId silent Windows Store / App install
@@ -2817,11 +2876,14 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
       if (!pkgId) return { success: false, error: 'Missing WinGet Package ID' };
       event.sender.send('maintenance:download:progress', { reqId, downloadedBytes: 0, totalBytes: 0, percent: 25, status: 'downloading' });
       return await new Promise((resolve) => {
-        execFile(
+        const wgProc = execFile(
           'winget',
           ['install', '--id', pkgId, '-e', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'],
           { timeout: 240000, windowsHide: true },
           (err, stdout, stderr) => {
+            if (ctrl.cancelled) {
+              return resolve(buildCancelledResponse());
+            }
             const outText = (stdout || '') + (stderr || '');
             const alreadyInstalled = outText.includes('already installed') || outText.includes('No available upgrade') || (err as any)?.code === -1978335189 || (err as any)?.code === -1978335212;
             const ok = !err || alreadyInstalled;
@@ -2838,13 +2900,21 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
             });
           }
         );
+        ctrl.killChild = () => {
+          try {
+            if (wgProc.pid) exec(`taskkill /F /T /PID ${wgProc.pid} 2>nul`);
+            wgProc.kill('SIGKILL');
+          } catch {}
+        };
       });
     }
 
     const fetchBinaryWithUnwrap = async (startUrl: string, depth = 0): Promise<Response> => {
+      if (ctrl.cancelled) throw new Error('CANCELLED');
       if (depth > 3) throw new Error('Too many webpage unwrap hops');
       const r = await fetch(startUrl, {
         redirect: 'follow',
+        signal: ctrl.abortController.signal,
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36' }
       });
       if (!r.ok || !r.body) {
@@ -2874,6 +2944,7 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
     };
 
     const res = await fetchBinaryWithUnwrap(url);
+    if (ctrl.cancelled) return buildCancelledResponse();
     const filename = resolveHeaderFilename(res, url, payload.filename);
 
     const defaultDir = path.join(os.homedir(), 'Downloads');
@@ -2889,6 +2960,8 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
 
     const destDir = path.dirname(destFile);
     if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+    partialDestFile = destFile;
+    ctrl.destFile = destFile;
 
     const totalBytes = parseInt(res.headers.get('content-length') || '0', 10);
     let downloadedBytes = 0;
@@ -2896,11 +2969,16 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
 
     const fileStream = fs.createWriteStream(destFile);
     const reader = res.body!.getReader();
+    ctrl.killChild = () => {
+      try { reader.cancel(); } catch {}
+    };
 
     try {
       while (true) {
+        if (ctrl.cancelled) throw new Error('CANCELLED');
         const { done, value } = await reader.read();
         if (done) break;
+        if (ctrl.cancelled) throw new Error('CANCELLED');
         if (value) {
           downloadedBytes += value.length;
           if (!fileStream.write(Buffer.from(value))) {
@@ -2908,7 +2986,7 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
           }
 
           const now = Date.now();
-          if (now - lastReport > 500) {
+          if (now - lastReport > 350) {
             lastReport = now;
             const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
             event.sender.send('maintenance:download:progress', {
@@ -2929,9 +3007,18 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
         fileStream.end();
       });
     } catch (streamErr) {
+      try { await reader.cancel(); } catch {}
       try { fileStream.destroy(); } catch {}
       try { if (fs.existsSync(destFile)) fs.unlinkSync(destFile); } catch {}
+      if (ctrl.cancelled) {
+        return buildCancelledResponse(downloadedBytes, totalBytes);
+      }
       throw streamErr;
+    }
+
+    if (ctrl.cancelled) {
+      try { if (fs.existsSync(destFile)) fs.unlinkSync(destFile); } catch {}
+      return buildCancelledResponse(downloadedBytes, totalBytes);
     }
 
     event.sender.send('maintenance:download:progress', {
@@ -2946,7 +3033,7 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
     let execError: string | undefined = undefined;
     let finalDestPath = destFile;
 
-    if (autoRun && process.platform === 'win32') {
+    if (autoRun && process.platform === 'win32' && !ctrl.cancelled) {
       const lowerExt = path.extname(destFile).toLowerCase();
       if (lowerExt === '.zip' || lowerExt === '.7z' || lowerExt === '.rar') {
         try {
@@ -2956,33 +3043,38 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
             : path.join('C:\\Games', cleanFolderName);
           if (!fs.existsSync(extractBase)) fs.mkdirSync(extractBase, { recursive: true });
 
+          const runExtract = (cmd: string, args: string[]) => new Promise<void>((resExt, rejExt) => {
+            const child = execFile(cmd, args, { timeout: 600000, windowsHide: true }, (e) => (e ? rejExt(e) : resExt()));
+            ctrl.killChild = () => {
+              try {
+                if (child.pid) exec(`taskkill /F /T /PID ${child.pid} 2>nul`);
+                child.kill('SIGKILL');
+              } catch {}
+            };
+          });
+
           if (lowerExt === '.zip') {
-            await new Promise<void>((resExt, rejExt) => {
-              execFile(
-                'powershell.exe',
-                ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', `Expand-Archive -LiteralPath '${destFile.replace(/'/g, "''")}' -DestinationPath '${extractBase.replace(/'/g, "''")}' -Force`],
-                { timeout: 600000, windowsHide: true },
-                (err) => (err ? rejExt(err) : resExt())
-              );
-            });
+            await runExtract('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', `Expand-Archive -LiteralPath '${destFile.replace(/'/g, "''")}' -DestinationPath '${extractBase.replace(/'/g, "''")}' -Force`]);
           } else {
             const sevenZ = ['C:\\Program Files\\7-Zip\\7z.exe', 'C:\\Program Files (x86)\\7-Zip\\7z.exe'].find((p) => fs.existsSync(p));
             const winRar = ['C:\\Program Files\\WinRAR\\WinRAR.exe', 'C:\\Program Files (x86)\\WinRAR\\WinRAR.exe'].find((p) => fs.existsSync(p));
             if (sevenZ) {
-              await new Promise<void>((r, j) => execFile(sevenZ, ['x', '-y', `-o${extractBase}`, destFile], { timeout: 600000, windowsHide: true }, (e) => (e ? j(e) : r())));
+              await runExtract(sevenZ, ['x', '-y', `-o${extractBase}`, destFile]);
             } else if (winRar) {
-              await new Promise<void>((r, j) => execFile(winRar, ['x', '-y', '-ibck', destFile, extractBase + '\\'], { timeout: 600000, windowsHide: true }, (e) => (e ? j(e) : r())));
+              await runExtract(winRar, ['x', '-y', '-ibck', destFile, extractBase + '\\']);
             } else {
-              await new Promise<void>((r, j) => execFile('tar.exe', ['-xf', destFile, '-C', extractBase], { timeout: 600000, windowsHide: true }, (e) => (e ? j(e) : r())));
+              await runExtract('tar.exe', ['-xf', destFile, '-C', extractBase]);
             }
           }
 
+          if (ctrl.cancelled) return buildCancelledResponse(downloadedBytes, totalBytes);
           if (createShortcut !== false) {
             await createDesktopShortcutForExtracted(extractBase, cleanFolderName);
           }
           finalDestPath = extractBase;
           executed = true;
         } catch (e: any) {
+          if (ctrl.cancelled) return buildCancelledResponse(downloadedBytes, totalBytes);
           execError = e?.message || String(e);
         }
       } else if (lowerExt === '.msi') {
@@ -3020,7 +3112,13 @@ ipcMain.handle('maintenance:download-file', async (event, payload: { reqId: stri
       execError
     };
   } catch (err: any) {
+    try { if (ctrl.cancelled && partialDestFile && fs.existsSync(partialDestFile)) fs.unlinkSync(partialDestFile); } catch {}
+    if (ctrl.cancelled || err?.name === 'AbortError' || err?.message === 'CANCELLED') {
+      return buildCancelledResponse();
+    }
     return { success: false, error: err?.message || 'Download failed' };
+  } finally {
+    activeDownloads.delete(reqId);
   }
 });
 

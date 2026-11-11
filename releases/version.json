@@ -1,7 +1,7 @@
 {
-  "version": "1.0.20",
+  "version": "1.0.21",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-11T02:44:00.000Z",
+  "releaseDate": "2026-11-11T22:28:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Full-Screen Auto-Detect Big Game Launcher: Mutex-safe Desktop shortcut migration, auto-discovered Games/Steam/Epic/Riot/Roblox/File Explorer & System/Browsers/Tools with native PNG icons, and Minimize-only unclosable window"
+  "changelog": "Remote Downloader Cancel Button: Cancel individual PC or all active downloads mid-stream cleanly with partial file cleanup, AbortController, and Winget/Extractor process termination"
 }

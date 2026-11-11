@@ -41,7 +41,8 @@ interface WindowWithDesktop extends Window {
     captureScreen: (options?: { width?: number; height?: number; quality?: number; skipFallback?: boolean }) => Promise<{ base64Image: string; error?: string }>;
     getDiskDrives: () => Promise<{ drives: any[] }>;
     getHardwareHealth?: () => Promise<{ cpuModel: string; cpuPercent: number; ramTotalGb: number; ramUsedGb: number; ramPercent: number; gpu: string; gpuPercent?: number; gpuStatus: string; ssdModel: string; ssdHealthPercent?: number | null; ssdActivePercent?: number; ssdStatus: string; activeApp: string }>;
-    downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean }) => Promise<{ success: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
+    downloadFile?: (payload: { reqId: string; url: string; filename?: string; targetPath?: string; autoRun?: boolean; runArgs?: string; createShortcut?: boolean }) => Promise<{ success: boolean; cancelled?: boolean; destPath?: string; filename?: string; totalBytes?: number; executed?: boolean; execError?: string; error?: string }>;
+    cancelDownload?: (reqId?: string) => Promise<{ success: boolean; cancelledCount: number }>;
     searchWinget?: (query: string) => Promise<{ items: Array<{ id: string; name: string; version: string }>; error?: string }>;
     onDownloadProgress?: (callback: (data: any) => void) => void;
     onCleanAutoDone?: (callback: (data: any) => void) => void;
@@ -67,7 +68,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.20';
+const CLIENT_AGENT_VERSION = '1.0.21';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -1188,6 +1189,9 @@ class StationMaintenanceAgent {
           this.logMessage(`[Downloader] Download completed: ${res.destPath}`);
           this.showToast(`✅ Download Complete: ${res.filename}!`, 'success', 6);
           setTimeout(() => { this.refreshLauncherScan(); }, 1500);
+        } else if (res.cancelled) {
+          this.logMessage(`[Downloader] Download cancelled by operator (reqId=${payload.reqId}).`);
+          this.showToast('🛑 Gi-cancel sa Admin ang download.', 'warn', 4);
         } else {
           this.logMessage(`[Downloader] Download failed: ${res.error}`);
           this.showToast(`❌ Download Failed: ${res.error}`, 'warn', 6);
@@ -1199,6 +1203,15 @@ class StationMaintenanceAgent {
           ...res,
           timestamp: new Date().toISOString()
         });
+      });
+
+      this.socket.on('agent:download:cancel', async (payload: { reqId?: string; targetPcId?: string; targetPcIds?: string[] }) => {
+        const list = Array.isArray(payload?.targetPcIds) && payload.targetPcIds.length > 0
+          ? payload.targetPcIds
+          : [payload?.targetPcId];
+        if (!list.some((id) => this.matchesThisStation(id))) return;
+        this.logMessage(`[Downloader] Cancelling download (reqId=${payload?.reqId || 'ALL'})...`);
+        await desktopWindow.pisonetDesktop?.cancelDownload?.(payload?.reqId);
       });
 
       this.socket.on('agent:winget:search:req', async (payload: { reqId?: string; query: string }) => {

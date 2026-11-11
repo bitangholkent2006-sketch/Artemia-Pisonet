@@ -551,6 +551,19 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.to('staff').emit('maintenance:download:res', result);
     });
 
+    authSocket.on('maintenance:download:cancel', (payload: any) => {
+      const targets = Array.isArray(payload?.targetPcIds) && payload.targetPcIds.length > 0
+        ? payload.targetPcIds
+        : [payload?.targetPcId || payload?.pcId || 'all'];
+      if (targets.includes('all') || targets.includes('fleet')) {
+        io?.to('fleet').emit('agent:download:cancel', { ...payload, targetPcId: 'all' });
+      } else {
+        targets.forEach((tid: string) => {
+          emitToPcTarget('agent:download:cancel', { ...payload, targetPcId: tid }, tid);
+        });
+      }
+    });
+
     // Live WinGet Online Package Search Relay (Runs native winget search on an active client PC)
     authSocket.on('maintenance:winget:search:req', async (payload: { reqId?: string; query?: string }) => {
       if (!io || !payload?.query?.trim()) return;

@@ -162,6 +162,30 @@ maintenanceRoutes.post('/download', requireStaff, async (c) => {
   });
 });
 
+// Cancel Active Remote Download(s)
+maintenanceRoutes.post('/download/cancel', requireStaff, async (c) => {
+  const staff = c.get('user');
+  const body = await c.req.json().catch(() => ({}));
+  const { targetPcId = 'all', targetPcIds, reqId } = body;
+
+  const payload = {
+    reqId: reqId ? String(reqId).trim() : undefined,
+    targetPcId,
+    targetPcIds,
+    sender: staff?.fullName || staff?.username || 'Admin',
+    timestamp: new Date().toISOString()
+  };
+
+  const targets = Array.isArray(targetPcIds) && targetPcIds.length > 0 ? targetPcIds : [targetPcId];
+  dispatchAgentEvent('agent:download:cancel', payload, targetPcId, targetPcIds);
+
+  return c.json({
+    success: true,
+    message: `Gi-cancel ang download sa ${targets.includes('all') ? 'tanang online stations' : targets.join(', ')}.`,
+    payload
+  });
+});
+
 function isSafePublicHttpUrl(rawUrl: string): boolean {
   try {
     const u = new URL(rawUrl);

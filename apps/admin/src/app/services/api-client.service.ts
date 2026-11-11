@@ -408,6 +408,13 @@ export class ApiClientService {
     });
   }
 
+  public async cancelRemoteDownload(payload: { targetPcId?: string; targetPcIds?: string[]; reqId?: string }) {
+    return this.request<{ success: boolean; message: string; payload?: any }>('/api/v1/maintenance/download/cancel', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
   public async resolveDownloadUrl(url: string) {
     return this.request<{ success: boolean; sourceUrl?: string; message?: string; candidates?: Array<{ url: string; filename: string; sizeBytes: number; host: string; kind: string }> }>('/api/v1/maintenance/resolve-download', {
       method: 'POST',

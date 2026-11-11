@@ -22,10 +22,11 @@ export interface AppPreset {
 export interface StationDownloadState {
   pcId: string;
   pcName: string;
+  reqId?: string;
   percent: number;
   downloadedMb: string;
   totalMb: string;
-  status: 'queued' | 'downloading' | 'installing' | 'completed' | 'failed';
+  status: 'queued' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled';
   savedPath?: string;
   executed?: boolean;
   error?: string;
@@ -84,7 +85,17 @@ export interface StationDownloadState {
             </p>
           </div>
 
-          <div class="header-actions">
+          <div class="header-actions" style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button
+              *ngIf="activeDownloadsCount > 0"
+              type="button"
+              class="btn btn-cancel"
+              (click)="cancelAllDownloads()"
+              [disabled]="isCancellingDownload"
+            >
+              <span>🛑</span>
+              <span>{{ isCancellingDownload ? 'Gina-cancel...' : 'Cancel Download (' + activeDownloadsCount + ')' }}</span>
+            </button>
             <button
               class="btn btn-primary"
               [disabled]="isDispatchingDownload || !downloadUrl.trim()"
@@ -403,9 +414,29 @@ export interface StationDownloadState {
 
         <!-- Live Download Progress Grid Across Target PCs -->
         <div class="card progress-card" *ngIf="downloadList.length > 0">
-          <div class="card-header">
-            <h3 class="card-title">📊 Live Station Download Progress</h3>
-            <span class="header-status-pill">{{ activeDownloadsCount }} actively downloading</span>
+          <div class="card-header" style="justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h3 class="card-title">📊 Live Station Download Progress</h3>
+              <span class="header-status-pill">{{ activeDownloadsCount }} actively downloading</span>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button
+                *ngIf="activeDownloadsCount > 0"
+                type="button"
+                class="btn-cancel"
+                (click)="cancelAllDownloads()"
+                [disabled]="isCancellingDownload"
+              >
+                🛑 {{ isCancellingDownload ? 'Cancelling...' : 'Cancel All Downloads' }}
+              </button>
+              <button
+                type="button"
+                class="btn-toggle-all"
+                (click)="clearDownloadCards()"
+              >
+                ✕ Clear List
+              </button>
+            </div>
           </div>
 
           <div class="download-stations-grid">
@@ -415,9 +446,24 @@ export interface StationDownloadState {
                   <span class="sp-icon">🖥️</span>
                   <strong>{{ item.pcName }}</strong>
                 </div>
-                <span class="sp-status-badge" [ngClass]="item.status">
-                  {{ item.status === 'downloading' ? 'Downloading (' + item.percent + '%)' : (item.status === 'completed' ? 'Completed ✅' : (item.status === 'failed' ? 'Failed ❌' : 'Queued')) }}
-                </span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span class="sp-status-badge" [ngClass]="item.status">
+                    {{ item.status === 'downloading' ? 'Downloading (' + item.percent + '%)' :
+                       item.status === 'completed' ? 'Completed ✅' :
+                       item.status === 'cancelled' ? 'Cancelled 🛑' :
+                       item.status === 'failed' ? 'Failed ❌' : 'Queued' }}
+                  </span>
+                  <button
+                    *ngIf="item.status === 'downloading' || item.status === 'queued'"
+                    type="button"
+                    class="btn-cancel"
+                    style="padding: 2px 7px; font-size: 0.68rem;"
+                    (click)="cancelStationDownload(item)"
+                    title="I-cancel ang download ani nga PC"
+                  >
+                    ✕ Cancel
+                  </button>
+                </div>
               </div>
 
               <!-- Animated Progress Bar -->
@@ -425,7 +471,7 @@ export interface StationDownloadState {
                 <div
                   class="sp-bar-fill"
                   [style.width.%]="item.percent"
-                  [ngClass]="{'complete': item.percent === 100, 'error': item.status === 'failed'}"
+                  [ngClass]="{'complete': item.percent === 100, 'error': item.status === 'failed' || item.status === 'cancelled'}"
                 ></div>
               </div>
 
@@ -927,18 +973,9 @@ export interface StationDownloadState {
       padding: 2px 6px;
       border-radius: 4px;
     }
-    .status-pill.available, .status-pill.in-use {
-      background: rgba(16, 185, 129, 0.2);
-      color: #34d399;
-    }
-    .status-pill.locked {
-      background: rgba(245, 158, 11, 0.2);
-      color: #fbbf24;
-    }
-    .status-pill.offline {
-      background: rgba(100, 116, 139, 0.2);
-      color: #94a3b8;
-    }
+    .status-pill.available, .status-pill.in-use, .sp-status-badge.completed { background: rgba(16,185,129,.2); color: #34d399; }
+    .status-pill.locked, .sp-status-badge.cancelled { background: rgba(245,158,11,.2); color: #fbbf24; }
+    .status-pill.offline { background: rgba(100,116,139,.2); color: #94a3b8; }
     .station-details {
       font-size: 0.75rem;
       color: #94a3b8;
@@ -1104,85 +1141,24 @@ export interface StationDownloadState {
       gap: 8px;
       transition: border-color 0.2s ease;
     }
-    .station-progress-card.downloading {
-      border-color: #0284c7;
-    }
-    .station-progress-card.completed {
-      border-color: #10b981;
-    }
-    .station-progress-card.failed {
-      border-color: #f43f5e;
-    }
-    .sp-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .sp-pc-name {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.88rem;
-      color: #f8fafc;
-    }
-    .sp-status-badge {
-      font-size: 0.68rem;
-      font-weight: 700;
-      padding: 2px 6px;
-      border-radius: 4px;
-    }
-    .sp-status-badge.downloading {
-      background: rgba(2, 132, 199, 0.2);
-      color: #38bdf8;
-    }
-    .sp-status-badge.completed {
-      background: rgba(16, 185, 129, 0.2);
-      color: #34d399;
-    }
-    .sp-status-badge.failed {
-      background: rgba(244, 63, 94, 0.2);
-      color: #fb7185;
-    }
-    .sp-bar-container {
-      height: 8px;
-      background: #1e293b;
-      border-radius: 4px;
-      overflow: hidden;
-    }
-    .sp-bar-fill {
-      height: 100%;
-      background: #0284c7;
-      transition: width 0.3s ease;
-    }
-    .sp-bar-fill.complete {
-      background: #10b981;
-    }
-    .sp-bar-fill.error {
-      background: #f43f5e;
-    }
-    .sp-footer {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 0.72rem;
-      color: #94a3b8;
-    }
-    .sp-size {
-      font-weight: 700;
-      color: #cbd5e1;
-    }
-    .sp-extra {
-      max-width: 160px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 0.68rem;
-      color: #64748b;
-    }
-    .sp-error {
-      color: #fb7185;
-      font-weight: 600;
-    }
+    .station-progress-card.downloading { border-color: #0284c7; }
+    .station-progress-card.completed { border-color: #10b981; }
+    .station-progress-card.failed, .station-progress-card.cancelled { border-color: #f43f5e; }
+    .sp-header { display: flex; justify-content: space-between; align-items: center; }
+    .sp-pc-name { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; color: #f8fafc; }
+    .sp-status-badge { font-size: 0.68rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+    .sp-status-badge.downloading { background: rgba(2,132,199,.2); color: #38bdf8; }
+    .sp-status-badge.failed { background: rgba(244,63,94,.2); color: #fb7185; }
+    .btn-cancel { background: rgba(220,38,38,.25); border: 1px solid #ef4444; color: #fecaca; font-weight: 700; cursor: pointer; border-radius: 6px; padding: 5px 11px; font-size: .76rem; }
+    .btn-cancel:hover { background: #dc2626; color: #fff; }
+    .sp-bar-container { height: 8px; background: #1e293b; border-radius: 4px; overflow: hidden; }
+    .sp-bar-fill { height: 100%; background: #0284c7; transition: width .3s ease; }
+    .sp-bar-fill.complete { background: #10b981; }
+    .sp-bar-fill.error { background: #f43f5e; }
+    .sp-footer { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; color: #94a3b8; }
+    .sp-size { font-weight: 700; color: #cbd5e1; }
+    .sp-extra { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.68rem; color: #64748b; }
+    .sp-error { color: #fb7185; font-weight: 600; }
 
     /* Games Grid */
     .games-grid {
@@ -1348,157 +1324,35 @@ export interface StationDownloadState {
       gap: 8px;
       background: rgba(6, 182, 212, 0.15);
       border: 1px solid rgba(6, 182, 212, 0.4);
-      color: #38bdf8;
-      padding: 4px 12px;
-      border-radius: 9999px;
-      font-size: 0.8rem;
-      font-weight: 700;
+      color: #38bdf8; padding: 4px 12px; border-radius: 9999px; font-size: .8rem; font-weight: 700;
     }
-    .pulse-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #06b6d4;
-      box-shadow: 0 0 8px #06b6d4;
-    }
-    .ota-ver {
-      font-size: 1.1rem;
-      font-weight: 800;
-      color: #fff;
-      background: #0284c7;
-      padding: 4px 12px;
-      border-radius: 8px;
-    }
-    .ota-release-details {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 16px;
-      margin-bottom: 16px;
-    }
-    .ota-detail-item {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .ota-detail-item .label {
-      font-size: 0.78rem;
-      color: #64748b;
-      text-transform: uppercase;
-      font-weight: 700;
-    }
-    .ota-detail-item .val {
-      font-size: 0.92rem;
-      color: #e2e8f0;
-      font-weight: 600;
-    }
-    .ota-release-note {
-      font-size: 0.85rem;
-      color: #94a3b8;
-      line-height: 1.5;
-      background: rgba(0, 0, 0, 0.25);
-      padding: 10px 14px;
-      border-radius: 8px;
-    }
-    .ota-stations-table {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      margin-top: 12px;
-    }
-    .ota-station-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: rgba(15, 23, 42, 0.6);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 10px;
-      padding: 14px 18px;
-      gap: 16px;
-    }
-    .ota-st-info {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      flex: 1;
-    }
-    .ota-st-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-    }
-    .ota-st-dot.online {
-      background: #10b981;
-      box-shadow: 0 0 8px #10b981;
-    }
-    .ota-st-dot.offline {
-      background: #ef4444;
-    }
-    .ota-st-names {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .ota-st-name {
-      font-size: 1rem;
-      color: #fff;
-    }
-    .ota-st-sub {
-      font-size: 0.78rem;
-      color: #64748b;
-    }
-    .ota-st-status {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .ota-live-tag {
-      font-size: 0.8rem;
-      font-weight: 700;
-      color: #38bdf8;
-      background: rgba(56, 189, 248, 0.15);
-      border: 1px solid rgba(56, 189, 248, 0.3);
-      padding: 2px 8px;
-      border-radius: 6px;
-    }
-    .ota-st-action {
-      display: flex;
-      align-items: center;
-    }
+    .pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: #06b6d4; box-shadow: 0 0 8px #06b6d4; }
+    .ota-ver { font-size: 1.1rem; font-weight: 800; color: #fff; background: #0284c7; padding: 4px 12px; border-radius: 8px; }
+    .ota-release-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 16px; }
+    .ota-detail-item { display: flex; flex-direction: column; gap: 4px; }
+    .ota-detail-item .label { font-size: .78rem; color: #64748b; text-transform: uppercase; font-weight: 700; }
+    .ota-detail-item .val { font-size: .92rem; color: #e2e8f0; font-weight: 600; }
+    .ota-release-note { font-size: .85rem; color: #94a3b8; line-height: 1.5; background: rgba(0,0,0,.25); padding: 10px 14px; border-radius: 8px; }
+    .ota-stations-table { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+    .ota-station-row { display: flex; align-items: center; justify-content: space-between; background: rgba(15,23,42,.6); border: 1px solid rgba(255,255,255,.06); border-radius: 10px; padding: 14px 18px; gap: 16px; }
+    .ota-st-info { display: flex; align-items: center; gap: 14px; flex: 1; }
+    .ota-st-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .ota-st-dot.online { background: #10b981; box-shadow: 0 0 8px #10b981; }
+    .ota-st-dot.offline { background: #ef4444; }
+    .ota-st-names { display: flex; flex-direction: column; gap: 2px; }
+    .ota-st-name { font-size: 1rem; color: #fff; }
+    .ota-st-sub { font-size: .78rem; color: #64748b; }
+    .ota-st-status, .ota-st-action { display: flex; align-items: center; gap: 8px; }
+    .ota-live-tag { font-size: .8rem; font-weight: 700; color: #38bdf8; background: rgba(56,189,248,.15); border: 1px solid rgba(56,189,248,.3); padding: 2px 8px; border-radius: 6px; }
     @media (max-width: 768px) {
-      .game-updater-container {
-        padding: 4px 2px;
-      }
-      .page-title {
-        font-size: 1.15rem;
-      }
-      .mode-tabs {
-        width: 100%;
-        display: flex;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .mode-tab {
-        flex: 1 0 auto;
-        font-size: 0.78rem;
-        padding: 8px 10px;
-      }
-      .station-pills-wrap {
-        gap: 6px;
-      }
-      .station-cards-grid,
-      .ota-details-grid,
-      .catalog-grid {
-        grid-template-columns: 1fr;
-      }
-      .ota-station-row {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 10px;
-        padding: 12px;
-      }
-      .ota-st-action {
-        justify-content: flex-end;
-      }
+      .game-updater-container { padding: 4px 2px; }
+      .page-title { font-size: 1.15rem; }
+      .mode-tabs { width: 100%; display: flex; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .mode-tab { flex: 1 0 auto; font-size: .78rem; padding: 8px 10px; }
+      .station-pills-wrap { gap: 6px; }
+      .station-cards-grid, .ota-details-grid, .catalog-grid { grid-template-columns: 1fr; }
+      .ota-station-row { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; }
+      .ota-st-action { justify-content: flex-end; }
     }
   `]
 })
@@ -1717,6 +1571,8 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
   addToLauncherAfterDownload: boolean = false;
   silentArgs: string = '/silent /install';
   isDispatchingDownload = false;
+  isCancellingDownload = false;
+  lastDispatchedReqId: string | null = null;
 
   // Station download tracking: pcId -> StationDownloadState
   stationDownloads: { [pcId: string]: StationDownloadState } = {};
@@ -1796,18 +1652,24 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
       const name = pc ? pc.name : data.pcId;
       const downloadedMb = (Number(data.downloadedBytes || 0) / (1024 * 1024)).toFixed(1);
       const totalMb = data.totalBytes > 0 ? (Number(data.totalBytes) / (1024 * 1024)).toFixed(1) : 'Unknown';
+      const st: StationDownloadState['status'] =
+        data.status === 'cancelled' ? 'cancelled' :
+        data.status === 'completed' ? 'completed' :
+        data.status === 'failed' ? 'failed' : 'downloading';
 
       this.stationDownloads[key] = {
         pcId: key,
         pcName: name,
-        percent: data.percent ?? 0,
+        reqId: data.reqId || this.stationDownloads[key]?.reqId,
+        percent: st === 'cancelled' ? 0 : (data.percent ?? 0),
         downloadedMb,
         totalMb,
-        status: 'downloading'
+        status: st,
+        error: st === 'cancelled' ? 'Gi-cancel ang download' : undefined
       };
     });
 
-    // 2. Listen for Download Result (Completion / Error)
+    // 2. Listen for Download Result (Completion / Error / Cancellation)
     this.dlResSub = this.adminState.apiClient.onSocketEvent('maintenance:download:res', (data: any) => {
       if (!data?.pcId) return;
       const pc = this.findStation(data.pcId);
@@ -1823,6 +1685,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
         };
         this.stationDownloads[key] = {
           ...cur,
+          reqId: data.reqId || cur.reqId,
           percent: 100,
           status: 'completed',
           savedPath: data.destPath || data.filename,
@@ -1835,6 +1698,27 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
           message: `✅ Natapos ang download: ${data.filename || 'installer'} -> ${data.destPath || ''}${data.executed ? ' (Gisugdan ang installer)' : ''}`,
           type: 'success'
         });
+      } else if (data.cancelled) {
+        const cur = this.stationDownloads[key] || {
+          pcId: key,
+          pcName: name,
+          percent: 0,
+          downloadedMb: '0',
+          totalMb: '0'
+        };
+        this.stationDownloads[key] = {
+          ...cur,
+          reqId: data.reqId || cur.reqId,
+          status: 'cancelled',
+          error: data.error || 'Gi-cancel sa Admin'
+        };
+
+        this.consoleLogs.unshift({
+          timestamp: new Date(),
+          pcName: name,
+          message: `🛑 Gi-cancel ang download.`,
+          type: 'info'
+        });
       } else {
         const cur = this.stationDownloads[key] || {
           pcId: key,
@@ -1844,6 +1728,7 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
         };
         this.stationDownloads[key] = {
           ...cur,
+          reqId: data.reqId || cur.reqId,
           status: 'failed',
           error: data.error || 'Napakyas ang pag-download'
         };
@@ -2194,6 +2079,15 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
       const res = await this.adminState.triggerRemoteDownload(payload);
 
       if (res.success) {
+        const reqId = res.payload?.reqId;
+        if (reqId) {
+          this.lastDispatchedReqId = reqId;
+          targetPcs.forEach((p: PC) => {
+            if (this.stationDownloads[p.id]) {
+              this.stationDownloads[p.id].reqId = reqId;
+            }
+          });
+        }
         this.statusNotice = `🚀 Download command gipadala sa ${this.targetMode === 'all' ? 'tanang online PCs' : this.selectedPcIds.length + ' napiling PC'}!`;
         this.noticeType = 'success';
         this.consoleLogs.unshift({
@@ -2210,9 +2104,72 @@ export class GameUpdaterComponent implements OnInit, OnDestroy {
         this.statusNotice = res.message || 'Napakyas ang pag-dispatch sa download.';
         this.noticeType = 'error';
       }
-      } finally {
+    } finally {
       this.isDispatchingDownload = false;
     }
+  }
+
+  async cancelStationDownload(item: StationDownloadState) {
+    try {
+      const res = await this.adminState.cancelRemoteDownload({
+        targetPcId: item.pcId,
+        reqId: item.reqId || undefined
+      });
+      this.stationDownloads[item.pcId] = {
+        ...item,
+        status: 'cancelled',
+        error: 'Gi-cancel sa Admin'
+      };
+      this.statusNotice = res.message || `🛑 Gi-cancel ang download sa ${item.pcName}.`;
+      this.noticeType = 'warn';
+      this.consoleLogs.unshift({
+        timestamp: new Date(),
+        pcName: item.pcName,
+        message: '🛑 Operator nag-cancel sa download.',
+        type: 'info'
+      });
+    } catch {}
+  }
+
+  async cancelAllDownloads() {
+    this.isCancellingDownload = true;
+    try {
+      const active = this.downloadList.filter((d) => d.status === 'downloading' || d.status === 'queued');
+      const uniqueReqIds = Array.from(new Set(active.map((d) => d.reqId).filter(Boolean))) as string[];
+
+      if (uniqueReqIds.length > 0) {
+        for (const reqId of uniqueReqIds) {
+          await this.adminState.cancelRemoteDownload({ targetPcId: 'all', reqId });
+        }
+      } else {
+        await this.adminState.cancelRemoteDownload({
+          targetPcId: 'all',
+          reqId: this.lastDispatchedReqId || undefined
+        });
+      }
+
+      for (const item of active) {
+        this.stationDownloads[item.pcId] = {
+          ...item,
+          status: 'cancelled',
+          error: 'Gi-cancel sa Admin'
+        };
+      }
+      this.statusNotice = '🛑 Gi-cancel na ang tanang aktibong download sa mga PC.';
+      this.noticeType = 'warn';
+      this.consoleLogs.unshift({
+        timestamp: new Date(),
+        pcName: 'FLEET DISPATCHER',
+        message: '🛑 Operator nag-cancel sa tanang aktibong download.',
+        type: 'info'
+      });
+    } finally {
+      this.isCancellingDownload = false;
+    }
+  }
+
+  clearDownloadCards() {
+    this.stationDownloads = {};
   }
 
   private async syncDownloadedItemToLauncher() {
