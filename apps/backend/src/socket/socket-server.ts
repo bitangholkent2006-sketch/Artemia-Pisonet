@@ -24,6 +24,47 @@ export interface AuthenticatedSocket extends Socket {
 let io: SocketIOServer | null = null;
 const autoOtaCooldown = new Map<string, number>();
 
+// Local LAN Party Voice Chat & Intercom State
+interface VoiceMember {
+  socketId: string;
+  pcId: string;
+  pcName: string;
+  roomId: string;
+  isMuted: boolean;
+  isDeafened: boolean;
+  isTalking: boolean;
+  joinedAt: number;
+}
+
+const DEFAULT_VOICE_ROOMS = [
+  { id: 'lobby', name: '🔊 Shop Lobby', description: 'General All-PC Chat', maxSlots: 20 },
+  { id: 'squad-1', name: '⚔️ Squad 1 (Team Alpha)', description: 'Party / Competitive Match', maxSlots: 5 },
+  { id: 'squad-2', name: '🔥 Squad 2 (Team Bravo)', description: 'Party / Competitive Match', maxSlots: 5 },
+  { id: 'squad-3', name: '⚡ Squad 3 (Team Charlie)', description: 'Party / Casual Match', maxSlots: 5 },
+  { id: 'duo-1', name: '👥 Duo Room 1', description: '2-Player Private Duo', maxSlots: 2 },
+  { id: 'duo-2', name: '👥 Duo Room 2', description: '2-Player Private Duo', maxSlots: 2 }
+];
+
+const activeVoiceRooms = new Map<string, Map<string, VoiceMember>>();
+
+function getVoiceRoomsSummary() {
+  return DEFAULT_VOICE_ROOMS.map(def => {
+    const roomMembersMap = activeVoiceRooms.get(def.id);
+    const members = roomMembersMap ? Array.from(roomMembersMap.values()) : [];
+    return {
+      ...def,
+      memberCount: members.length,
+      members: members.map(m => ({
+        pcId: m.pcId,
+        pcName: m.pcName,
+        isMuted: m.isMuted,
+        isDeafened: m.isDeafened,
+        isTalking: m.isTalking
+      }))
+    };
+  });
+}
+
 function getLatestClientVersion(): string {
   return getLatestReleaseInfo().version;
 }
@@ -712,6 +753,121 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.to('staff').emit('maintenance:fps-boost:result', payload);
     });
 
+    // -----------------------------------------------------------------
+    // LOCAL LAN PARTY VOICE COMMS & SHOP INTERCOM RELAYS
+    // -----------------------------------------------------------------
+    authSocket.on('voice:get-rooms', (callback?: (res: any) => void) => {
+      const summary = getVoiceRoomsSummary();
+      if (typeof callback === 'function') {
+        callback({ rooms: summary });
+      } else {
+        authSocket.emit('voice:rooms-status', { rooms: summary });
+      }
+    });
+
+    authSocket.on('voice:join', (payload: { roomId: string; pcId: string; pcName: string; isMuted?: boolean; isDeafened?: boolean }) => {
+      if (!payload?.roomId || !payload?.pcId) return;
+      const rId = payload.roomId.toLowerCase();
+
+      // Leave any existing voice rooms first
+      for (const [existingRoomId, membersMap] of activeVoiceRooms.entries()) {
+        if (membersMap.has(authSocket.id)) {
+          membersMap.delete(authSocket.id);
+          authSocket.leave(`voice:${existingRoomId}`);
+          io?.to(`voice:${existingRoomId}`).emit('voice:members-updated', {
+            roomId: existingRoomId,
+            members: Array.from(membersMap.values())
+          });
+        }
+      }
+
+      if (!activeVoiceRooms.has(rId)) {
+        activeVoiceRooms.set(rId, new Map());
+      }
+      const roomMap = activeVoiceRooms.get(rId)!;
+      const newMember: VoiceMember = {
+        socketId: authSocket.id,
+        pcId: payload.pcId,
+        pcName: payload.pcName || payload.pcId,
+        roomId: rId,
+        isMuted: !!payload.isMuted,
+        isDeafened: !!payload.isDeafened,
+        isTalking: false,
+        joinedAt: Date.now()
+      };
+      roomMap.set(authSocket.id, newMember);
+      authSocket.join(`voice:${rId}`);
+
+      const membersList = Array.from(roomMap.values());
+      io?.to(`voice:${rId}`).emit('voice:members-updated', {
+        roomId: rId,
+        members: membersList
+      });
+      io?.emit('voice:rooms-status', { rooms: getVoiceRoomsSummary() });
+    });
+
+    authSocket.on('voice:leave', () => {
+      for (const [existingRoomId, membersMap] of activeVoiceRooms.entries()) {
+        if (membersMap.has(authSocket.id)) {
+          membersMap.delete(authSocket.id);
+          authSocket.leave(`voice:${existingRoomId}`);
+          io?.to(`voice:${existingRoomId}`).emit('voice:members-updated', {
+            roomId: existingRoomId,
+            members: Array.from(membersMap.values())
+          });
+        }
+      }
+      io?.emit('voice:rooms-status', { rooms: getVoiceRoomsSummary() });
+    });
+
+    authSocket.on('voice:audio-chunk', (payload: { roomId: string; pcId: string; pcName: string; data: any }) => {
+      if (!payload?.roomId || !payload?.data) return;
+      const rId = payload.roomId.toLowerCase();
+      // Broadcast to other peers in the same voice room
+      authSocket.to(`voice:${rId}`).emit('voice:audio-chunk', {
+        roomId: rId,
+        pcId: payload.pcId,
+        pcName: payload.pcName,
+        data: payload.data
+      });
+    });
+
+    authSocket.on('voice:member-state', (payload: { roomId: string; pcId: string; isMuted?: boolean; isDeafened?: boolean; isTalking?: boolean }) => {
+      if (!payload?.roomId) return;
+      const rId = payload.roomId.toLowerCase();
+      const roomMap = activeVoiceRooms.get(rId);
+      if (roomMap && roomMap.has(authSocket.id)) {
+        const m = roomMap.get(authSocket.id)!;
+        if (payload.isMuted !== undefined) m.isMuted = payload.isMuted;
+        if (payload.isDeafened !== undefined) m.isDeafened = payload.isDeafened;
+        if (payload.isTalking !== undefined) m.isTalking = payload.isTalking;
+        authSocket.to(`voice:${rId}`).emit('voice:member-state', {
+          roomId: rId,
+          pcId: m.pcId,
+          isMuted: m.isMuted,
+          isDeafened: m.isDeafened,
+          isTalking: m.isTalking
+        });
+      }
+    });
+
+    authSocket.on('voice:intercom:broadcast', (payload: { adminName?: string; data: any }) => {
+      io?.emit('voice:intercom-audio', {
+        from: payload?.adminName || 'Admin Operator',
+        data: payload?.data,
+        isBroadcast: true
+      });
+    });
+
+    authSocket.on('voice:intercom:target', (payload: { targetPcId: string; adminName?: string; data: any }) => {
+      if (!payload?.targetPcId) return;
+      emitToPcTarget('voice:intercom-audio', {
+        from: payload?.adminName || 'Admin Operator',
+        data: payload?.data,
+        isBroadcast: false
+      }, payload.targetPcId);
+    });
+
     // Active Session Lease Renewal Heartbeat
     authSocket.on('session:heartbeat', async (data: { sessionId: string }) => {
       if (data?.sessionId) {
@@ -720,6 +876,18 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     authSocket.on('disconnect', () => {
+      // Clean up voice room membership on disconnect
+      for (const [existingRoomId, membersMap] of activeVoiceRooms.entries()) {
+        if (membersMap.has(authSocket.id)) {
+          membersMap.delete(authSocket.id);
+          io?.to(`voice:${existingRoomId}`).emit('voice:members-updated', {
+            roomId: existingRoomId,
+            members: Array.from(membersMap.values())
+          });
+        }
+      }
+      io?.emit('voice:rooms-status', { rooms: getVoiceRoomsSummary() });
+
       if (authSocket.data.explicitOffline) return;
       const targetPcId = authSocket.data.pcId || pcId;
       if (targetPcId && io) {

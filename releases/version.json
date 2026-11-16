@@ -1,9 +1,9 @@
 {
-  "version": "1.0.27",
+  "version": "1.0.28",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-16T11:35:00.000Z",
+  "releaseDate": "2026-11-16T11:50:00.000Z",
   "asarFileName": "app.asar",
-  "size": 425104,
-  "sha256": "2E6B9886524B0C5FB1AF99C6B3E50785CB636CAB91287A6A5EEF3426604B8C58",
-  "changelog": "Ultra-Smooth AnyDesk Remote Desktop Controller: 16 FPS high-speed streaming, sub-millisecond persistent RemoteInput worker, live mouse dragging, native mouse wheel scrolling, hardware keyboard passthrough, system and game shortcuts (Win+D, Win+E, Alt+Tab, TaskMgr, Volume, F1-F12)."
+  "size": 462104,
+  "sha256": "92C7EA83C23784D080BB1F35F4D94A2492A5F43FE62548E0BC6F309D7E36A74A",
+  "changelog": "Local LAN Squad Voice Comms & Shop Intercom: 100% offline peer voice chat without Discord, party channels (Shop Lobby, Squads 1-3, Duo rooms), open mic VAD & Push-To-Talk, glowing live speaking indicators, floating corner HUD, and Admin Walkie-Talkie Intercom broadcast."
 }

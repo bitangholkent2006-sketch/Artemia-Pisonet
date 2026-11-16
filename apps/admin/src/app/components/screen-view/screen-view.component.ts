@@ -227,6 +227,39 @@ export interface ClickRipple {
             </button>
           </div>
 
+          <!-- Shop & Station Intercom / Voice Broadcast -->
+          <div class="toolbar-group key-group intercom-group">
+            <span class="group-label">Voice Comms:</span>
+            <button
+              type="button"
+              class="tool-btn intercom-btn"
+              [ngClass]="{'transmitting': isIntercomTransmitting && intercomTargetMode === 'station'}"
+              (mousedown)="startIntercom('station')"
+              (mouseup)="stopIntercom()"
+              (mouseleave)="stopIntercom()"
+              (touchstart)="startIntercom('station')"
+              (touchend)="stopIntercom()"
+              title="Pindota ug hupti aron makigsulti direkta sa headset/speaker sa {{ selectedPc.name }}"
+            >
+              <span>🎙️</span>
+              <span>{{ isIntercomTransmitting && intercomTargetMode === 'station' ? 'TRANSMITTING...' : 'Hold to Talk (Station)' }}</span>
+            </button>
+            <button
+              type="button"
+              class="tool-btn intercom-btn shop-broadcast"
+              [ngClass]="{'transmitting': isIntercomTransmitting && intercomTargetMode === 'shop'}"
+              (mousedown)="startIntercom('shop')"
+              (mouseup)="stopIntercom()"
+              (mouseleave)="stopIntercom()"
+              (touchstart)="startIntercom('shop')"
+              (touchend)="stopIntercom()"
+              title="Pindota ug hupti aron mag-broadcast sa imong tingog sa TANANG PC sa pisonet"
+            >
+              <span>📢</span>
+              <span>{{ isIntercomTransmitting && intercomTargetMode === 'shop' ? 'BROADCASTING...' : 'Hold to Broadcast (Shop)' }}</span>
+            </button>
+          </div>
+
           <!-- Mobile Virtual Keyboard Input Strip -->
           <div class="mobile-text-strip" *ngIf="showTextBar">
             <input
@@ -816,6 +849,23 @@ export interface ClickRipple {
       background: #ef4444;
       color: #fff;
     }
+    .intercom-btn {
+      background: rgba(15, 23, 42, 0.9);
+      border-color: #3b82f6;
+      color: #93c5fd;
+      user-select: none;
+    }
+    .intercom-btn.shop-broadcast {
+      border-color: #f59e0b;
+      color: #fcd34d;
+    }
+    .intercom-btn.transmitting {
+      background: #ef4444 !important;
+      border-color: #f87171 !important;
+      color: #fff !important;
+      box-shadow: 0 0 16px rgba(239, 68, 68, 0.8) !important;
+      animation: pulseGlow 0.6s infinite alternate;
+    }
     .mobile-text-strip {
       display: flex;
       gap: 8px;
@@ -1022,6 +1072,13 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   private touchStartY = 0;
   private touchHasDragged = false;
 
+  // Intercom Walkie-Talkie & Broadcast State
+  isIntercomTransmitting = false;
+  intercomTargetMode: 'station' | 'shop' = 'station';
+  private intercomStream: MediaStream | null = null;
+  private intercomCtx: AudioContext | null = null;
+  private intercomProcessor: ScriptProcessorNode | null = null;
+
   // Bound window capture listener to intercept physical keys
   private boundWindowKeyDown = (e: KeyboardEvent) => this.onGlobalWindowKeyDown(e);
 
@@ -1151,6 +1208,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   ngOnDestroy() {
+    this.stopIntercom();
     this.sub?.unsubscribe();
     if (this.streamSub) {
       this.streamSub();
@@ -1805,5 +1863,88 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       type: 'key',
       key: normalizedKey
     });
+  }
+
+  // Admin Intercom Walkie-Talkie & Broadcast
+  async startIntercom(mode: 'station' | 'shop') {
+    if (this.isIntercomTransmitting) return;
+    if (mode === 'station' && !this.selectedPc) return;
+
+    this.intercomTargetMode = mode;
+    this.isIntercomTransmitting = true;
+    this.lastActionMessage = mode === 'shop'
+      ? '📢 Broadcasting voice to ALL PCs in the shop...'
+      : `🎙️ Speaking directly to ${this.selectedPc?.name}...`;
+
+    try {
+      this.intercomStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+      });
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      this.intercomCtx = new AudioCtxClass();
+      const source = this.intercomCtx.createMediaStreamSource(this.intercomStream);
+      this.intercomProcessor = this.intercomCtx.createScriptProcessor(2048, 1, 1);
+
+      this.intercomProcessor.onaudioprocess = (e) => {
+        if (!this.isIntercomTransmitting) return;
+        const inputData = e.inputBuffer.getChannelData(0);
+        const inputRate = e.inputBuffer.sampleRate;
+        const int16Array = this.downsampleToInt16(inputData, inputRate, 16000);
+
+        if (this.intercomTargetMode === 'shop') {
+          this.adminState.broadcastIntercom(int16Array.buffer);
+        } else if (this.selectedPc) {
+          this.adminState.targetIntercom(this.selectedPc.id, int16Array.buffer);
+        }
+      };
+
+      source.connect(this.intercomProcessor);
+      const silentGain = this.intercomCtx.createGain();
+      silentGain.gain.value = 0;
+      this.intercomProcessor.connect(silentGain);
+      silentGain.connect(this.intercomCtx.destination);
+    } catch (err: any) {
+      console.warn('[Intercom] Mic capture error:', err);
+      this.stopIntercom();
+      this.lastActionMessage = `❌ Mic unavailable: ${err?.message}`;
+    }
+  }
+
+  stopIntercom() {
+    if (!this.isIntercomTransmitting) return;
+    this.isIntercomTransmitting = false;
+    if (this.intercomStream) {
+      this.intercomStream.getTracks().forEach(t => t.stop());
+      this.intercomStream = null;
+    }
+    if (this.intercomProcessor) {
+      this.intercomProcessor.disconnect();
+      this.intercomProcessor = null;
+    }
+    if (this.intercomCtx && this.intercomCtx.state !== 'closed') {
+      this.intercomCtx.close().catch(() => {});
+      this.intercomCtx = null;
+    }
+    this.lastActionMessage = '🎙️ Intercom ended.';
+  }
+
+  private downsampleToInt16(input: Float32Array, inputRate: number, targetRate: number = 16000): Int16Array {
+    if (inputRate === targetRate) {
+      const output = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        const s = Math.max(-1, Math.min(1, input[i]));
+        output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      return output;
+    }
+    const ratio = inputRate / targetRate;
+    const newLength = Math.round(input.length / ratio);
+    const result = new Int16Array(newLength);
+    for (let i = 0; i < newLength; i++) {
+      const idx = Math.min(input.length - 1, Math.round(i * ratio));
+      const s = Math.max(-1, Math.min(1, input[idx]));
+      result[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return result;
   }
 }

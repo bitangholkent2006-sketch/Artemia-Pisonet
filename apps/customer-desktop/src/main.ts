@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { VoiceCommsService, VoiceRoom, VoiceMember } from './voice-comms';
 
 // Safe Electron Desktop Bridge Definition
 interface WindowWithDesktop extends Window {
@@ -70,7 +71,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.27';
+const CLIENT_AGENT_VERSION = '1.0.28';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -130,6 +131,11 @@ class StationMaintenanceAgent {
   private isBoostingFps = false;
   private isUpdatingClient = false;
   private lastOtaTriggerAt = 0;
+
+  // Local LAN Party Voice Comms & Shop Intercom
+  public voiceComms: VoiceCommsService = new VoiceCommsService();
+  private isVoiceModalOpen: boolean = false;
+  private intercomTimeout: any = null;
 
   // Game Launcher & Shop Theme State
   private launcherConfig: any = {
@@ -770,6 +776,7 @@ class StationMaintenanceAgent {
           macAddress: this.macAddress
         }).catch(() => {});
         this.logMessage(`Connected to Artemia Fleet Server (${this.apiBase})`);
+        this.voiceComms.init(this.socket, activeId, this.pcName);
         this.checkInitialStatus();
       });
 
@@ -782,6 +789,7 @@ class StationMaintenanceAgent {
           this.pcId = data.pcId.toLowerCase();
           if (data.name) this.pcName = data.name.trim();
           if (data.identifier) this.identifier = data.identifier;
+          this.voiceComms.updateStationIdentity(this.dbPcId || this.pcId, this.pcName);
           localStorage.setItem('artemia_station_id', this.dbPcId);
           if (desktopWindow.pisonetDesktop?.saveStationIdentity) {
             desktopWindow.pisonetDesktop.saveStationIdentity({ stationId: this.dbPcId, name: this.pcName }).catch(() => {});
@@ -2243,6 +2251,301 @@ class StationMaintenanceAgent {
           transform: translateY(-2px); box-shadow: 0 6px 20px rgba(37, 99, 235, 0.6);
         }
 
+        /* LAN SQUAD VOICE COMMS & SHOP INTERCOM STYLES */
+        .launcher-voice-btn {
+          display: inline-flex; align-items: center; gap: 8px;
+          background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.3);
+          color: #e0f2fe; padding: 6px 14px; border-radius: 10px;
+          font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: all 0.2s ease;
+          user-select: none;
+        }
+        .launcher-voice-btn:hover {
+          background: rgba(30, 41, 59, 0.9); border-color: #38bdf8;
+          box-shadow: 0 0 14px rgba(56, 189, 248, 0.35); transform: translateY(-1px);
+        }
+        .launcher-voice-btn.in-room {
+          border-color: #10b981; background: rgba(16, 185, 129, 0.15);
+          box-shadow: 0 0 16px rgba(16, 185, 129, 0.3);
+        }
+        .launcher-voice-btn.speaking {
+          border-color: #34d399; background: rgba(16, 185, 129, 0.3);
+          box-shadow: 0 0 22px rgba(16, 185, 129, 0.6);
+          animation: voiceBtnPulse 0.5s infinite alternate;
+        }
+        @keyframes voiceBtnPulse {
+          from { transform: scale(1); } to { transform: scale(1.04); }
+        }
+        .voice-status-badge {
+          padding: 2px 8px; border-radius: 9999px; font-size: 0.72rem; font-weight: 800;
+        }
+        .voice-status-badge.off {
+          background: #334155; color: #94a3b8;
+        }
+        .voice-status-badge.on {
+          background: #10b981; color: #064e3b;
+        }
+
+        /* VOICE COMMS MODAL */
+        .voice-modal-overlay {
+          position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 100005;
+          background: rgba(3, 7, 18, 0.85); backdrop-filter: blur(14px);
+          display: none; align-items: center; justify-content: center; padding: 24px;
+          animation: fadeIn 0.2s ease-out;
+        }
+        .voice-modal-overlay.visible { display: flex; }
+        .voice-modal-card {
+          background: linear-gradient(145deg, #0b1120 0%, #0f172a 60%, #1e1b4b 100%);
+          border: 1px solid rgba(56, 189, 248, 0.35);
+          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), 0 0 40px rgba(56, 189, 248, 0.2);
+          border-radius: 20px; width: 780px; max-width: 95vw; overflow: hidden;
+          display: flex; flex-direction: column; max-height: 85vh;
+        }
+        .voice-modal-header {
+          padding: 18px 24px; background: rgba(15, 23, 42, 0.9);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          display: flex; justify-content: space-between; align-items: center;
+        }
+        .voice-modal-brand {
+          display: flex; align-items: center; gap: 12px;
+        }
+        .voice-modal-icon { font-size: 1.8rem; }
+        .voice-modal-title {
+          font-size: 1.15rem; font-weight: 800; color: #f8fafc; letter-spacing: 0.03em;
+        }
+        .voice-modal-sub {
+          font-size: 0.78rem; color: #94a3b8;
+        }
+        .voice-modal-close-btn {
+          background: #1e293b; border: 1px solid #334155; color: #cbd5e1;
+          width: 32px; height: 32px; border-radius: 8px; font-weight: 700;
+          cursor: pointer; display: flex; align-items: center; justify-content: center;
+          transition: all 0.15s;
+        }
+        .voice-modal-close-btn:hover { background: #ef4444; color: #fff; border-color: #ef4444; }
+
+        /* ROOM SELECTION */
+        .voice-room-selector {
+          padding: 24px; overflow-y: auto; flex: 1;
+        }
+        .voice-section-title {
+          font-size: 0.85rem; font-weight: 700; text-transform: uppercase;
+          color: #64748b; margin-bottom: 14px; letter-spacing: 0.04em;
+        }
+        .voice-rooms-grid {
+          display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+          gap: 12px;
+        }
+        .voice-room-card {
+          background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px; padding: 14px; cursor: pointer; transition: all 0.2s ease;
+          display: flex; flex-direction: column; justify-content: space-between; gap: 10px;
+        }
+        .voice-room-card:hover {
+          background: rgba(30, 41, 59, 0.9); border-color: #38bdf8;
+          box-shadow: 0 4px 18px rgba(56, 189, 248, 0.25); transform: translateY(-2px);
+        }
+        .room-card-top {
+          display: flex; justify-content: space-between; align-items: flex-start;
+        }
+        .room-card-name {
+          font-size: 0.95rem; font-weight: 700; color: #f8fafc;
+        }
+        .room-card-desc {
+          font-size: 0.75rem; color: #94a3b8; margin-top: 4px;
+        }
+        .room-card-slots {
+          display: inline-flex; align-items: center; gap: 4px;
+          background: rgba(15, 23, 42, 0.8); padding: 3px 8px; border-radius: 6px;
+          font-size: 0.72rem; font-weight: 700; color: #38bdf8;
+        }
+        .room-members-mini-list {
+          font-size: 0.75rem; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .btn-join-room {
+          background: #0284c7; color: #fff; border: none; padding: 6px 12px;
+          border-radius: 8px; font-size: 0.8rem; font-weight: 700; cursor: pointer;
+          transition: all 0.15s; width: 100%; text-align: center;
+        }
+        .btn-join-room:hover { background: #0369a1; }
+
+        /* ACTIVE STAGE */
+        .voice-active-stage {
+          display: flex; flex-direction: column; flex: 1; overflow: hidden;
+        }
+        .active-channel-banner {
+          padding: 14px 24px; background: rgba(16, 185, 129, 0.12);
+          border-bottom: 1px solid rgba(16, 185, 129, 0.25);
+          display: flex; justify-content: space-between; align-items: center;
+        }
+        .active-channel-left {
+          display: flex; align-items: center; gap: 10px;
+        }
+        .active-channel-name {
+          font-size: 1rem; font-weight: 800; color: #34d399;
+        }
+        .active-channel-count {
+          font-size: 0.75rem; color: #a7f3d0;
+        }
+        .btn-voice-leave {
+          background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #fca5a5;
+          padding: 6px 14px; border-radius: 8px; font-size: 0.8rem; font-weight: 700;
+          cursor: pointer; transition: all 0.2s;
+        }
+        .btn-voice-leave:hover { background: #ef4444; color: #fff; }
+
+        .voice-members-grid {
+          padding: 20px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+          gap: 14px; overflow-y: auto; flex: 1; align-content: start;
+        }
+        .voice-member-card {
+          background: rgba(15, 23, 42, 0.7); border: 2px solid rgba(255, 255, 255, 0.08);
+          border-radius: 14px; padding: 14px 10px; display: flex; flex-direction: column;
+          align-items: center; gap: 8px; text-align: center; transition: all 0.15s ease;
+          position: relative;
+        }
+        .voice-member-card.is-self {
+          background: rgba(30, 41, 59, 0.8);
+        }
+        .voice-member-card.is-talking {
+          border-color: #10b981;
+          box-shadow: 0 0 20px rgba(16, 185, 129, 0.5), inset 0 0 15px rgba(16, 185, 129, 0.2);
+          transform: translateY(-2px);
+        }
+        .member-avatar {
+          width: 52px; height: 52px; border-radius: 50%;
+          background: #1e293b; border: 2px solid #334155;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 1.5rem; transition: all 0.2s;
+        }
+        .voice-member-card.is-talking .member-avatar {
+          border-color: #10b981; box-shadow: 0 0 15px #10b981;
+        }
+        .member-name {
+          font-size: 0.84rem; font-weight: 700; color: #f8fafc;
+          max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .member-status-icons {
+          display: flex; gap: 4px; font-size: 0.75rem;
+        }
+
+        /* CONTROLS BAR */
+        .voice-controls-bar {
+          background: #090d16; border-top: 1px solid rgba(255, 255, 255, 0.08);
+          padding: 14px 24px; display: flex; align-items: center; justify-content: space-between;
+          flex-wrap: wrap; gap: 12px;
+        }
+        .voice-ctrl-btn {
+          display: inline-flex; align-items: center; gap: 8px;
+          background: #1e293b; border: 1px solid #334155; color: #cbd5e1;
+          padding: 8px 16px; border-radius: 10px; font-size: 0.82rem; font-weight: 700;
+          cursor: pointer; transition: all 0.15s;
+        }
+        .voice-ctrl-btn:hover { background: #334155; color: #fff; }
+        .voice-ctrl-btn.active-muted {
+          background: rgba(239, 68, 68, 0.25); border-color: #ef4444; color: #fca5a5;
+        }
+        .voice-ctrl-btn.active-deafened {
+          background: rgba(239, 68, 68, 0.35); border-color: #ef4444; color: #fca5a5;
+        }
+        .voice-mode-toggle {
+          display: flex; align-items: center; gap: 6px; background: #0f172a;
+          padding: 4px; border-radius: 10px; border: 1px solid #1e293b;
+        }
+        .ctrl-small-label {
+          font-size: 0.72rem; color: #64748b; font-weight: 700; text-transform: uppercase; margin-left: 6px;
+        }
+        .mode-chip {
+          background: transparent; border: none; color: #94a3b8; padding: 6px 12px;
+          border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: all 0.15s;
+        }
+        .mode-chip.active {
+          background: #0284c7; color: #fff;
+        }
+        .btn-ptt-hold {
+          background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+          color: #fff; border: none; padding: 8px 20px; border-radius: 10px;
+          font-size: 0.85rem; font-weight: 800; letter-spacing: 0.05em; cursor: pointer;
+          box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4); user-select: none;
+        }
+        .btn-ptt-hold:active {
+          transform: scale(0.96); background: #047857; box-shadow: 0 0 20px rgba(16, 185, 129, 0.8);
+        }
+        .voice-vol-slider-wrap {
+          display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: #94a3b8;
+        }
+        .voice-vol-slider {
+          width: 80px; accent-color: #38bdf8; cursor: pointer;
+        }
+
+        /* FLOATING CORNER HUD (WHEN PLAYING FULL SCREEN GAMES) */
+        .voice-floating-hud {
+          position: fixed; top: 76px; right: 24px; z-index: 99998;
+          background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(10px);
+          border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px;
+          padding: 8px 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+          display: flex; flex-direction: column; gap: 6px; min-width: 170px;
+        }
+        .hud-drag-handle {
+          display: flex; align-items: center; justify-content: space-between;
+          font-size: 0.75rem; font-weight: 700; color: #38bdf8;
+        }
+        .hud-live-dot {
+          width: 6px; height: 6px; border-radius: 50%; background: #10b981;
+          box-shadow: 0 0 6px #10b981; margin-right: 6px;
+        }
+        .hud-mini-btn {
+          background: transparent; border: none; color: #94a3b8; cursor: pointer; font-size: 0.8rem;
+        }
+        .hud-mini-btn:hover { color: #fff; }
+        .hud-speakers-list {
+          display: flex; flex-direction: column; gap: 4px;
+        }
+        .hud-speaker-item {
+          display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: #e2e8f0;
+          padding: 3px 6px; border-radius: 6px; background: rgba(30, 41, 59, 0.5);
+          transition: all 0.15s;
+        }
+        .hud-speaker-item.talking {
+          background: rgba(16, 185, 129, 0.25); color: #34d399; font-weight: 700;
+          box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+        }
+
+        /* SHOP INTERCOM ALERT BANNER */
+        .intercom-alert-banner {
+          position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+          z-index: 100006; background: linear-gradient(135deg, #090d16 0%, #1e1b4b 100%);
+          border: 2px solid #38bdf8; box-shadow: 0 0 30px rgba(56, 189, 248, 0.5);
+          border-radius: 16px; padding: 12px 24px; animation: slideDown 0.3s ease-out;
+        }
+        @keyframes slideDown {
+          from { transform: translate(-50%, -40px); opacity: 0; }
+          to { transform: translate(-50%, 0); opacity: 1; }
+        }
+        .intercom-alert-content {
+          display: flex; align-items: center; gap: 14px;
+        }
+        .intercom-alert-icon { font-size: 1.8rem; animation: pulseGlow 1s infinite; }
+        .intercom-alert-title {
+          font-size: 0.95rem; font-weight: 800; color: #38bdf8; letter-spacing: 0.04em;
+        }
+        .intercom-alert-msg {
+          font-size: 0.82rem; color: #e2e8f0;
+        }
+        .intercom-wave-anim {
+          display: flex; align-items: center; gap: 3px; height: 18px;
+        }
+        .intercom-wave-anim span {
+          width: 3px; height: 100%; background: #38bdf8; border-radius: 2px;
+          animation: waveBar 0.8s ease-in-out infinite alternate;
+        }
+        .intercom-wave-anim span:nth-child(2) { animation-delay: 0.2s; }
+        .intercom-wave-anim span:nth-child(3) { animation-delay: 0.4s; }
+        .intercom-wave-anim span:nth-child(4) { animation-delay: 0.1s; }
+        .intercom-wave-anim span:nth-child(5) { animation-delay: 0.3s; }
+        @keyframes waveBar {
+          from { height: 4px; } to { height: 18px; }
+        }
+
         /* FLOATING TOAST NOTIFICATION */
         .toast-notification {
           position: fixed; bottom: -80px; right: 28px; z-index: 100002;
@@ -2435,6 +2738,13 @@ class StationMaintenanceAgent {
           </div>
 
           <div class="header-actions">
+            <!-- SQUAD VOICE COMMS BUTTON -->
+            <button type="button" class="launcher-voice-btn" id="btn-launcher-voice" title="Squad Voice Comms (Pakigsulti sa ubang PC nga walay Discord)">
+              <span class="voice-btn-mic" id="voice-header-mic">🎙️</span>
+              <span id="voice-header-label" class="voice-header-label">Squad Voice</span>
+              <span id="voice-header-badge" class="voice-status-badge off">OFF</span>
+            </button>
+
             <div class="desktop-vol-box" title="System Speaker Volume">
               <span>🔊</span>
               <input id="launcher-vol-slider" type="range" min="0" max="100" value="60" class="desktop-vol-slider" />
@@ -2450,6 +2760,97 @@ class StationMaintenanceAgent {
             </button>
           </div>
         </header>
+
+        <!-- FLOATING IN-GAME VOICE COMMS HUD (CORNER MINI DOCK) -->
+        <div id="voice-floating-hud" class="voice-floating-hud" style="display:none;">
+          <div class="hud-drag-handle">
+            <span class="hud-live-dot"></span>
+            <span id="hud-room-title">Squad Comms</span>
+            <button type="button" id="btn-hud-expand" class="hud-mini-btn" title="I-abli ang Squad Voice Panel">⛶</button>
+          </div>
+          <div id="hud-speakers-list" class="hud-speakers-list"></div>
+        </div>
+
+        <!-- VOICE COMMS MODAL DIALOG -->
+        <div id="voice-modal" class="voice-modal-overlay" style="display:none;">
+          <div class="voice-modal-card">
+            <div class="voice-modal-header">
+              <div class="voice-modal-brand">
+                <span class="voice-modal-icon">🎙️</span>
+                <div>
+                  <div class="voice-modal-title">ARTEMIA SQUAD VOICE COMMS</div>
+                  <div class="voice-modal-sub">Local LAN Party Chat • Walay Discord o Internet nga gikinahanglan</div>
+                </div>
+              </div>
+              <button type="button" id="btn-voice-modal-close" class="voice-modal-close-btn">✕</button>
+            </div>
+
+            <!-- ROOM SELECTOR (WHEN NOT IN ROOM) -->
+            <div id="voice-room-selector" class="voice-room-selector">
+              <div class="voice-section-title">Pili og Party Channel / Squad Room:</div>
+              <div id="voice-rooms-grid" class="voice-rooms-grid"></div>
+            </div>
+
+            <!-- ACTIVE STAGE (WHEN CONNECTED TO ROOM) -->
+            <div id="voice-active-stage" class="voice-active-stage" style="display:none;">
+              <div class="active-channel-banner">
+                <div class="active-channel-left">
+                  <span class="pulse-indicator live"></span>
+                  <div>
+                    <div id="active-channel-name" class="active-channel-name">⚔️ Squad 1 (Team Alpha)</div>
+                    <div id="active-channel-count" class="active-channel-count">0 Players Online</div>
+                  </div>
+                </div>
+                <button type="button" id="btn-voice-leave" class="btn-voice-leave">🔴 Biya sa Room</button>
+              </div>
+
+              <div class="voice-members-grid" id="voice-members-grid"></div>
+
+              <div class="voice-controls-bar">
+                <button type="button" id="btn-voice-mute" class="voice-ctrl-btn">
+                  <span class="ctrl-icon" id="voice-mute-icon">🎙️</span>
+                  <span id="voice-mute-label">Mic On</span>
+                </button>
+
+                <button type="button" id="btn-voice-deafen" class="voice-ctrl-btn">
+                  <span class="ctrl-icon" id="voice-deafen-icon">🎧</span>
+                  <span id="voice-deafen-label">Deafen</span>
+                </button>
+
+                <div class="voice-mode-toggle">
+                  <span class="ctrl-small-label">Mode:</span>
+                  <button type="button" id="btn-mode-vad" class="mode-chip active">🗣️ Open Mic</button>
+                  <button type="button" id="btn-mode-ptt" class="mode-chip">⌨️ Push to Talk (V)</button>
+                </div>
+
+                <button type="button" id="btn-voice-ptt-hold" class="btn-ptt-hold" style="display:none;">
+                  <span>🎙️</span>
+                  <span>HOLD TO TALK</span>
+                </button>
+
+                <div class="voice-vol-slider-wrap">
+                  <span>🔊</span>
+                  <input id="voice-vol-slider" type="range" min="0" max="100" value="85" class="voice-vol-slider" title="Squad Voice Volume" />
+                  <span id="voice-vol-label">85%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SHOP INTERCOM ALERT BANNER -->
+        <div id="intercom-banner" class="intercom-alert-banner" style="display:none;">
+          <div class="intercom-alert-content">
+            <span class="intercom-alert-icon">📢</span>
+            <div>
+              <div class="intercom-alert-title">PAHIBALO GIKAN SA ADMIN OPERATOR</div>
+              <div id="intercom-alert-msg" class="intercom-alert-msg">Live voice broadcast sa pisonet...</div>
+            </div>
+            <div class="intercom-wave-anim">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+          </div>
+        </div>
 
         <div class="launcher-desktop-body">
           <aside class="launcher-sidebar">
@@ -2761,6 +3162,286 @@ class StationMaintenanceAgent {
         searchInput?.select();
       }
     });
+
+    this.setupVoiceCommsListeners();
+  }
+
+  private setupVoiceCommsListeners() {
+    this.voiceComms.onStateChange = () => {
+      this.renderVoiceCommsUi();
+    };
+
+    this.voiceComms.onIntercomAlert = (info) => {
+      this.showIntercomAlert(info);
+    };
+
+    // Open/Close Voice Modal
+    const voiceModal = document.getElementById('voice-modal');
+    document.getElementById('btn-launcher-voice')?.addEventListener('click', () => {
+      if (voiceModal) {
+        this.isVoiceModalOpen = !this.isVoiceModalOpen;
+        voiceModal.classList.toggle('visible', this.isVoiceModalOpen);
+        if (this.isVoiceModalOpen) {
+          this.socket?.emit('voice:get-rooms');
+          this.renderVoiceCommsUi();
+        }
+      }
+    });
+
+    document.getElementById('btn-hud-expand')?.addEventListener('click', () => {
+      if (voiceModal) {
+        this.isVoiceModalOpen = true;
+        voiceModal.classList.add('visible');
+        this.socket?.emit('voice:get-rooms');
+        this.renderVoiceCommsUi();
+      }
+    });
+
+    document.getElementById('btn-voice-modal-close')?.addEventListener('click', () => {
+      if (voiceModal) {
+        this.isVoiceModalOpen = false;
+        voiceModal.classList.remove('visible');
+      }
+    });
+
+    // Mute & Deafen
+    document.getElementById('btn-voice-mute')?.addEventListener('click', () => {
+      this.voiceComms.toggleMute();
+      this.renderVoiceCommsUi();
+    });
+
+    document.getElementById('btn-voice-deafen')?.addEventListener('click', () => {
+      this.voiceComms.toggleDeafen();
+      this.renderVoiceCommsUi();
+    });
+
+    // Mode Switch
+    document.getElementById('btn-mode-vad')?.addEventListener('click', () => {
+      this.voiceComms.setVoiceMode('vad');
+      this.renderVoiceCommsUi();
+    });
+
+    document.getElementById('btn-mode-ptt')?.addEventListener('click', () => {
+      this.voiceComms.setVoiceMode('ptt');
+      this.renderVoiceCommsUi();
+    });
+
+    // PTT Hold Button
+    const btnPttHold = document.getElementById('btn-voice-ptt-hold');
+    if (btnPttHold) {
+      btnPttHold.addEventListener('mousedown', () => this.voiceComms.setPttState(true));
+      btnPttHold.addEventListener('mouseup', () => this.voiceComms.setPttState(false));
+      btnPttHold.addEventListener('mouseleave', () => this.voiceComms.setPttState(false));
+      btnPttHold.addEventListener('touchstart', (e) => { e.preventDefault(); this.voiceComms.setPttState(true); });
+      btnPttHold.addEventListener('touchend', (e) => { e.preventDefault(); this.voiceComms.setPttState(false); });
+    }
+
+    // Leave Room
+    document.getElementById('btn-voice-leave')?.addEventListener('click', () => {
+      this.voiceComms.leaveRoom();
+      this.renderVoiceCommsUi();
+    });
+
+    // Volume Slider
+    const volSlider = document.getElementById('voice-vol-slider') as HTMLInputElement | null;
+    const volLabel = document.getElementById('voice-vol-label');
+    volSlider?.addEventListener('input', () => {
+      const val = Number(volSlider.value);
+      if (volLabel) volLabel.innerText = `${val}%`;
+      this.voiceComms.setVolume(val);
+    });
+
+    // Room Selection Delegated Click
+    document.getElementById('voice-rooms-grid')?.addEventListener('click', (e) => {
+      const target = (e.target as HTMLElement).closest('[data-room-id]') as HTMLElement | null;
+      if (target) {
+        const roomId = target.getAttribute('data-room-id');
+        if (roomId) {
+          this.voiceComms.joinRoom(roomId);
+          this.renderVoiceCommsUi();
+        }
+      }
+    });
+
+    this.renderVoiceCommsUi();
+  }
+
+  public showIntercomAlert(info: { from: string; isBroadcast: boolean }) {
+    const banner = document.getElementById('intercom-banner');
+    const msg = document.getElementById('intercom-alert-msg');
+    if (banner) {
+      if (msg) {
+        msg.innerText = info.isBroadcast
+          ? `Nag-broadcast ang ${info.from} sa tanang PCs sa shop!`
+          : `Direktang nakigsulti ang ${info.from} sa imong PC!`;
+      }
+      banner.style.display = 'block';
+      if (this.intercomTimeout) clearTimeout(this.intercomTimeout);
+      this.intercomTimeout = setTimeout(() => {
+        banner.style.display = 'none';
+      }, 6000);
+    }
+  }
+
+  private renderVoiceCommsUi() {
+    const btnVoice = document.getElementById('btn-launcher-voice');
+    const headerLabel = document.getElementById('voice-header-label');
+    const headerBadge = document.getElementById('voice-header-badge');
+    const headerMic = document.getElementById('voice-header-mic');
+
+    const floatingHud = document.getElementById('voice-floating-hud');
+    const hudRoomTitle = document.getElementById('hud-room-title');
+    const hudSpeakersList = document.getElementById('hud-speakers-list');
+
+    const roomSelector = document.getElementById('voice-room-selector');
+    const activeStage = document.getElementById('voice-active-stage');
+    const activeChannelName = document.getElementById('active-channel-name');
+    const activeChannelCount = document.getElementById('active-channel-count');
+    const membersGrid = document.getElementById('voice-members-grid');
+
+    const muteBtn = document.getElementById('btn-voice-mute');
+    const muteLabel = document.getElementById('voice-mute-label');
+    const muteIcon = document.getElementById('voice-mute-icon');
+
+    const deafenBtn = document.getElementById('btn-voice-deafen');
+    const deafenLabel = document.getElementById('voice-deafen-label');
+    const deafenIcon = document.getElementById('voice-deafen-icon');
+
+    const modeVad = document.getElementById('btn-mode-vad');
+    const modePtt = document.getElementById('btn-mode-ptt');
+    const btnPttHold = document.getElementById('btn-voice-ptt-hold');
+
+    const inRoom = !!this.voiceComms.currentRoomId;
+    const hasAnySpeaking = this.voiceComms.speakingMembers.size > 0;
+
+    // 1. Header Button
+    if (btnVoice) {
+      if (inRoom) {
+        btnVoice.classList.add('in-room');
+        if (hasAnySpeaking) btnVoice.classList.add('speaking');
+        else btnVoice.classList.remove('speaking');
+
+        if (headerLabel) headerLabel.innerText = this.voiceComms.currentRoomName;
+        if (headerBadge) {
+          headerBadge.className = 'voice-status-badge on';
+          headerBadge.innerText = `${this.voiceComms.members.length} Online`;
+        }
+        if (headerMic) headerMic.innerText = this.voiceComms.isMuted ? '🔇' : '🎙️';
+      } else {
+        btnVoice.classList.remove('in-room', 'speaking');
+        if (headerLabel) headerLabel.innerText = 'Squad Voice';
+        if (headerBadge) {
+          headerBadge.className = 'voice-status-badge off';
+          headerBadge.innerText = 'OFF';
+        }
+        if (headerMic) headerMic.innerText = '🎙️';
+      }
+    }
+
+    // 2. Floating Mini-HUD (Visible in room even while playing games)
+    if (floatingHud) {
+      floatingHud.style.display = inRoom ? 'flex' : 'none';
+      if (inRoom) {
+        if (hudRoomTitle) hudRoomTitle.innerText = this.voiceComms.currentRoomName;
+        if (hudSpeakersList) {
+          hudSpeakersList.innerHTML = this.voiceComms.members.map(m => {
+            const isSpeaking = this.voiceComms.speakingMembers.has(m.pcId);
+            const isSelf = m.pcId === (this.dbPcId || this.pcId);
+            return `
+              <div class="hud-speaker-item ${isSpeaking ? 'talking' : ''}">
+                <span>${isSpeaking ? '🔊' : '🎮'}</span>
+                <span>${this.escapeHtml(m.pcName)}${isSelf ? ' (Ikaw)' : ''}</span>
+                ${m.isMuted ? '<span>🔇</span>' : ''}
+              </div>
+            `;
+          }).join('');
+        }
+      }
+    }
+
+    // 3. Modal Views
+    if (roomSelector && activeStage) {
+      if (inRoom) {
+        roomSelector.style.display = 'none';
+        activeStage.style.display = 'flex';
+
+        if (activeChannelName) activeChannelName.innerText = this.voiceComms.currentRoomName;
+        if (activeChannelCount) activeChannelCount.innerText = `${this.voiceComms.members.length} Player(s) Online`;
+
+        // Render Members
+        if (membersGrid) {
+          membersGrid.innerHTML = this.voiceComms.members.map(m => {
+            const isSpeaking = this.voiceComms.speakingMembers.has(m.pcId);
+            const isSelf = m.pcId === (this.dbPcId || this.pcId);
+            return `
+              <div class="voice-member-card ${isSelf ? 'is-self' : ''} ${isSpeaking ? 'is-talking' : ''}">
+                <div class="member-avatar">${isSpeaking ? '🗣️' : '🎮'}</div>
+                <div class="member-name" title="${this.escapeHtml(m.pcName)}">${this.escapeHtml(m.pcName)}${isSelf ? ' (Ikaw)' : ''}</div>
+                <div class="member-status-icons">
+                  ${m.isMuted ? '<span title="Muted">🔇</span>' : '<span title="Mic Live">🎙️</span>'}
+                  ${m.isDeafened ? '<span title="Deafened">🛑</span>' : ''}
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+
+        // Mute / Deafen Buttons
+        if (muteBtn && muteLabel && muteIcon) {
+          if (this.voiceComms.isMuted) {
+            muteBtn.classList.add('active-muted');
+            muteLabel.innerText = 'Unmute Mic';
+            muteIcon.innerText = '🔇';
+          } else {
+            muteBtn.classList.remove('active-muted');
+            muteLabel.innerText = 'Mute Mic';
+            muteIcon.innerText = '🎙️';
+          }
+        }
+
+        if (deafenBtn && deafenLabel && deafenIcon) {
+          if (this.voiceComms.isDeafened) {
+            deafenBtn.classList.add('active-deafened');
+            deafenLabel.innerText = 'Undeafen';
+            deafenIcon.innerText = '🛑';
+          } else {
+            deafenBtn.classList.remove('active-deafened');
+            deafenLabel.innerText = 'Deafen';
+            deafenIcon.innerText = '🎧';
+          }
+        }
+
+        // Mode Toggles
+        if (modeVad) modeVad.classList.toggle('active', this.voiceComms.voiceMode === 'vad');
+        if (modePtt) modePtt.classList.toggle('active', this.voiceComms.voiceMode === 'ptt');
+        if (btnPttHold) btnPttHold.style.display = this.voiceComms.voiceMode === 'ptt' ? 'inline-flex' : 'none';
+
+      } else {
+        roomSelector.style.display = 'block';
+        activeStage.style.display = 'none';
+
+        // Render Available Rooms Grid
+        const roomsGrid = document.getElementById('voice-rooms-grid');
+        if (roomsGrid) {
+          roomsGrid.innerHTML = this.voiceComms.rooms.map(r => {
+            const memberNames = (r.members || []).map(m => m.pcName).join(', ');
+            return `
+              <div class="voice-room-card" data-room-id="${r.id}">
+                <div class="room-card-top">
+                  <div>
+                    <div class="room-card-name">${this.escapeHtml(r.name)}</div>
+                    <div class="room-card-desc">${this.escapeHtml(r.description)}</div>
+                  </div>
+                  <div class="room-card-slots">👥 ${r.memberCount}/${r.maxSlots}</div>
+                </div>
+                <div class="room-members-mini-list">${memberNames ? 'Sulod: ' + this.escapeHtml(memberNames) : 'Walay tawo sa karon'}</div>
+                <button type="button" class="btn-join-room" data-room-id="${r.id}">Sulod sa Channel ➔</button>
+              </div>
+            `;
+          }).join('');
+        }
+      }
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage, screen, powerMonitor, powerSaveBlocker, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, desktopCapturer, Tray, Menu, nativeImage, screen, powerMonitor, powerSaveBlocker, shell, session } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -5116,6 +5116,25 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     logToFile('app.whenReady resolved, initializing UI and background agents...');
+    // Auto-grant microphone & media capture permissions for Party Voice Chat & Intercom
+    try {
+      session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+        const p = permission as string;
+        if (p === 'media' || p === 'microphone' || p === 'audioCapture') {
+          callback(true);
+          return;
+        }
+        callback(true);
+      });
+      session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+        const p = permission as string;
+        if (p === 'media' || p === 'microphone' || p === 'audioCapture') {
+          return true;
+        }
+        return true;
+      });
+    } catch {}
+
     // Prevent OS power-saving or timer suspension while PC is powered on
     try { powerSaveBlocker.start('prevent-app-suspension'); } catch {}
 

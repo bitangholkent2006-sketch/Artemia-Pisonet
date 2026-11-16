@@ -879,6 +879,33 @@ export class AdminStateService {
     return this.apiClient.onSocketEvent('maintenance:screen:stream-frame', callback);
   }
 
+  // Voice Comms & Intercom Relays
+  public broadcastIntercom(data: any, adminName?: string) {
+    this.apiClient.emitSocket('voice:intercom:broadcast', { adminName: adminName || 'Admin Operator', data });
+  }
+
+  public targetIntercom(targetPcId: string, data: any, adminName?: string) {
+    this.apiClient.emitSocket('voice:intercom:target', { targetPcId, adminName: adminName || 'Admin Operator', data });
+  }
+
+  public getVoiceRoomsStatus(): Promise<any> {
+    return new Promise((resolve) => {
+      this.apiClient.emitSocket('voice:get-rooms', {});
+      const cleanup = this.apiClient.onSocketEvent('voice:rooms-status', (res: any) => {
+        cleanup();
+        resolve(res?.rooms || []);
+      });
+      setTimeout(() => {
+        cleanup();
+        resolve([]);
+      }, 3000);
+    });
+  }
+
+  public onVoiceRoomsStatus(callback: (res: any) => void): () => void {
+    return this.apiClient.onSocketEvent('voice:rooms-status', callback);
+  }
+
   public sendRemoteInput(payload: {
     pcId: string;
     type: 'click' | 'dclick' | 'rclick' | 'move' | 'down' | 'up' | 'scroll' | 'key' | 'text';
