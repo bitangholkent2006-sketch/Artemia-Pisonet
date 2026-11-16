@@ -2256,12 +2256,19 @@ class StationMaintenanceAgent {
           display: inline-flex; align-items: center; gap: 8px;
           background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.3);
           color: #e0f2fe; padding: 6px 14px; border-radius: 10px;
-          font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: all 0.2s ease;
+          font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
           user-select: none;
         }
         .launcher-voice-btn:hover {
           background: rgba(30, 41, 59, 0.9); border-color: #38bdf8;
           box-shadow: 0 0 14px rgba(56, 189, 248, 0.35); transform: translateY(-1px);
+        }
+        .launcher-voice-btn:active {
+          transform: translateY(1px) scale(0.96);
+          background: rgba(56, 189, 248, 0.25);
+        }
+        .launcher-voice-btn * {
+          pointer-events: none;
         }
         .launcher-voice-btn.in-room {
           border-color: #10b981; background: rgba(16, 185, 129, 0.15);
@@ -2707,6 +2714,97 @@ class StationMaintenanceAgent {
         <div id="power-sub" class="power-sub">Ang kini nga computer gi-shutdown na sa operator.</div>
       </div>
 
+      <!-- FLOATING IN-GAME VOICE COMMS HUD (CORNER MINI DOCK) -->
+      <div id="voice-floating-hud" class="voice-floating-hud" style="display:none;">
+        <div class="hud-drag-handle">
+          <span class="hud-live-dot"></span>
+          <span id="hud-room-title">Squad Comms</span>
+          <button type="button" id="btn-hud-expand" class="hud-mini-btn" title="I-abli ang Squad Voice Panel">⛶</button>
+        </div>
+        <div id="hud-speakers-list" class="hud-speakers-list"></div>
+      </div>
+
+      <!-- VOICE COMMS MODAL DIALOG (TOP LEVEL OVERLAY) -->
+      <div id="voice-modal" class="voice-modal-overlay">
+        <div class="voice-modal-card">
+          <div class="voice-modal-header">
+            <div class="voice-modal-brand">
+              <span class="voice-modal-icon">🎙️</span>
+              <div>
+                <div class="voice-modal-title">ARTEMIA SQUAD VOICE COMMS</div>
+                <div class="voice-modal-sub">Local LAN Party Chat • Walay Discord o Internet nga gikinahanglan</div>
+              </div>
+            </div>
+            <button type="button" id="btn-voice-modal-close" class="voice-modal-close-btn">✕</button>
+          </div>
+
+          <!-- ROOM SELECTOR (WHEN NOT IN ROOM) -->
+          <div id="voice-room-selector" class="voice-room-selector">
+            <div class="voice-section-title">Pili og Party Channel / Squad Room:</div>
+            <div id="voice-rooms-grid" class="voice-rooms-grid"></div>
+          </div>
+
+          <!-- ACTIVE STAGE (WHEN CONNECTED TO ROOM) -->
+          <div id="voice-active-stage" class="voice-active-stage" style="display:none;">
+            <div class="active-channel-banner">
+              <div class="active-channel-left">
+                <span class="pulse-indicator live"></span>
+                <div>
+                  <div id="active-channel-name" class="active-channel-name">⚔️ Squad 1 (Team Alpha)</div>
+                  <div id="active-channel-count" class="active-channel-count">0 Players Online</div>
+                </div>
+              </div>
+              <button type="button" id="btn-voice-leave" class="btn-voice-leave">🔴 Biya sa Room</button>
+            </div>
+
+            <div class="voice-members-grid" id="voice-members-grid"></div>
+
+            <div class="voice-controls-bar">
+              <button type="button" id="btn-voice-mute" class="voice-ctrl-btn">
+                <span class="ctrl-icon" id="voice-mute-icon">🎙️</span>
+                <span id="voice-mute-label">Mic On</span>
+              </button>
+
+              <button type="button" id="btn-voice-deafen" class="voice-ctrl-btn">
+                <span class="ctrl-icon" id="voice-deafen-icon">🎧</span>
+                <span id="voice-deafen-label">Deafen</span>
+              </button>
+
+              <div class="voice-mode-toggle">
+                <span class="ctrl-small-label">Mode:</span>
+                <button type="button" id="btn-mode-vad" class="mode-chip active">🗣️ Open Mic</button>
+                <button type="button" id="btn-mode-ptt" class="mode-chip">⌨️ Push to Talk (V)</button>
+              </div>
+
+              <button type="button" id="btn-voice-ptt-hold" class="btn-ptt-hold" style="display:none;">
+                <span>🎙️</span>
+                <span>HOLD TO TALK</span>
+              </button>
+
+              <div class="voice-vol-slider-wrap">
+                <span>🔊</span>
+                <input id="voice-vol-slider" type="range" min="0" max="100" value="85" class="voice-vol-slider" title="Squad Voice Volume" />
+                <span id="voice-vol-label">85%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SHOP INTERCOM ALERT BANNER -->
+      <div id="intercom-banner" class="intercom-alert-banner" style="display:none;">
+        <div class="intercom-alert-content">
+          <span class="intercom-alert-icon">📢</span>
+          <div>
+            <div class="intercom-alert-title">PAHIBALO GIKAN SA ADMIN OPERATOR</div>
+            <div id="intercom-alert-msg" class="intercom-alert-msg">Live voice broadcast sa pisonet...</div>
+          </div>
+          <div class="intercom-wave-anim">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </div>
+
       <!-- CUSTOMER DESKTOP REPLACEMENT LAUNCHER SHELL -->
       <div id="launcher-shell" class="launcher-shell" style="display:flex;">
         <div id="launcher-wallpaper-bg" class="launcher-wallpaper-bg"></div>
@@ -2739,7 +2837,7 @@ class StationMaintenanceAgent {
 
           <div class="header-actions">
             <!-- SQUAD VOICE COMMS BUTTON -->
-            <button type="button" class="launcher-voice-btn" id="btn-launcher-voice" title="Squad Voice Comms (Pakigsulti sa ubang PC nga walay Discord)">
+            <button type="button" class="launcher-voice-btn" id="btn-launcher-voice" onclick="window.__toggleSquadVoice &amp;&amp; window.__toggleSquadVoice()" title="Squad Voice Comms (Pakigsulti sa ubang PC nga walay Discord)">
               <span class="voice-btn-mic" id="voice-header-mic">🎙️</span>
               <span id="voice-header-label" class="voice-header-label">Squad Voice</span>
               <span id="voice-header-badge" class="voice-status-badge off">OFF</span>
@@ -2760,97 +2858,6 @@ class StationMaintenanceAgent {
             </button>
           </div>
         </header>
-
-        <!-- FLOATING IN-GAME VOICE COMMS HUD (CORNER MINI DOCK) -->
-        <div id="voice-floating-hud" class="voice-floating-hud" style="display:none;">
-          <div class="hud-drag-handle">
-            <span class="hud-live-dot"></span>
-            <span id="hud-room-title">Squad Comms</span>
-            <button type="button" id="btn-hud-expand" class="hud-mini-btn" title="I-abli ang Squad Voice Panel">⛶</button>
-          </div>
-          <div id="hud-speakers-list" class="hud-speakers-list"></div>
-        </div>
-
-        <!-- VOICE COMMS MODAL DIALOG -->
-        <div id="voice-modal" class="voice-modal-overlay">
-          <div class="voice-modal-card">
-            <div class="voice-modal-header">
-              <div class="voice-modal-brand">
-                <span class="voice-modal-icon">🎙️</span>
-                <div>
-                  <div class="voice-modal-title">ARTEMIA SQUAD VOICE COMMS</div>
-                  <div class="voice-modal-sub">Local LAN Party Chat • Walay Discord o Internet nga gikinahanglan</div>
-                </div>
-              </div>
-              <button type="button" id="btn-voice-modal-close" class="voice-modal-close-btn">✕</button>
-            </div>
-
-            <!-- ROOM SELECTOR (WHEN NOT IN ROOM) -->
-            <div id="voice-room-selector" class="voice-room-selector">
-              <div class="voice-section-title">Pili og Party Channel / Squad Room:</div>
-              <div id="voice-rooms-grid" class="voice-rooms-grid"></div>
-            </div>
-
-            <!-- ACTIVE STAGE (WHEN CONNECTED TO ROOM) -->
-            <div id="voice-active-stage" class="voice-active-stage" style="display:none;">
-              <div class="active-channel-banner">
-                <div class="active-channel-left">
-                  <span class="pulse-indicator live"></span>
-                  <div>
-                    <div id="active-channel-name" class="active-channel-name">⚔️ Squad 1 (Team Alpha)</div>
-                    <div id="active-channel-count" class="active-channel-count">0 Players Online</div>
-                  </div>
-                </div>
-                <button type="button" id="btn-voice-leave" class="btn-voice-leave">🔴 Biya sa Room</button>
-              </div>
-
-              <div class="voice-members-grid" id="voice-members-grid"></div>
-
-              <div class="voice-controls-bar">
-                <button type="button" id="btn-voice-mute" class="voice-ctrl-btn">
-                  <span class="ctrl-icon" id="voice-mute-icon">🎙️</span>
-                  <span id="voice-mute-label">Mic On</span>
-                </button>
-
-                <button type="button" id="btn-voice-deafen" class="voice-ctrl-btn">
-                  <span class="ctrl-icon" id="voice-deafen-icon">🎧</span>
-                  <span id="voice-deafen-label">Deafen</span>
-                </button>
-
-                <div class="voice-mode-toggle">
-                  <span class="ctrl-small-label">Mode:</span>
-                  <button type="button" id="btn-mode-vad" class="mode-chip active">🗣️ Open Mic</button>
-                  <button type="button" id="btn-mode-ptt" class="mode-chip">⌨️ Push to Talk (V)</button>
-                </div>
-
-                <button type="button" id="btn-voice-ptt-hold" class="btn-ptt-hold" style="display:none;">
-                  <span>🎙️</span>
-                  <span>HOLD TO TALK</span>
-                </button>
-
-                <div class="voice-vol-slider-wrap">
-                  <span>🔊</span>
-                  <input id="voice-vol-slider" type="range" min="0" max="100" value="85" class="voice-vol-slider" title="Squad Voice Volume" />
-                  <span id="voice-vol-label">85%</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- SHOP INTERCOM ALERT BANNER -->
-        <div id="intercom-banner" class="intercom-alert-banner" style="display:none;">
-          <div class="intercom-alert-content">
-            <span class="intercom-alert-icon">📢</span>
-            <div>
-              <div class="intercom-alert-title">PAHIBALO GIKAN SA ADMIN OPERATOR</div>
-              <div id="intercom-alert-msg" class="intercom-alert-msg">Live voice broadcast sa pisonet...</div>
-            </div>
-            <div class="intercom-wave-anim">
-              <span></span><span></span><span></span><span></span><span></span>
-            </div>
-          </div>
-        </div>
 
         <div class="launcher-desktop-body">
           <aside class="launcher-sidebar">
@@ -3202,6 +3209,20 @@ class StationMaintenanceAgent {
         openVoiceModal();
       }
     };
+
+    (window as any).__toggleSquadVoice = () => {
+      toggleVoiceModal();
+    };
+
+    // Delegated click on document in case of re-rendering
+    document.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.id === 'btn-launcher-voice' || target.closest('#btn-launcher-voice'))) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleVoiceModal();
+      }
+    });
 
     document.getElementById('btn-launcher-voice')?.addEventListener('click', (e) => {
       e.preventDefault();

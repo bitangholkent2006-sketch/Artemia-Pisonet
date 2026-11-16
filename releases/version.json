@@ -3,7 +3,7 @@
   "minRequiredVersion": "1.0.0",
   "releaseDate": "2026-11-16T11:50:00.000Z",
   "asarFileName": "app.asar",
-  "size": 462878,
-  "sha256": "1BCF028864C1E96CA78FCC5DC7C037AD2F5773D4E479B423EDFCCAB0CB8B65A3",
+  "size": 463239,
+  "sha256": "26DAA8036AB4ACCE8DD7D51BFFD8D492197B089AEE46033DD79B959DB8B25C26",
   "changelog": "Local LAN Squad Voice Comms & Shop Intercom: 100% offline peer voice chat without Discord, party channels (Shop Lobby, Squads 1-3, Duo rooms), open mic VAD & Push-To-Talk, glowing live speaking indicators, floating corner HUD, and Admin Walkie-Talkie Intercom broadcast."
 }
