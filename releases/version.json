@@ -1,7 +1,7 @@
 {
-  "version": "1.0.23",
+  "version": "1.0.24",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-12T00:10:00.000Z",
+  "releaseDate": "2026-11-16T09:40:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Auto-Play / Auto-Launch After Download & Install: Downloaded .zip/.rar/.7z games, standalone .exe apps, .msi/.exe setup installers, and WinGet installs now automatically sync into the Desktop Game Launcher and launch immediately upon install completion"
+  "changelog": "Professional Esports Cyber Game Launcher OS: Sleek modern HUD, removed public Admin button (secured with Ctrl+Shift+X operator verification), strict minimize prevention, responsive cards & icons grid, live clock & date, and optimized category action buttons"
 }

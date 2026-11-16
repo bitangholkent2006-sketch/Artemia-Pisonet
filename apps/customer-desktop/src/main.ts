@@ -70,7 +70,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.23';
+const CLIENT_AGENT_VERSION = '1.0.24';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -1662,12 +1662,31 @@ class StationMaintenanceAgent {
       : `<span>${this.escapeHtml(item.icon || '🎮')}</span>`;
     const cat = this.getNormalizedCategory(item);
     const isSystemOrExplorer = cat === 'Files & System';
-    const actionLabel = isSystemOrExplorer ? '📂 ABRIHI' : '▶ OPEN';
+    const isGame = cat === 'Games';
+    const isBrowser = cat === 'Browsers';
+    const isMedia = cat === 'Media';
+    const isOffice = cat === 'Office';
+
+    const actionLabel = isSystemOrExplorer ? '📂 ABRIHI'
+      : isGame ? '▶ DULA NA'
+      : isBrowser ? '🌐 BROWSE'
+      : isMedia ? '🎬 PLAY'
+      : isOffice ? '📄 ABLIHA'
+      : '⚡ OPEN';
+
+    const actionClass = isSystemOrExplorer ? 'btn-cat-sys'
+      : isGame ? 'btn-cat-game'
+      : isBrowser ? 'btn-cat-browser'
+      : isMedia ? 'btn-cat-media'
+      : isOffice ? 'btn-cat-office'
+      : 'btn-cat-tool';
+
     const sourceLabel = item.source === 'steam' ? 'Steam'
       : item.source === 'epic' ? 'Epic'
       : item.source === 'system' || item.source === 'office_sys' ? 'Windows'
       : item.source === 'desktop' ? 'Shortcut'
       : cat;
+
     if (this.launcherViewMode === 'icons' || compact) {
       return `
         <div class="launcher-icon-tile ${isSystemOrExplorer ? 'sys-card' : ''} ${compact ? 'quick-tile' : ''}" data-launch-id="${this.escapeHtml(item.id)}" title="${this.escapeHtml(item.name)}">
@@ -1680,10 +1699,10 @@ class StationMaintenanceAgent {
       <div class="launcher-card ${isSystemOrExplorer ? 'sys-card' : ''}" data-launch-id="${this.escapeHtml(item.id)}">
         <div class="l-card-top">
           <div class="l-icon">${iconHtml}</div>
-          <span class="l-badge ready">${this.escapeHtml(sourceLabel)}</span>
+          <span class="l-badge ${isGame ? 'badge-game' : isSystemOrExplorer ? 'badge-sys' : 'ready'}">${this.escapeHtml(sourceLabel)}</span>
         </div>
         <div class="l-name" title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)}</div>
-        <button type="button" class="l-play-btn">${actionLabel}</button>
+        <button type="button" class="l-play-btn ${actionClass}">${actionLabel}</button>
       </div>
     `;
   }
@@ -1866,149 +1885,249 @@ class StationMaintenanceAgent {
         }
         .btn-action:hover { background: rgba(51, 65, 85, 0.8); color: #fff; }
 
-        /* SHOP DESKTOP LAUNCHER OS STYLES */
-        .agent-shell, .launcher-shell { display: flex; flex-direction: column; height: 100vh; width: 100vw; position: relative; overflow: hidden; }
+        /* SHOP DESKTOP LAUNCHER OS STYLES (PROFESSIONAL ESPORTS CYBER HUD) */
+        .agent-shell, .launcher-shell {
+          display: flex; flex-direction: column; height: 100vh; width: 100vw; position: relative; overflow: hidden;
+          font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+          user-select: none;
+        }
         .launcher-wallpaper-bg {
           position: absolute; inset: 0; background-size: cover; background-position: center;
-          background-color: #07090e; z-index: 0; pointer-events: none;
+          background: radial-gradient(circle at 50% 0%, rgba(6, 182, 212, 0.14) 0%, transparent 65%),
+                      radial-gradient(circle at 10% 85%, rgba(99, 102, 241, 0.12) 0%, transparent 50%),
+                      #07090e;
+          z-index: 0; pointer-events: none;
         }
         .launcher-header {
-          position: relative; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
-          padding: 10px 20px; background: rgba(9, 13, 24, 0.78); backdrop-filter: blur(18px);
-          border-bottom: 1px solid rgba(56, 189, 248, 0.22);
+          position: relative; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+          padding: 10px 24px; background: rgba(9, 14, 26, 0.85); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+          border-bottom: 1px solid rgba(56, 189, 248, 0.22); box-shadow: 0 4px 25px rgba(0, 0, 0, 0.6);
+          min-height: 64px;
         }
-        .launcher-brand { display: flex; align-items: center; gap: 11px; }
+        .launcher-brand { display: flex; align-items: center; gap: 12px; }
         .launcher-logo {
-          width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, #06b6d4, #6366f1);
-          display: flex; align-items: center; justify-content: center; font-size: 1.2rem;
-          box-shadow: 0 0 16px rgba(6, 182, 212, 0.4);
+          width: 42px; height: 42px; border-radius: 12px;
+          background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%);
+          display: flex; align-items: center; justify-content: center; font-size: 1.35rem;
+          box-shadow: 0 0 20px rgba(14, 165, 233, 0.45); border: 1px solid rgba(255, 255, 255, 0.18);
         }
-        .launcher-shop-title { font-size: 1.05rem; font-weight: 900; color: #f8fafc; letter-spacing: 0.3px; }
-        .launcher-station-sub { font-size: 0.72rem; color: #94a3b8; display: flex; align-items: center; gap: 6px; }
-        .desktop-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981; display: inline-block; }
-        .desktop-search-wrap { flex: 1; max-width: 420px; min-width: 210px; }
+        .launcher-brand-info { display: flex; flex-direction: column; gap: 1px; }
+        .launcher-brand-top { display: flex; align-items: center; gap: 8px; }
+        .launcher-shop-title {
+          font-size: 1.12rem; font-weight: 900; color: #ffffff; letter-spacing: 0.3px;
+          text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+        }
+        .launcher-status-badge {
+          background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35);
+          color: #34d399; font-size: 0.68rem; font-weight: 800; padding: 2px 8px; border-radius: 999px;
+          display: inline-flex; align-items: center; gap: 5px; letter-spacing: 0.05em;
+        }
+        .desktop-live-dot {
+          width: 7px; height: 7px; border-radius: 50%; background: #10b981;
+          box-shadow: 0 0 8px #10b981; display: inline-block; animation: pulseGlow 1.8s infinite;
+        }
+        .launcher-station-sub {
+          font-size: 0.73rem; color: #94a3b8; display: flex; align-items: center; gap: 6px;
+        }
+        .launcher-station-sub .station-tag { color: #38bdf8; font-weight: 800; }
+        .launcher-station-sub .sub-sep { color: #475569; }
+
+        .desktop-search-wrap { flex: 1; max-width: 480px; min-width: 220px; }
+        .search-input-box { position: relative; display: flex; align-items: center; width: 100%; }
+        .search-icon {
+          position: absolute; left: 14px; font-size: 0.95rem; pointer-events: none; opacity: 0.75;
+        }
         .launcher-search {
-          width: 100%; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255, 255, 255, 0.16); color: #f8fafc;
-          padding: 8px 14px; border-radius: 10px; font-size: 0.84rem; outline: none;
+          width: 100%; background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(255, 255, 255, 0.14);
+          color: #f8fafc; padding: 10px 38px 10px 40px; border-radius: 12px; font-size: 0.86rem;
+          font-weight: 600; outline: none; transition: all 0.2s ease;
         }
-        .launcher-search:focus { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,0.2); }
+        .launcher-search::placeholder { color: #64748b; font-weight: 500; }
+        .launcher-search:focus {
+          border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2), 0 0 16px rgba(56, 189, 248, 0.25);
+          background: rgba(15, 23, 42, 0.98);
+        }
+        .search-clear-btn {
+          position: absolute; right: 12px; background: rgba(255, 255, 255, 0.12); border: none; color: #94a3b8;
+          width: 20px; height: 20px; border-radius: 50%; font-size: 0.72rem; cursor: pointer;
+          display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+        }
+        .search-clear-btn:hover { background: rgba(244, 63, 94, 0.6); color: #fff; }
+
+        .header-actions { display: flex; align-items: center; gap: 12px; }
         .desktop-vol-box {
-          display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 9px;
-          background: rgba(15, 23, 42, 0.78); border: 1px solid rgba(255, 255, 255, 0.12); font-size: 0.76rem; color: #e2e8f0;
+          display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 11px;
+          background: rgba(15, 23, 42, 0.82); border: 1px solid rgba(255, 255, 255, 0.12);
+          color: #e2e8f0; font-size: 0.78rem; font-weight: 700;
         }
-        .desktop-vol-slider { width: 70px; accent-color: #38bdf8; cursor: pointer; }
+        .desktop-vol-slider { width: 75px; accent-color: #06b6d4; cursor: pointer; height: 5px; }
+        .desktop-vol-pct { font-size: 0.74rem; font-weight: 800; color: #38bdf8; min-width: 30px; text-align: right; }
         .desktop-clock {
-          font-family: Consolas, monospace; font-size: 0.8rem; font-weight: 800; color: #e0f2fe;
-          background: rgba(15, 23, 42, 0.78); border: 1px solid rgba(56, 189, 248, 0.22);
-          padding: 6px 11px; border-radius: 9px; white-space: nowrap;
+          display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
+          background: rgba(15, 23, 42, 0.82); border: 1px solid rgba(56, 189, 248, 0.24);
+          padding: 5px 13px; border-radius: 11px; min-width: 95px;
         }
+        .clock-time {
+          font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.88rem; font-weight: 800;
+          color: #38bdf8; line-height: 1.1;
+        }
+        .clock-date { font-size: 0.67rem; font-weight: 700; color: #94a3b8; line-height: 1.1; margin-top: 2px; }
+        .launcher-rescan-btn {
+          background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.8));
+          border: 1px solid rgba(56, 189, 248, 0.35); color: #e0f2fe; padding: 8px 14px;
+          border-radius: 11px; font-weight: 700; font-size: 0.82rem; cursor: pointer;
+          display: flex; align-items: center; gap: 6px; transition: all 0.2s ease;
+        }
+        .launcher-rescan-btn:hover {
+          background: linear-gradient(135deg, rgba(6, 182, 212, 0.25), rgba(37, 99, 235, 0.25));
+          border-color: #38bdf8; box-shadow: 0 0 16px rgba(6, 182, 212, 0.35); color: #ffffff;
+        }
+
         .launcher-desktop-body { position: relative; z-index: 2; flex: 1; display: flex; overflow: hidden; min-height: 0; }
         .launcher-sidebar {
-          width: 236px; flex-shrink: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 12px;
-          padding: 14px 12px; background: rgba(8, 12, 23, 0.74); backdrop-filter: blur(18px);
+          width: 242px; flex-shrink: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 12px;
+          padding: 16px 13px; background: rgba(8, 12, 24, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
           border-right: 1px solid rgba(255, 255, 255, 0.08); overflow-y: auto;
         }
         .sidebar-label {
-          font-size: 0.68rem; font-weight: 800; letter-spacing: 0.08em; color: #64748b; padding: 0 8px 6px; text-transform: uppercase;
+          font-size: 0.68rem; font-weight: 800; letter-spacing: 0.09em; color: #64748b;
+          padding: 0 8px 6px; text-transform: uppercase;
         }
         .launcher-cats { display: flex; flex-direction: column; gap: 5px; }
         .l-cat-pill {
           display: flex; align-items: center; justify-content: space-between; width: 100%;
           background: rgba(15, 23, 42, 0.45); border: 1px solid transparent; color: #cbd5e1;
-          padding: 9px 11px; border-radius: 10px; font-size: 0.81rem; font-weight: 700; cursor: pointer; transition: 0.14s; text-align: left;
+          padding: 10px 12px; border-radius: 12px; font-size: 0.82rem; font-weight: 700;
+          cursor: pointer; transition: all 0.16s ease; text-align: left;
         }
-        .l-cat-pill:hover { background: rgba(30, 41, 59, 0.82); color: #fff; }
+        .l-cat-pill:hover { background: rgba(30, 41, 59, 0.7); color: #fff; transform: translateX(2px); }
         .l-cat-pill.active {
-          background: linear-gradient(90deg, rgba(6, 182, 212, 0.28), rgba(37, 99, 235, 0.22));
-          border-color: rgba(56, 189, 248, 0.55); color: #fff;
+          background: linear-gradient(90deg, rgba(14, 165, 233, 0.24) 0%, rgba(37, 99, 235, 0.2) 100%);
+          border-color: rgba(56, 189, 248, 0.6); color: #ffffff;
+          box-shadow: 0 0 16px rgba(14, 165, 233, 0.2); transform: translateX(2px);
         }
         .l-nav-cnt {
-          background: rgba(255, 255, 255, 0.09); color: #94a3b8; border-radius: 999px;
-          padding: 1px 7px; font-size: 0.7rem; font-weight: 800;
+          background: rgba(255, 255, 255, 0.08); color: #94a3b8; border-radius: 999px;
+          padding: 2px 8px; font-size: 0.71rem; font-weight: 800;
         }
-        .l-cat-pill.active .l-nav-cnt { background: rgba(56, 189, 248, 0.26); color: #e0f2fe; }
+        .l-cat-pill.active .l-nav-cnt { background: rgba(56, 189, 248, 0.25); color: #e0f2fe; }
         .view-switch-row {
-          display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px 0 4px;
+          display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px 0 4px;
           border-top: 1px solid rgba(255, 255, 255, 0.08);
         }
         .l-view-btn {
-          background: rgba(15, 23, 42, 0.72); border: 1px solid rgba(255, 255, 255, 0.12); color: #94a3b8;
-          padding: 6px 8px; border-radius: 8px; font-size: 0.74rem; font-weight: 700; cursor: pointer;
+          background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); color: #94a3b8;
+          padding: 7px 8px; border-radius: 9px; font-size: 0.76rem; font-weight: 700; cursor: pointer; transition: all 0.15s;
         }
-        .l-view-btn.active { border-color: #38bdf8; color: #e0f2fe; background: rgba(6, 182, 212, 0.22); }
-        .quick-dock-box { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 10px; display: flex; flex-direction: column; gap: 5px; }
+        .l-view-btn.active { border-color: #38bdf8; color: #e0f2fe; background: rgba(14, 165, 233, 0.22); font-weight: 800; }
+        .quick-dock-box { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 12px; display: flex; flex-direction: column; gap: 6px; }
         .quick-dock-btn {
-          display: flex; align-items: center; gap: 8px; width: 100%; background: rgba(30, 41, 59, 0.55);
-          border: 1px solid rgba(255, 255, 255, 0.08); color: #e2e8f0; padding: 7px 10px; border-radius: 9px;
-          font-size: 0.76rem; font-weight: 700; cursor: pointer; text-align: left;
+          display: flex; align-items: center; gap: 9px; width: 100%; background: rgba(20, 30, 48, 0.55);
+          border: 1px solid rgba(255, 255, 255, 0.08); color: #e2e8f0; padding: 8px 12px; border-radius: 10px;
+          font-size: 0.78rem; font-weight: 700; cursor: pointer; text-align: left; transition: all 0.16s ease;
         }
-        .quick-dock-btn:hover { background: rgba(6, 182, 212, 0.22); border-color: rgba(56, 189, 248, 0.45); color: #fff; }
+        .quick-dock-btn:hover { background: rgba(14, 165, 233, 0.2); border-color: rgba(56, 189, 248, 0.5); color: #fff; transform: translateX(2px); }
+
         .launcher-main-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
         .launcher-rules-banner {
-          margin: 12px 20px 0; padding: 9px 15px; border-radius: 10px;
+          margin: 12px 24px 0; padding: 10px 16px; border-radius: 12px;
           background: linear-gradient(90deg, rgba(6, 182, 212, 0.2), rgba(99, 102, 241, 0.18));
-          border: 1px solid rgba(56, 189, 248, 0.38); color: #e0f2fe; font-size: 0.83rem; font-weight: 700;
-          display: flex; align-items: center; gap: 8px; backdrop-filter: blur(12px);
+          border: 1px solid rgba(56, 189, 248, 0.38); color: #e0f2fe; font-size: 0.84rem; font-weight: 700;
+          display: flex; align-items: center; gap: 10px; backdrop-filter: blur(14px);
         }
-        .launcher-grid-wrap { flex: 1; overflow-y: auto; padding: 16px 22px 26px; }
+        .launcher-grid-wrap {
+          flex: 1; overflow-y: auto; padding: 20px 26px 36px;
+        }
+        .launcher-grid-wrap::-webkit-scrollbar { width: 8px; }
+        .launcher-grid-wrap::-webkit-scrollbar-track { background: rgba(10, 15, 28, 0.5); }
+        .launcher-grid-wrap::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.25); border-radius: 4px; }
+        .launcher-grid-wrap::-webkit-scrollbar-thumb:hover { background: rgba(56, 189, 248, 0.55); }
+
         .launcher-cards-grid {
-          display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 13px;
+          display: grid; grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); gap: 15px;
         }
         .launcher-cards-grid.desktop-icons-mode {
-          grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 14px;
+          grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 14px;
         }
         .l-quick-strip {
-          grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: 10px;
-          margin-bottom: 4px;
+          grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 12px;
+          margin-bottom: 6px;
         }
         .l-section-hdr {
           grid-column: 1 / -1; display: flex; align-items: center; gap: 10px;
-          font-size: 0.88rem; font-weight: 900; color: #f1f5f9; letter-spacing: 0.3px;
-          margin-top: 10px; padding-bottom: 6px; border-bottom: 1px solid rgba(56, 189, 248, 0.24);
-          text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+          font-size: 0.94rem; font-weight: 900; color: #f8fafc; letter-spacing: 0.4px;
+          margin: 18px 0 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(56, 189, 248, 0.22);
+          text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
         }
         .l-sec-cnt {
-          background: rgba(56, 189, 248, 0.24); color: #e0f2fe; border-radius: 999px;
-          padding: 1px 8px; font-size: 0.7rem; font-weight: 800;
+          background: rgba(56, 189, 248, 0.22); color: #e0f2fe; border-radius: 999px;
+          padding: 2px 9px; font-size: 0.72rem; font-weight: 800;
         }
         .launcher-card {
-          background: rgba(12, 18, 34, 0.76); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px;
-          padding: 13px; display: flex; flex-direction: column; gap: 7px; cursor: pointer;
-          transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease; backdrop-filter: blur(12px);
+          background: linear-gradient(155deg, rgba(17, 25, 44, 0.85) 0%, rgba(9, 14, 26, 0.92) 100%);
+          border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px;
+          padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 9px; cursor: pointer;
+          transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+          backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); min-height: 168px;
         }
         .launcher-card:hover {
-          transform: translateY(-3px); border-color: #38bdf8; background: rgba(15, 23, 42, 0.9); box-shadow: 0 10px 24px rgba(2, 132, 199, 0.3);
+          transform: translateY(-5px); border-color: #38bdf8;
+          background: linear-gradient(155deg, rgba(23, 35, 62, 0.95) 0%, rgba(12, 19, 36, 0.98) 100%);
+          box-shadow: 0 14px 28px rgba(0, 0, 0, 0.65), 0 0 20px rgba(14, 165, 233, 0.3);
         }
         .launcher-icon-tile {
-          background: rgba(10, 15, 29, 0.56); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 13px;
-          padding: 12px 8px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 7px;
-          cursor: pointer; transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease; backdrop-filter: blur(8px);
+          background: rgba(12, 18, 34, 0.6); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px;
+          padding: 14px 8px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px;
+          cursor: pointer; transition: all 0.15s ease; backdrop-filter: blur(10px);
         }
         .launcher-icon-tile:hover {
-          transform: translateY(-2px); border-color: #38bdf8; background: rgba(15, 23, 42, 0.85);
+          transform: translateY(-3px); border-color: #38bdf8; background: rgba(18, 28, 52, 0.88);
+          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5), 0 0 14px rgba(56, 189, 248, 0.25);
         }
-        .launcher-icon-tile.quick-tile { border-color: rgba(245, 158, 11, 0.28); }
+        .launcher-icon-tile.quick-tile { border-color: rgba(245, 158, 11, 0.3); background: rgba(25, 20, 10, 0.4); }
         .l-tile-name {
-          font-size: 0.78rem; font-weight: 700; color: #f8fafc; line-height: 1.25;
+          font-size: 0.79rem; font-weight: 700; color: #f8fafc; line-height: 1.25;
           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
           text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
         }
         .l-card-top { display: flex; align-items: center; justify-content: space-between; }
         .l-icon {
-          width: 46px; height: 46px; border-radius: 11px; background: rgba(30, 41, 59, 0.85);
-          display: flex; align-items: center; justify-content: center; font-size: 1.65rem; overflow: hidden;
+          width: 50px; height: 50px; border-radius: 13px; background: rgba(30, 41, 59, 0.65);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          display: flex; align-items: center; justify-content: center; font-size: 1.75rem; overflow: hidden;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         }
-        .l-real-icon { width: 34px; height: 34px; object-fit: contain; }
-        .l-badge { font-size: 0.65rem; font-weight: 800; padding: 2px 7px; border-radius: 999px; }
-        .l-badge.ready { background: rgba(56, 189, 248, 0.16); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.3); }
+        .l-real-icon { width: 38px; height: 38px; object-fit: contain; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5)); }
+        .l-badge {
+          font-size: 0.65rem; font-weight: 800; padding: 3px 8px; border-radius: 999px; text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+        .l-badge.ready { background: rgba(56, 189, 248, 0.14); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.28); }
+        .l-badge.badge-game { background: rgba(14, 165, 233, 0.16); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.35); }
+        .l-badge.badge-sys { background: rgba(16, 185, 129, 0.14); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
         .l-name {
-          font-size: 0.9rem; font-weight: 800; color: #f8fafc; margin-top: 2px;
-          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          font-size: 0.92rem; font-weight: 800; color: #f8fafc; margin: 4px 0 2px;
+          line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+          min-height: 2.5em; text-shadow: 0 1px 3px rgba(0,0,0,0.8);
         }
         .l-play-btn {
-          margin-top: 4px; padding: 7px 10px; border-radius: 9px; border: none;
-          background: linear-gradient(135deg, #06b6d4, #2563eb); color: #fff; font-weight: 800; font-size: 0.78rem; cursor: pointer;
+          width: 100%; margin-top: 4px; padding: 8px 12px; border-radius: 10px; border: none;
+          font-weight: 800; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+          gap: 6px; letter-spacing: 0.03em; box-shadow: 0 4px 14px rgba(0,0,0,0.3); transition: all 0.15s ease;
         }
+        .l-play-btn:active { transform: scale(0.97); }
+        .l-play-btn.btn-cat-game { background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%); color: #ffffff; }
+        .l-play-btn.btn-cat-game:hover { filter: brightness(1.15); box-shadow: 0 4px 18px rgba(14, 165, 233, 0.5); }
+        .l-play-btn.btn-cat-sys { background: linear-gradient(135deg, #0d9488 0%, #0284c7 100%); color: #ffffff; }
+        .l-play-btn.btn-cat-sys:hover { filter: brightness(1.15); box-shadow: 0 4px 18px rgba(13, 148, 136, 0.5); }
+        .l-play-btn.btn-cat-browser { background: linear-gradient(135deg, #6366f1 0%, #0ea5e9 100%); color: #ffffff; }
+        .l-play-btn.btn-cat-browser:hover { filter: brightness(1.15); box-shadow: 0 4px 18px rgba(99, 102, 241, 0.5); }
+        .l-play-btn.btn-cat-media { background: linear-gradient(135deg, #d97706 0%, #ea580c 100%); color: #ffffff; }
+        .l-play-btn.btn-cat-media:hover { filter: brightness(1.15); box-shadow: 0 4px 18px rgba(234, 88, 12, 0.5); }
+        .l-play-btn.btn-cat-office { background: linear-gradient(135deg, #059669 0%, #0d9488 100%); color: #ffffff; }
+        .l-play-btn.btn-cat-office:hover { filter: brightness(1.15); box-shadow: 0 4px 18px rgba(5, 150, 105, 0.5); }
+        .l-play-btn.btn-cat-tool { background: linear-gradient(135deg, #334155 0%, #475569 100%); color: #f1f5f9; }
+        .l-play-btn.btn-cat-tool:hover { filter: brightness(1.15); }
 
         /* FULL SCREEN LOCK OVERLAY */
         .lock-overlay {
@@ -2259,6 +2378,7 @@ class StationMaintenanceAgent {
           <div id="operator-exit-error" class="operator-exit-error"></div>
           <div class="operator-exit-actions">
             <button id="btn-op-peek-desktop" class="btn-op-unlock" style="background:#0284c7;">🖥️ Temporarily Show Windows Desktop</button>
+            <button id="btn-op-to-agent" class="btn-op-unlock" style="background:#4f46e5;">⚙️ Switch to Agent Console (Admin Only)</button>
             <button id="btn-op-verify-quit" class="btn-op-exit">🚪 Verify &amp; Exit Agent</button>
             <button id="btn-op-verify-unprotect" class="btn-op-unlock">🔓 Unlock Delete Protection &amp; Exit (For Uninstall)</button>
             <button id="btn-op-cancel" class="btn-op-cancel">Cancel</button>
@@ -2278,27 +2398,44 @@ class StationMaintenanceAgent {
         <header class="launcher-header">
           <div class="launcher-brand">
             <div class="launcher-logo">🎮</div>
-            <div>
-              <div id="launcher-shop-title" class="launcher-shop-title">Artemia's Pisonet</div>
+            <div class="launcher-brand-info">
+              <div class="launcher-brand-top">
+                <div id="launcher-shop-title" class="launcher-shop-title">Artemia's Pisonet</div>
+                <div class="launcher-status-badge">
+                  <span class="desktop-live-dot"></span>
+                  <span>READY</span>
+                </div>
+              </div>
               <div class="launcher-station-sub">
-                <span class="desktop-live-dot"></span>
-                <span><strong id="launcher-station-pill" style="color:#38bdf8;">${this.escapeHtml(this.pcName)}</strong> • Desktop Launcher</span>
+                <span>Station: <strong id="launcher-station-pill" class="station-tag">${this.escapeHtml(this.pcName)}</strong></span>
+                <span class="sub-sep">•</span>
+                <span>Pisonet Desktop</span>
               </div>
             </div>
           </div>
 
           <div class="desktop-search-wrap">
-            <input id="launcher-search-input" type="text" class="launcher-search" placeholder="🔍 Pangita og dula, browser, File Explorer..." />
+            <div class="search-input-box">
+              <span class="search-icon">🔍</span>
+              <input id="launcher-search-input" type="text" class="launcher-search" placeholder="Pangita og dula, browser, folder..." autocomplete="off" />
+              <button id="btn-search-clear" class="search-clear-btn" style="display:none;" title="Clear search">✕</button>
+            </div>
           </div>
 
           <div class="header-actions">
-            <label class="desktop-vol-box" title="Speaker Volume">
+            <div class="desktop-vol-box" title="System Speaker Volume">
               <span>🔊</span>
               <input id="launcher-vol-slider" type="range" min="0" max="100" value="60" class="desktop-vol-slider" />
-            </label>
-            <div id="launcher-live-clock" class="desktop-clock">--:--</div>
-            <button class="btn-minimize" id="btn-launcher-rescan" title="I-scan balik ang installed games">🔄 Rescan</button>
-            <button class="btn-minimize" id="btn-launcher-to-agent" title="Admin / Maintenance Console" style="border-color: rgba(56, 189, 248, 0.35);">⚙️ Admin</button>
+              <span id="launcher-vol-val" class="desktop-vol-pct">60%</span>
+            </div>
+            <div id="launcher-live-clock" class="desktop-clock">
+              <div id="launcher-clock-time" class="clock-time">--:--</div>
+              <div id="launcher-clock-date" class="clock-date">---, --- --</div>
+            </div>
+            <button type="button" class="launcher-rescan-btn" id="btn-launcher-rescan" title="I-refresh ang installed games ug apps">
+              <span>🔄</span>
+              <span>I-refresh</span>
+            </button>
           </div>
         </header>
 
@@ -2405,9 +2542,6 @@ class StationMaintenanceAgent {
       await this.refreshLauncherScan();
       this.showToast('🔄 Na-rescan na ang installed games ug apps!', 'info', 3);
     });
-    document.getElementById('btn-launcher-to-agent')?.addEventListener('click', () => {
-      this.switchUiMode('agent');
-    });
     document.getElementById('btn-open-launcher')?.addEventListener('click', () => {
       this.switchUiMode('launcher');
       this.refreshLauncherScan();
@@ -2439,27 +2573,46 @@ class StationMaintenanceAgent {
       });
     });
     const volSlider = document.getElementById('launcher-vol-slider') as HTMLInputElement | null;
+    const volPctEl = document.getElementById('launcher-vol-val');
     if (volSlider) {
+      const syncVolLabel = () => {
+        if (volPctEl) volPctEl.innerText = `${volSlider.value}%`;
+      };
+      volSlider.addEventListener('input', syncVolLabel);
       volSlider.addEventListener('change', () => {
+        syncVolLabel();
         const pct = Number(volSlider.value);
         if (Number.isFinite(pct)) desktopWindow.pisonetDesktop?.setVolumePercent?.(pct).catch(() => {});
       });
     }
     const updateClock = () => {
-      const clockEl = document.getElementById('launcher-live-clock');
-      if (clockEl) {
-        const now = new Date();
-        const t = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const d = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-        clockEl.innerText = `${t} • ${d}`;
+      const timeEl = document.getElementById('launcher-clock-time');
+      const dateEl = document.getElementById('launcher-clock-date');
+      const now = new Date();
+      if (timeEl) {
+        timeEl.innerText = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+      if (dateEl) {
+        dateEl.innerText = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
       }
     };
     updateClock();
     if (this.clockTimer) clearInterval(this.clockTimer);
-    this.clockTimer = setInterval(updateClock, 15000);
-    document.getElementById('launcher-search-input')?.addEventListener('input', (ev: any) => {
+    this.clockTimer = setInterval(updateClock, 10000);
+
+    const searchInput = document.getElementById('launcher-search-input') as HTMLInputElement | null;
+    const searchClearBtn = document.getElementById('btn-search-clear');
+    searchInput?.addEventListener('input', (ev: any) => {
       this.launcherSearch = String(ev?.target?.value || '');
+      if (searchClearBtn) searchClearBtn.style.display = this.launcherSearch ? 'flex' : 'none';
       this.renderLauncherGrid();
+    });
+    searchClearBtn?.addEventListener('click', () => {
+      if (searchInput) searchInput.value = '';
+      this.launcherSearch = '';
+      if (searchClearBtn) searchClearBtn.style.display = 'none';
+      this.renderLauncherGrid();
+      searchInput?.focus();
     });
     document.querySelectorAll('.l-cat-pill').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -2563,6 +2716,24 @@ class StationMaintenanceAgent {
         errEl.innerText = res?.error || 'Sayop ang password.';
       }
     });
+    document.getElementById('btn-op-to-agent')?.addEventListener('click', async () => {
+      const input = document.getElementById('operator-exit-password') as HTMLInputElement | null;
+      const errEl = document.getElementById('operator-exit-error');
+      const pwd = input?.value || '';
+      if (!pwd.trim()) {
+        if (errEl) errEl.innerText = 'Palihog isulod ang Admin / Operator Password.';
+        return;
+      }
+      if (!desktopWindow.pisonetDesktop?.verifyAndExitOperator) return;
+      const res = await desktopWindow.pisonetDesktop.verifyAndExitOperator({ password: pwd, removeProtection: false });
+      if (res?.success) {
+        closeOperatorExitModal();
+        this.switchUiMode('agent');
+        this.showToast('⚙️ Na-switch sa Maintenance Agent Console.', 'info', 3);
+      } else if (errEl) {
+        errEl.innerText = res?.error || 'Sayop ang Admin Password.';
+      }
+    });
     document.getElementById('btn-op-verify-quit')?.addEventListener('click', () => submitOperatorExit(false));
     document.getElementById('btn-op-verify-unprotect')?.addEventListener('click', () => submitOperatorExit(true));
     document.getElementById('operator-exit-password')?.addEventListener('keydown', (ev) => {
@@ -2574,7 +2745,10 @@ class StationMaintenanceAgent {
       });
     }
     window.addEventListener('keydown', (ev) => {
-      if (ev.ctrlKey && ev.altKey && ev.shiftKey && ev.key.toLowerCase() === 'q' && !this.isLocked) {
+      const isOperatorHotKey =
+        (ev.ctrlKey && ev.altKey && ev.shiftKey && ev.key.toLowerCase() === 'q') ||
+        (ev.ctrlKey && ev.shiftKey && ev.key.toLowerCase() === 'x');
+      if (isOperatorHotKey && !this.isLocked) {
         ev.preventDefault();
         openOperatorExitModal();
       }

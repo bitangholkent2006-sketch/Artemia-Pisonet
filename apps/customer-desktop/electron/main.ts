@@ -638,6 +638,11 @@ function createWindow() {
     const isCloseShortcut =
       (input.alt && input.key === 'F4') ||
       (input.control && (input.key.toLowerCase() === 'w' || input.key.toLowerCase() === 'q'));
+    const isSystemMenu = input.alt && (input.key === ' ' || input.code === 'Space');
+    if (isSystemMenu && (isDesktopReplacementActive() || cachedLauncherConfig.preventLauncherClose !== false)) {
+      event.preventDefault();
+      return;
+    }
     if (isCloseShortcut && cachedLauncherConfig.launcherEnabled && cachedLauncherConfig.preventLauncherClose !== false) {
       event.preventDefault();
       if (isDesktopReplacementActive()) {
@@ -687,14 +692,13 @@ function createWindow() {
     }
   });
 
-  // Intercept Win+D / Show Desktop minimize so Desktop Launcher instantly stays pinned as the Windows Desktop
+  // Intercept Win+D / Show Desktop minimize so Desktop Launcher CANNOT be minimized away
   mainWindow.on('minimize', () => {
-    if (isDesktopReplacementActive()) {
-      setTimeout(() => {
-        if (isDesktopReplacementActive()) {
-          applyDesktopShellBounds(true);
-        }
-      }, 95);
+    if (isDesktopReplacementActive() || (cachedLauncherConfig.launcherEnabled !== false && currentUiMode === 'launcher')) {
+      try {
+        if (mainWindow?.isMinimized()) mainWindow.restore();
+        applyDesktopShellBounds(true);
+      } catch {}
     }
   });
 
@@ -722,11 +726,11 @@ function createWindow() {
 
 // Window Controls
 ipcMain.handle('window:minimize', () => {
-  if (isDesktopReplacementActive()) {
-    sendWindowToDesktopBottom().catch(() => {});
-  } else {
-    mainWindow?.minimize();
+  if (isDesktopReplacementActive() || (cachedLauncherConfig.launcherEnabled !== false && currentUiMode === 'launcher')) {
+    // Minimization is strictly blocked for customer launcher shell
+    return false;
   }
+  mainWindow?.minimize();
   return true;
 });
 
