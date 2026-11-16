@@ -570,6 +570,7 @@ function applyDesktopShellBounds(sendBottom = false) {
     if (sendBottom) {
       sendWindowToDesktopBottom(wa).catch(() => {});
     }
+    startDeskShield().catch(() => {});
   } catch {}
 }
 
@@ -694,11 +695,22 @@ function createWindow() {
 
   // Intercept Win+D / Show Desktop minimize so Desktop Launcher CANNOT be minimized away
   mainWindow.on('minimize', () => {
+    if (operatorDesktopPeek) return;
     if (isDesktopReplacementActive() || (cachedLauncherConfig.launcherEnabled !== false && currentUiMode === 'launcher')) {
-      try {
-        if (mainWindow?.isMinimized()) mainWindow.restore();
-        applyDesktopShellBounds(true);
-      } catch {}
+      const reassert = () => {
+        try {
+          if (!mainWindow || mainWindow.isDestroyed() || operatorDesktopPeek) return;
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          applyDesktopShellBounds(false);
+          mainWindow.show();
+          mainWindow.focus();
+        } catch {}
+      };
+      reassert();
+      setTimeout(reassert, 35);
+      setTimeout(reassert, 120);
+      setTimeout(reassert, 260);
+      setTimeout(reassert, 500);
     }
   });
 
@@ -755,7 +767,9 @@ ipcMain.handle('window:set-ui-mode', (_event, mode: 'launcher' | 'agent') => {
       applyDesktopShellBounds(false);
       mainWindow?.show();
       mainWindow?.focus();
+      startDeskShield().catch(() => {});
     } else {
+      stopDeskShield();
       applyAgentConsoleBounds();
     }
   }
@@ -1014,6 +1028,223 @@ function stopKioskInputBlocker() {
   }
 }
 
+// ============================================================================
+// DESKTOP SHIELD: LOW-LEVEL KEYBOARD HOOK BLOCKING WIN+D, WIN+M, WIN+HOME, WIN+,
+// ============================================================================
+const DESK_SHIELD_CS_SOURCE = `using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+namespace ArtemiaPisonet
+{
+    public class DeskShield
+    {
+        private const int WH_KEYBOARD_LL = 13;
+        private const int WM_KEYDOWN = 0x0100;
+        private const int WM_KEYUP = 0x0101;
+        private const int WM_SYSKEYDOWN = 0x0104;
+        private const int WM_SYSKEYUP = 0x0105;
+
+        private const int VK_TAB = 0x09;
+        private const int VK_HOME = 0x24;
+        private const int VK_D = 0x44;
+        private const int VK_M = 0x4D;
+        private const int VK_LWIN = 0x5B;
+        private const int VK_RWIN = 0x5C;
+        private const int VK_OEM_COMMA = 0xBC;
+
+        private static LowLevelProc _kbProc = KbHookCallback;
+        private static IntPtr _kbHook = IntPtr.Zero;
+        private static int _parentPid = 0;
+        private static bool _blockedCurrent = false;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KBDLLHOOKSTRUCT
+        {
+            public int vkCode;
+            public int scanCode;
+            public int flags;
+            public int time;
+            public IntPtr dwExtraInfo;
+        }
+
+        public static void Main(string[] args)
+        {
+            if (args != null && args.Length > 0) int.TryParse(args[0], out _parentPid);
+
+            _kbHook = SetHook(WH_KEYBOARD_LL, _kbProc);
+
+            System.Windows.Forms.Timer watchdog = null;
+            if (_parentPid > 0)
+            {
+                watchdog = new System.Windows.Forms.Timer();
+                watchdog.Interval = 500;
+                watchdog.Tick += (s, e) =>
+                {
+                    try
+                    {
+                        Process p = Process.GetProcessById(_parentPid);
+                        if (p == null || p.HasExited) Application.ExitThread();
+                    }
+                    catch { Application.ExitThread(); }
+                };
+                watchdog.Start();
+            }
+
+            Application.Run();
+            if (watchdog != null) watchdog.Stop();
+            if (_kbHook != IntPtr.Zero) UnhookWindowsHookEx(_kbHook);
+        }
+
+        private static IntPtr SetHook(int hookType, LowLevelProc proc)
+        {
+            using (Process curProcess = Process.GetCurrentProcess())
+            using (ProcessModule curModule = curProcess.MainModule)
+                return SetWindowsHookEx(hookType, proc, GetModuleHandle(curModule.ModuleName), 0);
+        }
+
+        private delegate IntPtr LowLevelProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+        private static IntPtr KbHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0)
+            {
+                int msg = wParam.ToInt32();
+                if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP)
+                {
+                    KBDLLHOOKSTRUCT hookStruct = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+                    int vk = hookStruct.vkCode;
+
+                    bool isLWinDown = (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0;
+                    bool isRWinDown = (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+                    bool isWinDown = isLWinDown || isRWinDown;
+
+                    bool isBannedCombo = (vk == VK_D || vk == VK_M || vk == VK_HOME || vk == VK_OEM_COMMA || vk == VK_TAB);
+
+                    if ((isWinDown || _blockedCurrent) && isBannedCombo)
+                    {
+                        if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
+                        {
+                            _blockedCurrent = true;
+                            // Inject harmless key to prevent Start Menu from activating when user releases Win key
+                            keybd_event(0xFF, 0, 0, UIntPtr.Zero);
+                            keybd_event(0xFF, 0, 2, UIntPtr.Zero);
+                        }
+                        else if (msg == WM_KEYUP || msg == WM_SYSKEYUP)
+                        {
+                            _blockedCurrent = false;
+                        }
+                        return (IntPtr)1;
+                    }
+                }
+            }
+            return CallNextHookEx(_kbHook, nCode, wParam, lParam);
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelProc lpfn, IntPtr hMod, uint dwThreadId);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        [DllImport("user32.dll")]
+        private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+    }
+}
+`;
+
+const deskShieldExePath = path.join(artemiaStateDir, 'ArtemiaDeskShield.exe');
+const deskShieldCsPath = path.join(artemiaStateDir, 'ArtemiaDeskShield.cs');
+let deskShieldProc: ChildProcess | null = null;
+let deskShieldCompileInFlight = false;
+
+function ensureDeskShieldBinary(): Promise<string | null> {
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  if (fs.existsSync(deskShieldExePath)) return Promise.resolve(deskShieldExePath);
+  if (deskShieldCompileInFlight) return Promise.resolve(null);
+  deskShieldCompileInFlight = true;
+
+  return new Promise((resolve) => {
+    try {
+      if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+      fs.writeFileSync(deskShieldCsPath, DESK_SHIELD_CS_SOURCE, 'utf8');
+      const cscCandidates = [
+        'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',
+        'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe'
+      ];
+      const csc = cscCandidates.find((p) => fs.existsSync(p));
+      if (!csc) {
+        deskShieldCompileInFlight = false;
+        resolve(null);
+        return;
+      }
+      execFile(
+        csc,
+        ['/nologo', '/target:winexe', `/out:${deskShieldExePath}`, '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', deskShieldCsPath],
+        { timeout: 15000, windowsHide: true },
+        (err) => {
+          deskShieldCompileInFlight = false;
+          if (!err && fs.existsSync(deskShieldExePath)) {
+            logToFile('[DeskShield] Compiled ArtemiaDeskShield.exe cleanly.');
+            resolve(deskShieldExePath);
+          } else {
+            logToFile('[DeskShield] csc compile failed: ' + (err?.message || 'unknown'));
+            resolve(null);
+          }
+        }
+      );
+    } catch {
+      deskShieldCompileInFlight = false;
+      resolve(null);
+    }
+  });
+}
+
+async function startDeskShield() {
+  if (process.platform !== 'win32') return;
+  if (operatorDesktopPeek || isStationLocked) return;
+  if (deskShieldProc && !deskShieldProc.killed && deskShieldProc.exitCode === null) return;
+  const bin = await ensureDeskShieldBinary();
+  if (operatorDesktopPeek || isStationLocked) return;
+
+  if (bin && fs.existsSync(bin)) {
+    try {
+      const child = spawn(bin, [String(process.pid)], { stdio: 'ignore', windowsHide: true });
+      child.on('exit', () => {
+        if (deskShieldProc === child) deskShieldProc = null;
+      });
+      deskShieldProc = child;
+      logToFile(`[DeskShield] Desktop minimize-shield hook active (PID ${child.pid})`);
+      return;
+    } catch (e: any) {
+      logToFile('[DeskShield] Spawn error: ' + (e?.message || String(e)));
+    }
+  }
+}
+
+function stopDeskShield() {
+  try {
+    if (deskShieldProc) {
+      deskShieldProc.kill();
+      deskShieldProc = null;
+    }
+  } catch {}
+  if (process.platform === 'win32') {
+    execFile('taskkill', ['/F', '/IM', 'ArtemiaDeskShield.exe'], { windowsHide: true }, () => {});
+  }
+}
+
 function applyInstallProtection() {
   if (!isPackagedClientExe()) return;
   const exePath = process.execPath;
@@ -1200,6 +1431,7 @@ ipcMain.handle('operator:peek-desktop', async (_event, password: string) => {
     return { success: false, error: check.error || 'Sayop ang password.' };
   }
   operatorDesktopPeek = true;
+  stopDeskShield();
   if (mainWindow && !isStationLocked) {
     try {
       mainWindow.setMinimizable(true);
@@ -1221,6 +1453,7 @@ ipcMain.handle('operator:verify-and-exit', async (_event, payload: { password: s
   try { mainWindow?.setClosable(true); } catch {}
   writeFlagFile(authorizedExitFlagPath);
   stopKioskInputBlocker();
+  stopDeskShield();
   if (payload?.removeProtection) {
     await removeInstallProtection();
     setAutoStart(false);
@@ -1237,6 +1470,7 @@ ipcMain.handle('window:set-lock-mode', (_event, locked: boolean) => {
   if (mainWindow) {
     if (locked) {
       operatorDesktopPeek = false;
+      stopDeskShield();
       try { mainWindow.setClosable(false); } catch {}
       presentOverlayWindow();
       startKioskInputBlocker().catch(() => {});
@@ -1251,6 +1485,7 @@ ipcMain.handle('window:set-lock-mode', (_event, locked: boolean) => {
         currentUiMode = 'launcher';
         applyDesktopShellBounds(false);
         try { mainWindow.show(); } catch {}
+        startDeskShield().catch(() => {});
       } else if (!isAnnouncementActive) {
         mainWindow.hide();
       }
@@ -1869,7 +2104,7 @@ function performSystemRefresh(options: { wipeUserFiles?: boolean; wipeApps?: boo
 
       ${wipeApps ? `
       # Close 3rd-party desktop/game processes ONLY (never kill OS, drivers, Artemia, Dev IDEs, or inaccessible system processes)
-      $keepProcs = @('artemia customer terminal', 'artemiakiosklock_v2', 'explorer', 'svchost', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'smss', 'dwm', 'sihost', 'ctfmon', 'runtimebroker', 'searchhost', 'startmenuexperiencehost', 'shellexperiencehost', 'taskhostw', 'audiodg', 'conhost', 'powershell', 'wscript', 'cscript', 'cmd', 'antigravity', 'code', 'node')
+      $keepProcs = @('artemia customer terminal', 'artemiakiosklock_v2', 'artemiadeskshield', 'explorer', 'svchost', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'smss', 'dwm', 'sihost', 'ctfmon', 'runtimebroker', 'searchhost', 'startmenuexperiencehost', 'shellexperiencehost', 'taskhostw', 'audiodg', 'conhost', 'powershell', 'wscript', 'cscript', 'cmd', 'antigravity', 'code', 'node')
       Get-Process | ForEach-Object {
         try {
           $n = $_.ProcessName.ToLower()
@@ -4641,6 +4876,7 @@ async function applyClientUpdate(downloadUrl: string): Promise<{ success: boolea
     isOtaRestarting = true;
     writeFlagFile(otaUpdatingFlagPath);
     stopKioskInputBlocker();
+    stopDeskShield();
 
     // Use WSH (wscript.exe, Windows GUI subsystem) instead of cmd.exe with detached:true.
     // On Windows, Node's DETACHED_PROCESS flag causes console tools (tasklist|find, powershell) to hang/exit silently.
@@ -4836,6 +5072,7 @@ if (!gotLock) {
     ensureKioskLockBinary().catch(() => {});
     ensureVolumeCtlBinary().catch(() => {});
     ensureDesktopPinBinary().catch(() => {});
+    ensureDeskShieldBinary().catch(() => {});
     startGuardianWatchdog();
 
     screen.on('display-metrics-changed', () => {
@@ -4854,13 +5091,21 @@ if (!gotLock) {
     createWindow();
     createTray();
 
-    // Ensure lock screen & native keyboard+mouse blocker stay active while locked
+    // Ensure lock screen & native keyboard+mouse blocker stay active while locked,
+    // and ensure desktop launcher is never left minimized when unlocked.
     setInterval(() => {
       if (isStationLocked) {
         if (mainWindow && (!mainWindow.isVisible() || mainWindow.isMinimized())) {
           presentOverlayWindow();
         }
         startKioskInputBlocker().catch(() => {});
+      } else if (!operatorDesktopPeek && (isDesktopReplacementActive() || (cachedLauncherConfig.launcherEnabled !== false && currentUiMode === 'launcher'))) {
+        if (mainWindow && mainWindow.isMinimized()) {
+          mainWindow.restore();
+          applyDesktopShellBounds(false);
+          mainWindow.show();
+        }
+        startDeskShield().catch(() => {});
       }
     }, 1500);
 
@@ -4873,6 +5118,7 @@ if (!gotLock) {
       isQuitting = true;
       writeFlagFile(authorizedExitFlagPath);
       stopKioskInputBlocker();
+      stopDeskShield();
       try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
       notifyServerOffline();
     });
@@ -4930,6 +5176,7 @@ app.on('before-quit', () => {
   logToFile(`app before-quit fired (isQuitting=${isQuitting}, isOtaRestarting=${isOtaRestarting})`);
   isQuitting = true;
   stopKioskInputBlocker();
+  stopDeskShield();
   try { if (gdiWorkerProc) { gdiWorkerProc.kill(); gdiWorkerProc = null; } } catch {}
   if (!isOtaRestarting) {
     notifyServerOffline();

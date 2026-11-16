@@ -1,7 +1,7 @@
 {
-  "version": "1.0.24",
+  "version": "1.0.25",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-16T09:40:00.000Z",
+  "releaseDate": "2026-11-16T10:00:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Professional Esports Cyber Game Launcher OS: Sleek modern HUD, removed public Admin button (secured with Ctrl+Shift+X operator verification), strict minimize prevention, responsive cards & icons grid, live clock & date, and optimized category action buttons"
+  "changelog": "Desktop Launcher Anti-Minimize Shield: Low-level keyboard hook blocking Win+D, Win+M, Win+Home, Win+, and multi-stage window restoration ensuring launcher is never minimized to bare Windows desktop"
 }
