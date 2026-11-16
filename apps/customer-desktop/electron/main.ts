@@ -49,6 +49,13 @@ let currentUiMode: 'launcher' | 'agent' = 'launcher';
 let operatorDesktopPeek = false;
 
 const artemiaStateDir = path.join(os.homedir(), '.artemia');
+const laptopGamerFlagPath = path.join(artemiaStateDir, 'laptop_gamer_mode.flag');
+let isLaptopMode =
+  process.argv.includes('--laptop') ||
+  process.argv.includes('--laptop-mode') ||
+  process.argv.includes('--admin-player') ||
+  process.env.ARTEMIA_LAPTOP_MODE === '1' ||
+  fs.existsSync(laptopGamerFlagPath);
 const launcherConfigFilePath = path.join(artemiaStateDir, 'launcher_config.json');
 const wallpaperMetaFilePath = path.join(artemiaStateDir, 'applied_wallpaper.json');
 
@@ -411,6 +418,32 @@ function createTray() {
           }
         },
         {
+          label: isLaptopMode ? '🎮 Laptop Gamer Mode: ACTIVE (Unlocked)' : '🎮 Enable Laptop Gamer Mode',
+          type: 'checkbox',
+          checked: isLaptopMode,
+          click: (item) => {
+            isLaptopMode = item.checked;
+            try {
+              if (isLaptopMode) {
+                if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+                fs.writeFileSync(laptopGamerFlagPath, '1', 'utf8');
+                stopKioskInputBlocker();
+                stopDeskShield();
+                isStationLocked = false;
+                if (mainWindow) {
+                  mainWindow.setClosable(true);
+                  mainWindow.setMinimizable(true);
+                  mainWindow.setResizable(true);
+                  mainWindow.setFullScreen(false);
+                }
+              } else {
+                if (fs.existsSync(laptopGamerFlagPath)) fs.unlinkSync(laptopGamerFlagPath);
+              }
+            } catch {}
+            updateTrayMenu();
+          }
+        },
+        {
           label: 'Show Maintenance Console',
           click: () => {
             operatorDesktopPeek = false;
@@ -615,18 +648,18 @@ function createWindow() {
     title: showLauncher
       ? `${cachedLauncherConfig.shopName || "Artemia's Pisonet"} — Desktop`
       : 'Artemia Fleet - Station Agent & Maintenance Daemon',
-    frame: !showLauncher, // Remove native window border/close when Desktop Launcher is active
+    frame: isLaptopMode ? true : !showLauncher, // Allow native titlebar on Laptop Mode
     transparent: false,
     backgroundColor: '#07090e',
     show: false,
     kiosk: false,
     fullscreen: false,
     alwaysOnTop: false,
-    minimizable: !showLauncher,
-    maximizable: !showLauncher,
-    closable: !preventClose,
-    movable: !showLauncher,
-    resizable: !showLauncher,
+    minimizable: isLaptopMode ? true : !showLauncher,
+    maximizable: isLaptopMode ? true : !showLauncher,
+    closable: isLaptopMode ? true : !preventClose,
+    movable: isLaptopMode ? true : !showLauncher,
+    resizable: isLaptopMode ? true : !showLauncher,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -637,6 +670,7 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (isLaptopMode) return; // Allow all normal Windows hotkeys on admin laptop
     if (isQuitting || isStationLocked) return;
     const isCloseShortcut =
       (input.alt && input.key === 'F4') ||
@@ -983,7 +1017,10 @@ function ensureKioskLockBinary(): Promise<string | null> {
 }
 
 async function startKioskInputBlocker() {
-  if (process.platform !== 'win32') return;
+  if (process.platform !== 'win32' || isLaptopMode) {
+    if (isLaptopMode) logToFile('[KioskLock] Bypassed: Admin Laptop Gamer Mode is active.');
+    return;
+  }
   if (kioskLockProc && !kioskLockProc.killed && kioskLockProc.exitCode === null) return;
   const bin = await ensureKioskLockBinary();
   if (!isStationLocked) return;
@@ -1214,7 +1251,7 @@ function ensureDeskShieldBinary(): Promise<string | null> {
 }
 
 async function startDeskShield() {
-  if (process.platform !== 'win32') return;
+  if (process.platform !== 'win32' || isLaptopMode) return;
   if (operatorDesktopPeek || isStationLocked) return;
   if (deskShieldProc && !deskShieldProc.killed && deskShieldProc.exitCode === null) return;
   const bin = await ensureDeskShieldBinary();
@@ -1467,7 +1504,40 @@ ipcMain.handle('operator:verify-and-exit', async (_event, payload: { password: s
   return { success: true };
 });
 
+ipcMain.handle('system:is-laptop-mode', () => isLaptopMode);
+
+ipcMain.handle('system:set-laptop-mode', (_event, enabled: boolean) => {
+  isLaptopMode = !!enabled;
+  try {
+    if (enabled) {
+      if (!fs.existsSync(artemiaStateDir)) fs.mkdirSync(artemiaStateDir, { recursive: true });
+      fs.writeFileSync(laptopGamerFlagPath, '1', 'utf8');
+      stopKioskInputBlocker();
+      stopDeskShield();
+      isStationLocked = false;
+      if (mainWindow) {
+        mainWindow.setClosable(true);
+        mainWindow.setMinimizable(true);
+        mainWindow.setMaximizable(true);
+        mainWindow.setMovable(true);
+        mainWindow.setResizable(true);
+        mainWindow.setFullScreen(false);
+        mainWindow.setAlwaysOnTop(false);
+      }
+    } else {
+      if (fs.existsSync(laptopGamerFlagPath)) fs.unlinkSync(laptopGamerFlagPath);
+    }
+  } catch (err: any) {
+    logToFile('[LaptopMode] Toggle error: ' + err?.message);
+  }
+  return isLaptopMode;
+});
+
 ipcMain.handle('window:set-lock-mode', (_event, locked: boolean) => {
+  if (isLaptopMode && locked) {
+    logToFile('[LockMode] Station lock ignored: Admin Laptop Gamer Mode is active.');
+    return true;
+  }
   isStationLocked = locked;
   if (mainWindow) {
     if (locked) {

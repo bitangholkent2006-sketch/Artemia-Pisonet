@@ -80,6 +80,8 @@ export interface PisonetDesktopApi {
   setUiMode?: (mode: 'launcher' | 'agent') => Promise<boolean>;
   peekWindowsDesktop?: (password: string) => Promise<{ success: boolean; error?: string }>;
   onLauncherRestoredIdle?: (callback: () => void) => void;
+  isLaptopMode?: () => Promise<boolean>;
+  setLaptopMode?: (enabled: boolean) => Promise<boolean>;
 }
 
 const api: PisonetDesktopApi = {
@@ -140,7 +142,9 @@ const api: PisonetDesktopApi = {
   peekWindowsDesktop: (password) => ipcRenderer.invoke('operator:peek-desktop', password),
   onLauncherRestoredIdle: (callback) => {
     ipcRenderer.on('launcher:restored-after-idle', () => callback());
-  }
+  },
+  isLaptopMode: () => ipcRenderer.invoke('system:is-laptop-mode'),
+  setLaptopMode: (enabled: boolean) => ipcRenderer.invoke('system:set-laptop-mode', enabled)
 };
 
 contextBridge.exposeInMainWorld('pisonetDesktop', api);

@@ -1,0 +1,297 @@
+<div class="squad-voice-container">
+  <!-- Page Header -->
+  <div class="voice-header-card">
+    <div class="header-left">
+      <div class="header-icon-wrap">
+        <span class="header-icon">🎙️</span>
+        <span class="live-dot" *ngIf="currentRoomId"></span>
+      </div>
+      <div>
+        <h1 class="page-title">
+          <span>Squad Voice Comms & Shop Intercom</span>
+          <span class="version-tag">24kHz HD Audio</span>
+        </h1>
+        <p class="page-subtitle">
+          Direktang voice communication sa imong mga players gamit ang imong Admin Laptop. 100% Offline sa Local LAN — walay Discord, walay website, ug walay lag.
+        </p>
+      </div>
+    </div>
+
+    <!-- Active Call Quick Status Badge -->
+    <div class="header-status-badge" [ngClass]="{'active': !!currentRoomId}">
+      <span class="status-indicator-dot" [ngClass]="{'pulse': !!currentRoomId}"></span>
+      <span *ngIf="currentRoomId">CONNECTED: {{ currentRoomName }}</span>
+      <span *ngIf="!currentRoomId">VOICE IDLE (NOT IN ROOM)</span>
+    </div>
+  </div>
+
+  <!-- Operator Laptop Gaming Guide Alert Banner -->
+  <div class="operator-guide-banner">
+    <div class="banner-icon">🎮</div>
+    <div class="banner-content">
+      <strong>Admin Laptop Gamer Mode:</strong>
+      Gusto ka mo-apil sa dula sa imong mga customer? Duha ang imong pamaagi:
+      <ol class="banner-steps">
+        <li><strong>Direkta sa Dashboard:</strong> I-click lang ang <em>"Join Room"</em> sa ubos ug mag-comms ka dayon gamit ang mic sa imong laptop samtang nagdula ka!</li>
+        <li><strong>Gamit ang Customer Terminal sa Laptop:</strong> Kon gusto nimo ablihan ang Customer Terminal launcher sa imong laptop, pindota ang <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>L</kbd> o i-enable sa Tray ang <em>"Laptop Gamer Mode"</em> aron dili ma-lock ang imong laptop screen!</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- Active Room In-Call Dock (Visible when in a Voice Room) -->
+  <div class="active-call-dock" *ngIf="currentRoomId">
+    <div class="dock-header">
+      <div class="channel-info">
+        <span class="active-room-icon">🔊</span>
+        <div>
+          <h2 class="active-room-title">{{ currentRoomName }}</h2>
+          <span class="active-room-meta">{{ members.length }} Member(s) in Room • Anti-Aliased 24kHz HD Voice</span>
+        </div>
+      </div>
+      <button type="button" class="btn btn-leave-call" (click)="leaveRoom()">
+        <span>❌ Leave Room</span>
+      </button>
+    </div>
+
+    <!-- Participants Grid -->
+    <div class="participants-grid">
+      <!-- Admin Participant Card -->
+      <div class="participant-card is-admin" [ngClass]="{'is-speaking': speakingMembers.has(adminPcId)}">
+        <div class="avatar-wrap">
+          <span class="avatar-icon">👑</span>
+          <div class="speaking-wave" *ngIf="speakingMembers.has(adminPcId)"></div>
+        </div>
+        <div class="participant-info">
+          <span class="participant-name">{{ adminName }}</span>
+          <span class="participant-sub">This Laptop</span>
+        </div>
+        <div class="participant-badges">
+          <span class="badge-mini" *ngIf="isMuted" title="Muted">🔇</span>
+          <span class="badge-mini" *ngIf="isDeafened" title="Deafened">🎧</span>
+          <span class="badge-mini speaking-badge" *ngIf="speakingMembers.has(adminPcId)">TALKING</span>
+        </div>
+      </div>
+
+      <!-- Remote Squad Members -->
+      <div
+        class="participant-card"
+        *ngFor="let member of members"
+        [ngClass]="{'is-speaking': speakingMembers.has(member.pcId)}"
+      >
+        <div class="avatar-wrap">
+          <span class="avatar-icon">🎮</span>
+          <div class="speaking-wave" *ngIf="speakingMembers.has(member.pcId)"></div>
+        </div>
+        <div class="participant-info">
+          <span class="participant-name">{{ member.pcName || member.pcId }}</span>
+          <span class="participant-sub">Station PC</span>
+        </div>
+        <div class="participant-badges">
+          <span class="badge-mini" *ngIf="member.isMuted" title="Muted">🔇</span>
+          <span class="badge-mini" *ngIf="member.isDeafened" title="Deafened">🎧</span>
+          <span class="badge-mini speaking-badge" *ngIf="speakingMembers.has(member.pcId)">TALKING</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Call Controls Bar -->
+    <div class="call-controls-bar">
+      <!-- Mic Mute / Unmute -->
+      <button
+        type="button"
+        class="ctrl-btn"
+        [ngClass]="{'danger': isMuted}"
+        (click)="toggleMute()"
+        [title]="isMuted ? 'I-unmute ang imong Mic (M)' : 'I-mute ang imong Mic (M)'"
+      >
+        <span class="ctrl-icon">{{ isMuted ? '🔇' : '🎙️' }}</span>
+        <span>{{ isMuted ? 'Unmute Mic' : 'Mute Mic' }}</span>
+      </button>
+
+      <!-- Deafen / Undeafen -->
+      <button
+        type="button"
+        class="ctrl-btn"
+        [ngClass]="{'danger': isDeafened}"
+        (click)="toggleDeafen()"
+        [title]="isDeafened ? 'I-undeafen (D)' : 'I-deafen ang audio (D)'"
+      >
+        <span class="ctrl-icon">{{ isDeafened ? '🔇' : '🎧' }}</span>
+        <span>{{ isDeafened ? 'Undeafen' : 'Deafen' }}</span>
+      </button>
+
+      <!-- Voice Mode Switcher -->
+      <div class="mode-switcher">
+        <button
+          type="button"
+          class="mode-btn"
+          [ngClass]="{'active': voiceMode === 'vad'}"
+          (click)="setVoiceMode('vad')"
+        >
+          Auto VAD
+        </button>
+        <button
+          type="button"
+          class="mode-btn"
+          [ngClass]="{'active': voiceMode === 'ptt'}"
+          (click)="setVoiceMode('ptt')"
+        >
+          Push-To-Talk (V)
+        </button>
+      </div>
+
+      <!-- Push To Talk Hold Button (Only visible in PTT mode) -->
+      <button
+        type="button"
+        class="btn-ptt-hold"
+        *ngIf="voiceMode === 'ptt'"
+        [ngClass]="{'pressed': isPttPressed}"
+        (mousedown)="setPttState(true)"
+        (mouseup)="setPttState(false)"
+        (mouseleave)="setPttState(false)"
+        (touchstart)="setPttState(true)"
+        (touchend)="setPttState(false)"
+      >
+        <span>🎙️ {{ isPttPressed ? 'TRANSMITTING VOICE...' : 'HOLD TO TALK' }}</span>
+      </button>
+
+      <!-- Mic Input Level VU Meter -->
+      <div class="vu-meter-box" title="Real-time Microphone Input Level">
+        <span class="vu-label">MIC LEVEL</span>
+        <div class="vu-track">
+          <div class="vu-bar" [style.width.%]="micLevelPercent"></div>
+        </div>
+      </div>
+
+      <!-- Volume Slider -->
+      <div class="volume-slider-box">
+        <span class="vol-icon">🔊</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          [value]="volume * 100"
+          (input)="setVolume(+($any($event.target).value))"
+          class="range-slider"
+          title="Master Volume"
+        />
+        <span class="vol-label">{{ (volume * 100) | number:'1.0-0' }}%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Grid: Voice Channels + PA Intercom Broadcast -->
+  <div class="voice-main-grid">
+    <!-- Channel Browser Section -->
+    <div class="channels-section">
+      <div class="section-header">
+        <h2 class="section-title">
+          <span>🎮 Available Squad & Party Rooms</span>
+        </h2>
+        <span class="section-badge">{{ rooms.length }} Active Channels</span>
+      </div>
+
+      <div class="rooms-grid">
+        <div
+          class="room-card"
+          *ngFor="let room of rooms"
+          [ngClass]="{'is-current': room.id === currentRoomId}"
+        >
+          <div class="room-top">
+            <h3 class="room-name">{{ room.name }}</h3>
+            <span class="room-badge" [ngClass]="{'badge-green': room.memberCount > 0}">
+              {{ room.memberCount }} / {{ room.maxSlots }} Players
+            </span>
+          </div>
+          <p class="room-desc">{{ room.description }}</p>
+
+          <!-- Current Members Avatars List -->
+          <div class="room-members-avatars" *ngIf="room.members && room.members.length > 0">
+            <span class="member-chip" *ngFor="let m of room.members">
+              👤 {{ m.pcName || m.pcId }}
+            </span>
+          </div>
+
+          <div class="room-actions">
+            <button
+              type="button"
+              class="btn btn-join-room"
+              *ngIf="room.id !== currentRoomId"
+              (click)="joinRoom(room.id)"
+            >
+              <span>🎙️ Join Channel</span>
+            </button>
+            <button
+              type="button"
+              class="btn btn-in-room"
+              *ngIf="room.id === currentRoomId"
+              (click)="leaveRoom()"
+            >
+              <span>🟢 Connected (Click to Leave)</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PA System & Shop Intercom Section -->
+    <div class="intercom-section">
+      <div class="section-header">
+        <h2 class="section-title">
+          <span>📢 Shop Intercom & PA Announcements</span>
+        </h2>
+      </div>
+
+      <div class="intercom-card">
+        <p class="intercom-sub">
+          Direktang tingog nga madungog sa speakers o headset sa customer PC. Adunay automated attention chime (ding-dong).
+        </p>
+
+        <div class="form-group">
+          <label class="form-label">Target Station(s):</label>
+          <select class="form-select" [(ngModel)]="intercomTargetPcId">
+            <option value="all">📢 ALL Active Stations (Broadcast to Shop)</option>
+            <option *ngFor="let pc of pcsList" [value]="pc.id">
+              🖥️ {{ pc.name || pc.id }} ({{ pc.status | uppercase }})
+            </option>
+          </select>
+        </div>
+
+        <!-- Push-To-Talk Intercom Button -->
+        <button
+          type="button"
+          class="btn-intercom-broadcast"
+          [ngClass]="{'active': isIntercomBroadcasting}"
+          (mousedown)="startIntercomBroadcast()"
+          (mouseup)="stopIntercomBroadcast()"
+          (mouseleave)="stopIntercomBroadcast()"
+          (touchstart)="startIntercomBroadcast()"
+          (touchend)="stopIntercomBroadcast()"
+        >
+          <span class="broadcast-icon">{{ isIntercomBroadcasting ? '🔴' : '📢' }}</span>
+          <span class="broadcast-text">
+            {{ isIntercomBroadcasting ? 'BROADCASTING LIVE ON SHOP SPEAKERS...' : 'HOLD TO SPEAK ON SHOP INTERCOM' }}
+          </span>
+        </button>
+
+        <div class="intercom-tips">
+          <span>💡 <strong>Tip:</strong> Pindota ug kupti ang button samtang mag-anunsyo, unya buhii inig human.</span>
+        </div>
+      </div>
+
+      <!-- Quick Audio Health Check -->
+      <div class="audio-health-card">
+        <div class="health-header">
+          <span class="health-icon">🛡️</span>
+          <h4>Artemia Audio DSP Engine</h4>
+        </div>
+        <ul class="health-features">
+          <li>✨ <strong>24,000 Hz Wideband HD Voice:</strong> Crystal clear, zero aliasing foldback</li>
+          <li>🎯 <strong>Per-Speaker Jitter Buffers:</strong> Zero delay / no crosstalk collisions</li>
+          <li>🎛️ <strong>Anti-Clipping Limiter:</strong> Automatically stops harsh microphone crackle ("karat")</li>
+          <li>⚡ <strong>Sub-40ms LAN Latency:</strong> Real-time in-game squad coordination</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>

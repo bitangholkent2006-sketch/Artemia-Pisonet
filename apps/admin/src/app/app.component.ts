@@ -11,10 +11,12 @@ import { RemoteTerminalComponent } from './components/remote-terminal/remote-ter
 import { ScreenViewComponent } from './components/screen-view/screen-view.component';
 import { PcsComponent } from './components/pcs/pcs.component';
 import { LauncherComponent } from './components/launcher/launcher.component';
+import { SquadVoiceComponent } from './components/squad-voice/squad-voice.component';
 import { PisonetAppState } from '@pisonet/shared';
 
 export type NavTab = 
   | 'dashboard'
+  | 'squad-voice'
   | 'launcher'
   | 'game-updater'
   | 'file-manager'
@@ -31,6 +33,7 @@ export type NavTab =
     LoginComponent,
     DashboardComponent,
     LauncherComponent,
+    SquadVoiceComponent,
     FileManagerComponent,
     GameUpdaterComponent,
     TaskManagerComponent,

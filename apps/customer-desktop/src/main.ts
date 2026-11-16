@@ -68,6 +68,8 @@ interface WindowWithDesktop extends Window {
     setUiMode?: (mode: 'launcher' | 'agent') => Promise<boolean>;
     peekWindowsDesktop?: (password: string) => Promise<{ success: boolean; error?: string }>;
     onLauncherRestoredIdle?: (callback: () => void) => void;
+    isLaptopMode?: () => Promise<boolean>;
+    setLaptopMode?: (enabled: boolean) => Promise<boolean>;
   };
 }
 
@@ -99,6 +101,7 @@ class StationMaintenanceAgent {
   private specs: string = 'Standard Gaming Terminal';
   private isConnected = false;
   private isLocked = false;
+  public isLaptopPlayerMode = false;
   private hasRealtimeStatus = false;
   private isPoweredOff = false;
   private lastUpdateLog: string = 'Station ready. No active background jobs.';
@@ -415,6 +418,15 @@ class StationMaintenanceAgent {
 
   constructor() {
     desktopWindow.pisonetDesktop?.cancelShutdown?.().catch?.(() => {});
+    this.isLaptopPlayerMode = localStorage.getItem('artemia_laptop_mode') === 'true' || window.location.search.includes('laptop');
+    if (desktopWindow.pisonetDesktop?.isLaptopMode) {
+      desktopWindow.pisonetDesktop.isLaptopMode().then((isLap) => {
+        if (isLap) {
+          this.isLaptopPlayerMode = true;
+          this.updateLaptopModeBadge();
+        }
+      }).catch(() => {});
+    }
     this.renderUI();
     this.bootstrapAgent();
   }
@@ -579,6 +591,19 @@ class StationMaintenanceAgent {
   }
 
   public setLockedState(locked: boolean) {
+    if (locked && this.isLaptopPlayerMode) {
+      this.isLocked = false;
+      this.logMessage(`[LaptopMode] Lock ignored: Admin Laptop Gamer Mode is active.`);
+      const lockEl = document.getElementById('lock-overlay');
+      if (lockEl) lockEl.classList.remove('visible');
+      const valKiosk = document.getElementById('val-kiosk');
+      if (valKiosk) {
+        valKiosk.innerText = 'UNLOCKED (LAPTOP GAMER)';
+        valKiosk.style.color = '#38bdf8';
+      }
+      return;
+    }
+
     this.isLocked = locked;
     const lockEl = document.getElementById('lock-overlay');
     const valKiosk = document.getElementById('val-kiosk');
@@ -2699,6 +2724,7 @@ class StationMaintenanceAgent {
           <input id="operator-exit-password" type="password" class="operator-exit-input" placeholder="Admin / Operator Password..." autocomplete="current-password" />
           <div id="operator-exit-error" class="operator-exit-error"></div>
           <div class="operator-exit-actions">
+            <button id="btn-op-toggle-laptop-mode" class="btn-op-unlock" style="background:#059669;">🎮 Toggle Laptop Gamer Mode (Bypass Lock)</button>
             <button id="btn-op-peek-desktop" class="btn-op-unlock" style="background:#0284c7;">🖥️ Temporarily Show Windows Desktop</button>
             <button id="btn-op-to-agent" class="btn-op-unlock" style="background:#4f46e5;">⚙️ Switch to Agent Console (Admin Only)</button>
             <button id="btn-op-verify-quit" class="btn-op-exit">🚪 Verify &amp; Exit Agent</button>
@@ -3143,6 +3169,27 @@ class StationMaintenanceAgent {
         errEl.innerText = res?.error || 'Sayop ang Admin Password.';
       }
     });
+    const toggleLaptopMode = async () => {
+      this.isLaptopPlayerMode = !this.isLaptopPlayerMode;
+      localStorage.setItem('artemia_laptop_mode', this.isLaptopPlayerMode ? 'true' : 'false');
+      if (desktopWindow.pisonetDesktop?.setLaptopMode) {
+        await desktopWindow.pisonetDesktop.setLaptopMode(this.isLaptopPlayerMode);
+      }
+      this.updateLaptopModeBadge();
+      const msg = this.isLaptopPlayerMode
+        ? '🎮 Laptop Gamer Mode ACTIVATED: Kiosk lockdown is disabled for Admin gaming & voice comms.'
+        : '🔒 Laptop Gamer Mode DEACTIVATED: Kiosk lock protection restored.';
+      this.showToast(msg, this.isLaptopPlayerMode ? 'success' : 'info', 4);
+      if (this.isLaptopPlayerMode) {
+        this.setLockedState(false);
+      }
+    };
+
+    document.getElementById('btn-op-toggle-laptop-mode')?.addEventListener('click', () => {
+      toggleLaptopMode();
+      closeOperatorExitModal();
+    });
+
     document.getElementById('btn-op-verify-quit')?.addEventListener('click', () => submitOperatorExit(false));
     document.getElementById('btn-op-verify-unprotect')?.addEventListener('click', () => submitOperatorExit(true));
     document.getElementById('operator-exit-password')?.addEventListener('keydown', (ev) => {
@@ -3154,6 +3201,11 @@ class StationMaintenanceAgent {
       });
     }
     window.addEventListener('keydown', (ev) => {
+      if (ev.ctrlKey && ev.altKey && ev.key.toLowerCase() === 'l') {
+        ev.preventDefault();
+        toggleLaptopMode();
+        return;
+      }
       const isOperatorHotKey =
         (ev.ctrlKey && ev.altKey && ev.shiftKey && ev.key.toLowerCase() === 'q') ||
         (ev.ctrlKey && ev.shiftKey && ev.key.toLowerCase() === 'x');
@@ -3171,6 +3223,34 @@ class StationMaintenanceAgent {
     });
 
     this.setupVoiceCommsListeners();
+  }
+
+  private updateLaptopModeBadge() {
+    const valKiosk = document.getElementById('val-kiosk');
+    if (valKiosk && this.isLaptopPlayerMode) {
+      valKiosk.innerText = 'UNLOCKED (LAPTOP GAMER)';
+      valKiosk.style.color = '#38bdf8';
+    }
+    const headerTitle = document.querySelector('.launcher-hud-brand');
+    if (headerTitle) {
+      let badge = document.getElementById('laptop-gamer-badge');
+      if (this.isLaptopPlayerMode) {
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.id = 'laptop-gamer-badge';
+          badge.className = 'lock-station-pill';
+          badge.style.marginLeft = '12px';
+          badge.style.fontSize = '0.72rem';
+          badge.style.background = '#065f46';
+          badge.style.color = '#34d399';
+          badge.style.border = '1px solid #10b981';
+          badge.innerText = '🎮 LAPTOP GAMER (UNLOCKED)';
+          headerTitle.appendChild(badge);
+        }
+      } else if (badge) {
+        badge.remove();
+      }
+    }
   }
 
   private setupVoiceCommsListeners() {

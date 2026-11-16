@@ -1,9 +1,9 @@
 {
-  "version": "1.0.28",
+  "version": "1.0.29",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-16T11:50:00.000Z",
+  "releaseDate": "2026-11-16T13:20:00.000Z",
   "asarFileName": "app.asar",
-  "size": 463129,
-  "sha256": "CBF96EDE8A550F8FB37B22BB3E34396A8F69505B297A312F641B575931E9BCF1",
-  "changelog": "Local LAN Squad Voice Comms & Shop Intercom: 100% offline peer voice chat without Discord, party channels (Shop Lobby, Squads 1-3, Duo rooms), open mic VAD & Push-To-Talk, glowing live speaking indicators, floating corner HUD, and Admin Walkie-Talkie Intercom broadcast."
+  "size": 470616,
+  "sha256": "212CEF09049E136EA949D4413568FB71438167C10B9C90AC0B5DBB13DBA674C9",
+  "changelog": "HD Voice Audio Tuning & Admin Laptop Gaming Access: 24,000 Hz studio wideband voice engine with area-weighted fractional anti-aliasing resampling to eliminate microphone static/crackle ('karat'), per-speaker independent jitter buffers, soft-knee limiter, Admin Squad Voice Comms web panel in Admin Dashboard, and Admin Laptop Gamer Mode (Ctrl+Alt+L) for unshielded gaming."
 }
