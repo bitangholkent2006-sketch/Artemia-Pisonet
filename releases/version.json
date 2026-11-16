@@ -1,7 +1,7 @@
 {
-  "version": "1.0.25",
+  "version": "1.0.26",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-16T10:00:00.000Z",
+  "releaseDate": "2026-11-16T10:35:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Desktop Launcher Anti-Minimize Shield: Low-level keyboard hook blocking Win+D, Win+M, Win+Home, Win+, and multi-stage window restoration ensuring launcher is never minimized to bare Windows desktop"
+  "changelog": "Professional Esports Cyber HUD Game Launcher: Removed exposed admin/operator buttons from customer view, hardened anti-minimize controls, added quick keyboard search (/), enhanced dark glassmorphism card grid and category styling."
 }

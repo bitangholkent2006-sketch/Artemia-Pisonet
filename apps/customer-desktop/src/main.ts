@@ -70,7 +70,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.25';
+const CLIENT_AGENT_VERSION = '1.0.26';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -1893,239 +1893,246 @@ class StationMaintenanceAgent {
         }
         .launcher-wallpaper-bg {
           position: absolute; inset: 0; background-size: cover; background-position: center;
-          background: radial-gradient(circle at 50% 0%, rgba(6, 182, 212, 0.14) 0%, transparent 65%),
-                      radial-gradient(circle at 10% 85%, rgba(99, 102, 241, 0.12) 0%, transparent 50%),
+          background: radial-gradient(circle at 50% 0%, rgba(0, 240, 255, 0.12) 0%, transparent 65%),
+                      radial-gradient(circle at 10% 85%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
                       #07090e;
           z-index: 0; pointer-events: none;
         }
         .launcher-header {
-          position: relative; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 16px;
-          padding: 10px 24px; background: rgba(9, 14, 26, 0.85); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-          border-bottom: 1px solid rgba(56, 189, 248, 0.22); box-shadow: 0 4px 25px rgba(0, 0, 0, 0.6);
-          min-height: 64px;
+          position: relative; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 18px;
+          padding: 12px 28px; background: rgba(8, 13, 24, 0.92); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+          border-bottom: 1px solid rgba(0, 240, 255, 0.22); box-shadow: 0 4px 30px rgba(0, 0, 0, 0.7);
+          min-height: 68px;
         }
-        .launcher-brand { display: flex; align-items: center; gap: 12px; }
+        .launcher-brand { display: flex; align-items: center; gap: 14px; }
         .launcher-logo {
-          width: 42px; height: 42px; border-radius: 12px;
-          background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%);
-          display: flex; align-items: center; justify-content: center; font-size: 1.35rem;
-          box-shadow: 0 0 20px rgba(14, 165, 233, 0.45); border: 1px solid rgba(255, 255, 255, 0.18);
+          width: 44px; height: 44px; border-radius: 14px;
+          background: linear-gradient(135deg, #00f0ff 0%, #2563eb 100%);
+          display: flex; align-items: center; justify-content: center; font-size: 1.45rem;
+          box-shadow: 0 0 24px rgba(0, 240, 255, 0.45); border: 1px solid rgba(255, 255, 255, 0.25);
+          animation: pulseGlow 2.5s infinite;
         }
-        .launcher-brand-info { display: flex; flex-direction: column; gap: 1px; }
-        .launcher-brand-top { display: flex; align-items: center; gap: 8px; }
+        .launcher-brand-info { display: flex; flex-direction: column; gap: 2px; }
+        .launcher-brand-top { display: flex; align-items: center; gap: 10px; }
         .launcher-shop-title {
-          font-size: 1.12rem; font-weight: 900; color: #ffffff; letter-spacing: 0.3px;
-          text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+          font-size: 1.22rem; font-weight: 900; color: #ffffff; letter-spacing: 0.4px;
+          text-shadow: 0 0 12px rgba(0, 240, 255, 0.4), 0 2px 4px rgba(0,0,0,0.8);
         }
         .launcher-status-badge {
-          background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35);
-          color: #34d399; font-size: 0.68rem; font-weight: 800; padding: 2px 8px; border-radius: 999px;
-          display: inline-flex; align-items: center; gap: 5px; letter-spacing: 0.05em;
+          background: rgba(16, 185, 129, 0.14); border: 1px solid rgba(16, 185, 129, 0.45);
+          color: #34d399; font-size: 0.7rem; font-weight: 800; padding: 3px 10px; border-radius: 999px;
+          display: inline-flex; align-items: center; gap: 6px; letter-spacing: 0.06em;
+          box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
         }
         .desktop-live-dot {
-          width: 7px; height: 7px; border-radius: 50%; background: #10b981;
-          box-shadow: 0 0 8px #10b981; display: inline-block; animation: pulseGlow 1.8s infinite;
+          width: 8px; height: 8px; border-radius: 50%; background: #10b981;
+          box-shadow: 0 0 10px #10b981; display: inline-block; animation: pulseGlow 1.8s infinite;
         }
         .launcher-station-sub {
-          font-size: 0.73rem; color: #94a3b8; display: flex; align-items: center; gap: 6px;
+          font-size: 0.76rem; color: #94a3b8; display: flex; align-items: center; gap: 8px;
         }
-        .launcher-station-sub .station-tag { color: #38bdf8; font-weight: 800; }
+        .launcher-station-sub .station-tag { color: #00f0ff; font-weight: 800; letter-spacing: 0.5px; }
         .launcher-station-sub .sub-sep { color: #475569; }
 
-        .desktop-search-wrap { flex: 1; max-width: 480px; min-width: 220px; }
+        .desktop-search-wrap { flex: 1; max-width: 520px; min-width: 240px; }
         .search-input-box { position: relative; display: flex; align-items: center; width: 100%; }
         .search-icon {
-          position: absolute; left: 14px; font-size: 0.95rem; pointer-events: none; opacity: 0.75;
+          position: absolute; left: 16px; font-size: 1rem; pointer-events: none; opacity: 0.8; color: #00f0ff;
         }
         .launcher-search {
-          width: 100%; background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(255, 255, 255, 0.14);
-          color: #f8fafc; padding: 10px 38px 10px 40px; border-radius: 12px; font-size: 0.86rem;
-          font-weight: 600; outline: none; transition: all 0.2s ease;
+          width: 100%; background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(255, 255, 255, 0.16);
+          color: #f8fafc; padding: 11px 42px 11px 44px; border-radius: 14px; font-size: 0.88rem;
+          font-weight: 600; outline: none; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
         }
         .launcher-search::placeholder { color: #64748b; font-weight: 500; }
         .launcher-search:focus {
-          border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2), 0 0 16px rgba(56, 189, 248, 0.25);
+          border-color: #00f0ff; box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.2), 0 0 20px rgba(0, 240, 255, 0.28);
           background: rgba(15, 23, 42, 0.98);
         }
         .search-clear-btn {
-          position: absolute; right: 12px; background: rgba(255, 255, 255, 0.12); border: none; color: #94a3b8;
-          width: 20px; height: 20px; border-radius: 50%; font-size: 0.72rem; cursor: pointer;
+          position: absolute; right: 14px; background: rgba(255, 255, 255, 0.14); border: none; color: #94a3b8;
+          width: 22px; height: 22px; border-radius: 50%; font-size: 0.75rem; cursor: pointer;
           display: flex; align-items: center; justify-content: center; transition: all 0.15s;
         }
-        .search-clear-btn:hover { background: rgba(244, 63, 94, 0.6); color: #fff; }
+        .search-clear-btn:hover { background: rgba(244, 63, 94, 0.7); color: #fff; }
 
-        .header-actions { display: flex; align-items: center; gap: 12px; }
+        .header-actions { display: flex; align-items: center; gap: 14px; }
         .desktop-vol-box {
-          display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 11px;
-          background: rgba(15, 23, 42, 0.82); border: 1px solid rgba(255, 255, 255, 0.12);
-          color: #e2e8f0; font-size: 0.78rem; font-weight: 700;
+          display: inline-flex; align-items: center; gap: 9px; padding: 7px 14px; border-radius: 12px;
+          background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(255, 255, 255, 0.14);
+          color: #e2e8f0; font-size: 0.8rem; font-weight: 700;
         }
-        .desktop-vol-slider { width: 75px; accent-color: #06b6d4; cursor: pointer; height: 5px; }
-        .desktop-vol-pct { font-size: 0.74rem; font-weight: 800; color: #38bdf8; min-width: 30px; text-align: right; }
+        .desktop-vol-slider { width: 85px; accent-color: #00f0ff; cursor: pointer; height: 5px; }
+        .desktop-vol-pct { font-size: 0.76rem; font-weight: 800; color: #00f0ff; min-width: 34px; text-align: right; }
         .desktop-clock {
           display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
-          background: rgba(15, 23, 42, 0.82); border: 1px solid rgba(56, 189, 248, 0.24);
-          padding: 5px 13px; border-radius: 11px; min-width: 95px;
+          background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(0, 240, 255, 0.28);
+          padding: 6px 15px; border-radius: 12px; min-width: 105px;
+          box-shadow: 0 0 14px rgba(0, 240, 255, 0.15);
         }
         .clock-time {
-          font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.88rem; font-weight: 800;
-          color: #38bdf8; line-height: 1.1;
+          font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.94rem; font-weight: 800;
+          color: #00f0ff; line-height: 1.1; text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
         }
-        .clock-date { font-size: 0.67rem; font-weight: 700; color: #94a3b8; line-height: 1.1; margin-top: 2px; }
+        .clock-date { font-size: 0.68rem; font-weight: 700; color: #94a3b8; line-height: 1.1; margin-top: 3px; }
         .launcher-rescan-btn {
-          background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.8));
-          border: 1px solid rgba(56, 189, 248, 0.35); color: #e0f2fe; padding: 8px 14px;
-          border-radius: 11px; font-weight: 700; font-size: 0.82rem; cursor: pointer;
-          display: flex; align-items: center; gap: 6px; transition: all 0.2s ease;
+          background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.85));
+          border: 1px solid rgba(0, 240, 255, 0.4); color: #e0f2fe; padding: 9px 16px;
+          border-radius: 12px; font-weight: 800; font-size: 0.84rem; cursor: pointer;
+          display: flex; align-items: center; gap: 8px; transition: all 0.2s ease;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         }
         .launcher-rescan-btn:hover {
-          background: linear-gradient(135deg, rgba(6, 182, 212, 0.25), rgba(37, 99, 235, 0.25));
-          border-color: #38bdf8; box-shadow: 0 0 16px rgba(6, 182, 212, 0.35); color: #ffffff;
+          background: linear-gradient(135deg, rgba(0, 240, 255, 0.25), rgba(37, 99, 235, 0.35));
+          border-color: #00f0ff; box-shadow: 0 0 20px rgba(0, 240, 255, 0.45); color: #ffffff;
+          transform: translateY(-1px);
         }
 
         .launcher-desktop-body { position: relative; z-index: 2; flex: 1; display: flex; overflow: hidden; min-height: 0; }
         .launcher-sidebar {
-          width: 242px; flex-shrink: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 12px;
-          padding: 16px 13px; background: rgba(8, 12, 24, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-          border-right: 1px solid rgba(255, 255, 255, 0.08); overflow-y: auto;
+          width: 254px; flex-shrink: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 14px;
+          padding: 18px 14px; background: rgba(8, 12, 24, 0.88); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+          border-right: 1px solid rgba(255, 255, 255, 0.09); overflow-y: auto;
         }
         .sidebar-label {
-          font-size: 0.68rem; font-weight: 800; letter-spacing: 0.09em; color: #64748b;
-          padding: 0 8px 6px; text-transform: uppercase;
+          font-size: 0.7rem; font-weight: 800; letter-spacing: 0.1em; color: #64748b;
+          padding: 0 10px 8px; text-transform: uppercase;
         }
-        .launcher-cats { display: flex; flex-direction: column; gap: 5px; }
+        .launcher-cats { display: flex; flex-direction: column; gap: 6px; }
         .l-cat-pill {
           display: flex; align-items: center; justify-content: space-between; width: 100%;
-          background: rgba(15, 23, 42, 0.45); border: 1px solid transparent; color: #cbd5e1;
-          padding: 10px 12px; border-radius: 12px; font-size: 0.82rem; font-weight: 700;
-          cursor: pointer; transition: all 0.16s ease; text-align: left;
+          background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255, 255, 255, 0.04); color: #cbd5e1;
+          padding: 11px 14px; border-radius: 13px; font-size: 0.84rem; font-weight: 700;
+          cursor: pointer; transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1); text-align: left;
         }
-        .l-cat-pill:hover { background: rgba(30, 41, 59, 0.7); color: #fff; transform: translateX(2px); }
+        .l-cat-pill:hover { background: rgba(30, 41, 59, 0.75); color: #fff; transform: translateX(3px); border-color: rgba(0, 240, 255, 0.2); }
         .l-cat-pill.active {
-          background: linear-gradient(90deg, rgba(14, 165, 233, 0.24) 0%, rgba(37, 99, 235, 0.2) 100%);
-          border-color: rgba(56, 189, 248, 0.6); color: #ffffff;
-          box-shadow: 0 0 16px rgba(14, 165, 233, 0.2); transform: translateX(2px);
+          background: linear-gradient(90deg, rgba(0, 240, 255, 0.22) 0%, rgba(37, 99, 235, 0.22) 100%);
+          border-color: rgba(0, 240, 255, 0.65); color: #ffffff;
+          box-shadow: 0 0 18px rgba(0, 240, 255, 0.22); transform: translateX(3px);
         }
         .l-nav-cnt {
           background: rgba(255, 255, 255, 0.08); color: #94a3b8; border-radius: 999px;
-          padding: 2px 8px; font-size: 0.71rem; font-weight: 800;
+          padding: 2px 9px; font-size: 0.72rem; font-weight: 800;
         }
-        .l-cat-pill.active .l-nav-cnt { background: rgba(56, 189, 248, 0.25); color: #e0f2fe; }
+        .l-cat-pill.active .l-nav-cnt { background: rgba(0, 240, 255, 0.25); color: #e0f2fe; }
         .view-switch-row {
-          display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px 0 4px;
+          display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px 0 6px;
           border-top: 1px solid rgba(255, 255, 255, 0.08);
         }
         .l-view-btn {
-          background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); color: #94a3b8;
-          padding: 7px 8px; border-radius: 9px; font-size: 0.76rem; font-weight: 700; cursor: pointer; transition: all 0.15s;
+          background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255, 255, 255, 0.12); color: #94a3b8;
+          padding: 8px 10px; border-radius: 10px; font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: all 0.15s;
         }
-        .l-view-btn.active { border-color: #38bdf8; color: #e0f2fe; background: rgba(14, 165, 233, 0.22); font-weight: 800; }
-        .quick-dock-box { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+        .l-view-btn.active { border-color: #00f0ff; color: #e0f2fe; background: rgba(0, 240, 255, 0.22); font-weight: 800; box-shadow: 0 0 12px rgba(0, 240, 255, 0.2); }
+        .quick-dock-box { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 14px; display: flex; flex-direction: column; gap: 7px; }
         .quick-dock-btn {
-          display: flex; align-items: center; gap: 9px; width: 100%; background: rgba(20, 30, 48, 0.55);
-          border: 1px solid rgba(255, 255, 255, 0.08); color: #e2e8f0; padding: 8px 12px; border-radius: 10px;
-          font-size: 0.78rem; font-weight: 700; cursor: pointer; text-align: left; transition: all 0.16s ease;
+          display: flex; align-items: center; gap: 10px; width: 100%; background: rgba(20, 30, 48, 0.6);
+          border: 1px solid rgba(255, 255, 255, 0.08); color: #e2e8f0; padding: 9px 13px; border-radius: 11px;
+          font-size: 0.8rem; font-weight: 700; cursor: pointer; text-align: left; transition: all 0.16s ease;
         }
-        .quick-dock-btn:hover { background: rgba(14, 165, 233, 0.2); border-color: rgba(56, 189, 248, 0.5); color: #fff; transform: translateX(2px); }
+        .quick-dock-btn:hover { background: rgba(0, 240, 255, 0.18); border-color: rgba(0, 240, 255, 0.5); color: #fff; transform: translateX(3px); }
 
         .launcher-main-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
         .launcher-rules-banner {
-          margin: 12px 24px 0; padding: 10px 16px; border-radius: 12px;
-          background: linear-gradient(90deg, rgba(6, 182, 212, 0.2), rgba(99, 102, 241, 0.18));
-          border: 1px solid rgba(56, 189, 248, 0.38); color: #e0f2fe; font-size: 0.84rem; font-weight: 700;
-          display: flex; align-items: center; gap: 10px; backdrop-filter: blur(14px);
+          margin: 14px 28px 0; padding: 12px 18px; border-radius: 14px;
+          background: linear-gradient(90deg, rgba(0, 240, 255, 0.18), rgba(99, 102, 241, 0.16));
+          border: 1px solid rgba(0, 240, 255, 0.35); color: #e0f2fe; font-size: 0.86rem; font-weight: 700;
+          display: flex; align-items: center; gap: 12px; backdrop-filter: blur(16px);
+          box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
         }
         .launcher-grid-wrap {
-          flex: 1; overflow-y: auto; padding: 20px 26px 36px;
+          flex: 1; overflow-y: auto; padding: 22px 28px 40px;
         }
         .launcher-grid-wrap::-webkit-scrollbar { width: 8px; }
         .launcher-grid-wrap::-webkit-scrollbar-track { background: rgba(10, 15, 28, 0.5); }
-        .launcher-grid-wrap::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.25); border-radius: 4px; }
-        .launcher-grid-wrap::-webkit-scrollbar-thumb:hover { background: rgba(56, 189, 248, 0.55); }
+        .launcher-grid-wrap::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.25); border-radius: 4px; }
+        .launcher-grid-wrap::-webkit-scrollbar-thumb:hover { background: rgba(0, 240, 255, 0.55); }
 
         .launcher-cards-grid {
-          display: grid; grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); gap: 15px;
+          display: grid; grid-template-columns: repeat(auto-fill, minmax(195px, 1fr)); gap: 16px;
         }
         .launcher-cards-grid.desktop-icons-mode {
-          grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 14px;
+          grid-template-columns: repeat(auto-fill, minmax(122px, 1fr)); gap: 15px;
         }
         .l-quick-strip {
-          grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 12px;
-          margin-bottom: 6px;
+          grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 13px;
+          margin-bottom: 8px;
         }
         .l-section-hdr {
           grid-column: 1 / -1; display: flex; align-items: center; gap: 10px;
-          font-size: 0.94rem; font-weight: 900; color: #f8fafc; letter-spacing: 0.4px;
-          margin: 18px 0 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(56, 189, 248, 0.22);
+          font-size: 0.98rem; font-weight: 900; color: #f8fafc; letter-spacing: 0.4px;
+          margin: 20px 0 10px; padding-bottom: 9px; border-bottom: 1px solid rgba(0, 240, 255, 0.22);
           text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
         }
         .l-sec-cnt {
-          background: rgba(56, 189, 248, 0.22); color: #e0f2fe; border-radius: 999px;
-          padding: 2px 9px; font-size: 0.72rem; font-weight: 800;
+          background: rgba(0, 240, 255, 0.22); color: #e0f2fe; border-radius: 999px;
+          padding: 2px 10px; font-size: 0.74rem; font-weight: 800;
         }
         .launcher-card {
-          background: linear-gradient(155deg, rgba(17, 25, 44, 0.85) 0%, rgba(9, 14, 26, 0.92) 100%);
-          border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px;
-          padding: 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 9px; cursor: pointer;
-          transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
-          backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); min-height: 168px;
+          background: linear-gradient(155deg, rgba(17, 25, 46, 0.9) 0%, rgba(9, 14, 28, 0.95) 100%);
+          border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 18px;
+          padding: 16px 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; cursor: pointer;
+          transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+          backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); min-height: 175px;
+          box-shadow: 0 8px 20px rgba(0,0,0,0.4);
         }
         .launcher-card:hover {
-          transform: translateY(-5px); border-color: #38bdf8;
-          background: linear-gradient(155deg, rgba(23, 35, 62, 0.95) 0%, rgba(12, 19, 36, 0.98) 100%);
-          box-shadow: 0 14px 28px rgba(0, 0, 0, 0.65), 0 0 20px rgba(14, 165, 233, 0.3);
+          transform: translateY(-6px); border-color: #00f0ff;
+          background: linear-gradient(155deg, rgba(23, 37, 68, 0.96) 0%, rgba(12, 20, 40, 0.98) 100%);
+          box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7), 0 0 24px rgba(0, 240, 255, 0.32);
         }
         .launcher-icon-tile {
-          background: rgba(12, 18, 34, 0.6); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px;
-          padding: 14px 8px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px;
-          cursor: pointer; transition: all 0.15s ease; backdrop-filter: blur(10px);
+          background: rgba(12, 18, 34, 0.65); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 15px;
+          padding: 16px 10px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 9px;
+          cursor: pointer; transition: all 0.16s ease; backdrop-filter: blur(12px);
         }
         .launcher-icon-tile:hover {
-          transform: translateY(-3px); border-color: #38bdf8; background: rgba(18, 28, 52, 0.88);
-          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5), 0 0 14px rgba(56, 189, 248, 0.25);
+          transform: translateY(-4px); border-color: #00f0ff; background: rgba(18, 30, 56, 0.9);
+          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55), 0 0 18px rgba(0, 240, 255, 0.28);
         }
-        .launcher-icon-tile.quick-tile { border-color: rgba(245, 158, 11, 0.3); background: rgba(25, 20, 10, 0.4); }
+        .launcher-icon-tile.quick-tile { border-color: rgba(245, 158, 11, 0.35); background: rgba(25, 20, 10, 0.45); }
         .l-tile-name {
-          font-size: 0.79rem; font-weight: 700; color: #f8fafc; line-height: 1.25;
+          font-size: 0.81rem; font-weight: 700; color: #f8fafc; line-height: 1.25;
           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
           text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
         }
         .l-card-top { display: flex; align-items: center; justify-content: space-between; }
         .l-icon {
-          width: 50px; height: 50px; border-radius: 13px; background: rgba(30, 41, 59, 0.65);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          display: flex; align-items: center; justify-content: center; font-size: 1.75rem; overflow: hidden;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+          width: 52px; height: 52px; border-radius: 14px; background: rgba(30, 41, 59, 0.7);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          display: flex; align-items: center; justify-content: center; font-size: 1.85rem; overflow: hidden;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.45);
         }
-        .l-real-icon { width: 38px; height: 38px; object-fit: contain; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5)); }
+        .l-real-icon { width: 40px; height: 40px; object-fit: contain; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6)); }
         .l-badge {
-          font-size: 0.65rem; font-weight: 800; padding: 3px 8px; border-radius: 999px; text-transform: uppercase;
-          letter-spacing: 0.04em;
+          font-size: 0.66rem; font-weight: 800; padding: 3px 9px; border-radius: 999px; text-transform: uppercase;
+          letter-spacing: 0.05em;
         }
-        .l-badge.ready { background: rgba(56, 189, 248, 0.14); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.28); }
-        .l-badge.badge-game { background: rgba(14, 165, 233, 0.16); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.35); }
-        .l-badge.badge-sys { background: rgba(16, 185, 129, 0.14); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .l-badge.ready { background: rgba(0, 240, 255, 0.14); color: #7dd3fc; border: 1px solid rgba(0, 240, 255, 0.32); }
+        .l-badge.badge-game { background: rgba(14, 165, 233, 0.18); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.4); }
+        .l-badge.badge-sys { background: rgba(16, 185, 129, 0.16); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
         .l-name {
-          font-size: 0.92rem; font-weight: 800; color: #f8fafc; margin: 4px 0 2px;
+          font-size: 0.94rem; font-weight: 800; color: #f8fafc; margin: 4px 0 2px;
           line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
           min-height: 2.5em; text-shadow: 0 1px 3px rgba(0,0,0,0.8);
         }
         .l-play-btn {
-          width: 100%; margin-top: 4px; padding: 8px 12px; border-radius: 10px; border: none;
-          font-weight: 800; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
-          gap: 6px; letter-spacing: 0.03em; box-shadow: 0 4px 14px rgba(0,0,0,0.3); transition: all 0.15s ease;
+          width: 100%; margin-top: 4px; padding: 9px 14px; border-radius: 11px; border: none;
+          font-weight: 900; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+          gap: 7px; letter-spacing: 0.04em; box-shadow: 0 4px 16px rgba(0,0,0,0.35); transition: all 0.16s ease;
         }
         .l-play-btn:active { transform: scale(0.97); }
-        .l-play-btn.btn-cat-game { background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%); color: #ffffff; }
-        .l-play-btn.btn-cat-game:hover { filter: brightness(1.15); box-shadow: 0 4px 18px rgba(14, 165, 233, 0.5); }
+        .l-play-btn.btn-cat-game { background: linear-gradient(135deg, #00f0ff 0%, #2563eb 100%); color: #030712; }
+        .l-play-btn.btn-cat-game:hover { filter: brightness(1.18); box-shadow: 0 4px 22px rgba(0, 240, 255, 0.55); color: #000; }
         .l-play-btn.btn-cat-sys { background: linear-gradient(135deg, #0d9488 0%, #0284c7 100%); color: #ffffff; }
-        .l-play-btn.btn-cat-sys:hover { filter: brightness(1.15); box-shadow: 0 4px 18px rgba(13, 148, 136, 0.5); }
+        .l-play-btn.btn-cat-sys:hover { filter: brightness(1.15); box-shadow: 0 4px 20px rgba(13, 148, 136, 0.55); }
         .l-play-btn.btn-cat-browser { background: linear-gradient(135deg, #6366f1 0%, #0ea5e9 100%); color: #ffffff; }
-        .l-play-btn.btn-cat-browser:hover { filter: brightness(1.15); box-shadow: 0 4px 18px rgba(99, 102, 241, 0.5); }
+        .l-play-btn.btn-cat-browser:hover { filter: brightness(1.15); box-shadow: 0 4px 20px rgba(99, 102, 241, 0.55); }
         .l-play-btn.btn-cat-media { background: linear-gradient(135deg, #d97706 0%, #ea580c 100%); color: #ffffff; }
-        .l-play-btn.btn-cat-media:hover { filter: brightness(1.15); box-shadow: 0 4px 18px rgba(234, 88, 12, 0.5); }
+        .l-play-btn.btn-cat-media:hover { filter: brightness(1.15); box-shadow: 0 4px 20px rgba(234, 88, 12, 0.55); }
         .l-play-btn.btn-cat-office { background: linear-gradient(135deg, #059669 0%, #0d9488 100%); color: #ffffff; }
-        .l-play-btn.btn-cat-office:hover { filter: brightness(1.15); box-shadow: 0 4px 18px rgba(5, 150, 105, 0.5); }
+        .l-play-btn.btn-cat-office:hover { filter: brightness(1.15); box-shadow: 0 4px 20px rgba(5, 150, 105, 0.55); }
         .l-play-btn.btn-cat-tool { background: linear-gradient(135deg, #334155 0%, #475569 100%); color: #f1f5f9; }
         .l-play-btn.btn-cat-tool:hover { filter: brightness(1.15); }
 
@@ -2393,7 +2400,7 @@ class StationMaintenanceAgent {
       </div>
 
       <!-- CUSTOMER DESKTOP REPLACEMENT LAUNCHER SHELL -->
-      <div id="launcher-shell" class="launcher-shell" style="display:none;">
+      <div id="launcher-shell" class="launcher-shell" style="display:flex;">
         <div id="launcher-wallpaper-bg" class="launcher-wallpaper-bg"></div>
         <header class="launcher-header">
           <div class="launcher-brand">
@@ -2403,13 +2410,13 @@ class StationMaintenanceAgent {
                 <div id="launcher-shop-title" class="launcher-shop-title">Artemia's Pisonet</div>
                 <div class="launcher-status-badge">
                   <span class="desktop-live-dot"></span>
-                  <span>READY</span>
+                  <span>ONLINE &amp; READY</span>
                 </div>
               </div>
               <div class="launcher-station-sub">
                 <span>Station: <strong id="launcher-station-pill" class="station-tag">${this.escapeHtml(this.pcName)}</strong></span>
                 <span class="sub-sep">•</span>
-                <span>Pisonet Desktop</span>
+                <span>Gaming Shell</span>
               </div>
             </div>
           </div>
@@ -2417,7 +2424,7 @@ class StationMaintenanceAgent {
           <div class="desktop-search-wrap">
             <div class="search-input-box">
               <span class="search-icon">🔍</span>
-              <input id="launcher-search-input" type="text" class="launcher-search" placeholder="Pangita og dula, browser, folder..." autocomplete="off" />
+              <input id="launcher-search-input" type="text" class="launcher-search" placeholder="Pangita og dula, browser, folder... (Pindota ang /)" autocomplete="off" />
               <button id="btn-search-clear" class="search-clear-btn" style="display:none;" title="Clear search">✕</button>
             </div>
           </div>
@@ -2480,8 +2487,8 @@ class StationMaintenanceAgent {
         </div>
       </div>
 
-      <!-- NORMAL CLIENT TERMINAL VIEW (MAINTENANCE AGENT) -->
-      <div id="agent-shell" class="agent-shell" style="display:flex;">
+      <!-- MAINTENANCE AGENT CONSOLE (HIDDEN FROM CUSTOMERS - OPERATOR ONLY) -->
+      <div id="agent-shell" class="agent-shell" style="display:none;">
       <div class="station-header">
         <div class="station-branding">
           <div class="logo-box">AF</div>
@@ -2492,9 +2499,7 @@ class StationMaintenanceAgent {
         </div>
         <div class="header-actions">
           <div id="status-pill" class="status-pill offline">○ CONNECTING...</div>
-          <button class="btn-minimize" id="btn-open-launcher" style="display:none; background:rgba(6,182,212,0.2); border-color:#38bdf8; color:#e0f2fe;" title="Balik sa Customer Game Launcher">🎮 Game Launcher</button>
-          <button class="btn-minimize" id="btn-hide-window" title="Hide to Background Tray">🙈 Hide to Background</button>
-          <button class="btn-minimize" id="btn-minimize-window" title="Minimize">Minimize</button>
+          <button class="btn-minimize" id="btn-open-launcher" style="background:rgba(6,182,212,0.2); border-color:#38bdf8; color:#e0f2fe;" title="Balik sa Customer Game Launcher">🎮 Back to Game Launcher</button>
         </div>
       </div>
 
@@ -2530,9 +2535,8 @@ class StationMaintenanceAgent {
         </div>
 
         <div class="quick-actions">
-          <button class="btn-action" id="btn-clean-local">🧹 Clean Slate Now (Wipe Downloads, Logins & Junk)</button>
+          <button class="btn-action" id="btn-clean-local">🧹 Clean Slate Now</button>
           <button class="btn-action" id="btn-change-id">⚙️ Change Station PC ID</button>
-          <button class="btn-action" id="btn-operator-exit" style="border-color:rgba(244,63,94,0.4); color:#fda4af;">🔐 Operator Exit / Unlock</button>
         </div>
       </div>
       </div>
@@ -2628,19 +2632,11 @@ class StationMaintenanceAgent {
     });
 
     document.getElementById('btn-hide-window')?.addEventListener('click', () => {
-      if (desktopWindow.pisonetDesktop?.hideToTray) {
-        desktopWindow.pisonetDesktop.hideToTray();
-      } else {
-        desktopWindow.pisonetDesktop?.minimize();
-      }
+      // Intentionally neutralized: Customer kiosk shell cannot be hidden to desktop
     });
 
     document.getElementById('btn-minimize-window')?.addEventListener('click', () => {
-      if (desktopWindow.pisonetDesktop?.hideToTray) {
-        desktopWindow.pisonetDesktop.hideToTray();
-      } else {
-        desktopWindow.pisonetDesktop?.minimize();
-      }
+      // Intentionally neutralized: Customer kiosk shell cannot be minimized
     });
 
     document.getElementById('btn-clean-local')?.addEventListener('click', async () => {
@@ -2751,6 +2747,13 @@ class StationMaintenanceAgent {
       if (isOperatorHotKey && !this.isLocked) {
         ev.preventDefault();
         openOperatorExitModal();
+        return;
+      }
+      if (ev.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        ev.preventDefault();
+        const searchInput = document.getElementById('launcher-search-input') as HTMLInputElement | null;
+        searchInput?.focus();
+        searchInput?.select();
       }
     });
   }
