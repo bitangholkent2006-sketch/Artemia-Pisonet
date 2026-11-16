@@ -64,6 +64,12 @@ namespace ArtemiaRemoteInput {
         static extern bool SetCursorPos(int X, int Y);
 
         [DllImport("user32.dll")]
+        static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);
+
+        [DllImport("user32.dll")]
+        static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+        [DllImport("user32.dll")]
         static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
         [DllImport("user32.dll")]
@@ -76,10 +82,28 @@ namespace ArtemiaRemoteInput {
         static extern IntPtr WindowFromPoint(POINT Point);
 
         [DllImport("user32.dll")]
+        static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+
+        [DllImport("user32.dll")]
+        static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("kernel32.dll")]
+        static extern uint GetCurrentThreadId();
+
+        [DllImport("user32.dll")]
+        static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+        [DllImport("user32.dll")]
+        static extern bool BringWindowToTop(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
         static extern bool SetForegroundWindow(IntPtr hWnd);
 
         [DllImport("user32.dll")]
         static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetMessageExtraInfo();
 
         const uint INPUT_MOUSE = 0;
         const uint INPUT_KEYBOARD = 1;
@@ -98,6 +122,12 @@ namespace ArtemiaRemoteInput {
         const uint KEYEVENTF_KEYUP = 0x0002;
         const uint KEYEVENTF_SCANCODE = 0x0008;
 
+        const uint GA_ROOT = 2;
+        const uint GA_ROOTOWNER = 3;
+
+        static int lastMouseX = -1;
+        static int lastMouseY = -1;
+
         static bool IsExtendedKey(ushort vk) {
             return (vk == 0x21 || vk == 0x22 || vk == 0x23 || vk == 0x24 ||
                     vk == 0x25 || vk == 0x26 || vk == 0x27 || vk == 0x28 ||
@@ -105,53 +135,167 @@ namespace ArtemiaRemoteInput {
                     vk == 0x5D || vk == 0x6F || vk == 0xA3 || vk == 0xA5);
         }
 
+        static ushort GetDirectInputScanCode(ushort vk) {
+            switch (vk) {
+                case 0x1B: return 0x01; // Esc
+                case 0x31: return 0x02; // 1
+                case 0x32: return 0x03; // 2
+                case 0x33: return 0x04; // 3
+                case 0x34: return 0x05; // 4
+                case 0x35: return 0x06; // 5
+                case 0x36: return 0x07; // 6
+                case 0x37: return 0x08; // 7
+                case 0x38: return 0x09; // 8
+                case 0x39: return 0x0A; // 9
+                case 0x30: return 0x0B; // 0
+                case 0xBD: return 0x0C; // -
+                case 0xBB: return 0x0D; // =
+                case 0x08: return 0x0E; // Backspace
+                case 0x09: return 0x0F; // Tab
+                case 0x51: return 0x10; // Q
+                case 0x57: return 0x11; // W
+                case 0x45: return 0x12; // E
+                case 0x52: return 0x13; // R
+                case 0x54: return 0x14; // T
+                case 0x59: return 0x15; // Y
+                case 0x55: return 0x16; // U
+                case 0x49: return 0x17; // I
+                case 0x4F: return 0x18; // O
+                case 0x50: return 0x19; // P
+                case 0xDB: return 0x1A; // [
+                case 0xDD: return 0x1B; // ]
+                case 0x0D: return 0x1C; // Enter
+                case 0x11: case 0xA2: return 0x1D; // LCtrl
+                case 0x41: return 0x1E; // A
+                case 0x53: return 0x1F; // S
+                case 0x44: return 0x20; // D
+                case 0x46: return 0x21; // F
+                case 0x47: return 0x22; // G
+                case 0x48: return 0x23; // H
+                case 0x4A: return 0x24; // J
+                case 0x4B: return 0x25; // K
+                case 0x4C: return 0x26; // L
+                case 0xBA: return 0x27; // ;
+                case 0xDE: return 0x28; // '
+                case 0xC0: return 0x29; // `
+                case 0x10: case 0xA0: return 0x2A; // LShift
+                case 0xDC: return 0x2B; // \
+                case 0x5A: return 0x2C; // Z
+                case 0x58: return 0x2D; // X
+                case 0x43: return 0x2E; // C
+                case 0x56: return 0x2F; // V
+                case 0x42: return 0x30; // B
+                case 0x4E: return 0x31; // N
+                case 0x4D: return 0x32; // M
+                case 0xBC: return 0x33; // ,
+                case 0xBE: return 0x34; // .
+                case 0xBF: return 0x35; // /
+                case 0xA1: return 0x36; // RShift
+                case 0x6A: return 0x37; // Numpad *
+                case 0x12: case 0xA4: return 0x38; // LAlt
+                case 0x20: return 0x39; // Space
+                case 0x14: return 0x3A; // CapsLock
+                case 0x70: return 0x3B; // F1
+                case 0x71: return 0x3C; // F2
+                case 0x72: return 0x3D; // F3
+                case 0x73: return 0x3E; // F4
+                case 0x74: return 0x3F; // F5
+                case 0x75: return 0x40; // F6
+                case 0x76: return 0x41; // F7
+                case 0x77: return 0x42; // F8
+                case 0x78: return 0x43; // F9
+                case 0x79: return 0x44; // F10
+                case 0x7A: return 0x57; // F11
+                case 0x7B: return 0x58; // F12
+                case 0x26: return 0x48; // Up arrow
+                case 0x25: return 0x4B; // Left arrow
+                case 0x27: return 0x4D; // Right arrow
+                case 0x28: return 0x50; // Down arrow
+                default:
+                    return (ushort)MapVirtualKey(vk, 0);
+            }
+        }
+
+        static void EnsureWindowFocus(IntPtr targetHwnd) {
+            if (targetHwnd == IntPtr.Zero) return;
+            try {
+                IntPtr rootHwnd = GetAncestor(targetHwnd, GA_ROOTOWNER);
+                if (rootHwnd == IntPtr.Zero) rootHwnd = targetHwnd;
+
+                IntPtr fgWnd = GetForegroundWindow();
+                if (fgWnd == rootHwnd) return;
+
+                uint dummyPid;
+                uint fgThread = GetWindowThreadProcessId(fgWnd, out dummyPid);
+                uint curThread = GetCurrentThreadId();
+
+                if (fgThread != curThread && fgThread != 0) AttachThreadInput(curThread, fgThread, true);
+                BringWindowToTop(rootHwnd);
+                SetForegroundWindow(rootHwnd);
+                if (fgThread != curThread && fgThread != 0) AttachThreadInput(curThread, fgThread, false);
+            } catch {}
+        }
+
         static void SendHardwareKeyDown(ushort vk) {
-            ushort scan = (ushort)MapVirtualKey(vk, 0);
+            ushort scan = GetDirectInputScanCode(vk);
             uint flags = KEYEVENTF_SCANCODE;
             if (IsExtendedKey(vk)) flags |= KEYEVENTF_EXTENDEDKEY;
 
+            // DirectInput / RawInput requires wVk = 0 when KEYEVENTF_SCANCODE is specified
             INPUT[] inputs = new INPUT[1];
             inputs[0].type = INPUT_KEYBOARD;
-            inputs[0].u.ki.wVk = vk;
+            inputs[0].u.ki.wVk = 0;
             inputs[0].u.ki.wScan = scan;
             inputs[0].u.ki.dwFlags = flags;
             inputs[0].u.ki.time = 0;
-            inputs[0].u.ki.dwExtraInfo = IntPtr.Zero;
+            inputs[0].u.ki.dwExtraInfo = GetMessageExtraInfo();
 
             SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+
+            // Dual-trigger keybd_event for DirectX 9/11 DirectInput & Win32 message hooks
+            byte bVk = (byte)(vk & 0xFF);
+            byte bScan = (byte)(scan & 0xFF);
+            uint kbFlags = IsExtendedKey(vk) ? KEYEVENTF_EXTENDEDKEY : 0;
+            keybd_event(bVk, bScan, kbFlags, UIntPtr.Zero);
         }
 
         static void SendHardwareKeyUp(ushort vk) {
-            ushort scan = (ushort)MapVirtualKey(vk, 0);
+            ushort scan = GetDirectInputScanCode(vk);
             uint flags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
             if (IsExtendedKey(vk)) flags |= KEYEVENTF_EXTENDEDKEY;
 
             INPUT[] inputs = new INPUT[1];
             inputs[0].type = INPUT_KEYBOARD;
-            inputs[0].u.ki.wVk = vk;
+            inputs[0].u.ki.wVk = 0;
             inputs[0].u.ki.wScan = scan;
             inputs[0].u.ki.dwFlags = flags;
             inputs[0].u.ki.time = 0;
-            inputs[0].u.ki.dwExtraInfo = IntPtr.Zero;
+            inputs[0].u.ki.dwExtraInfo = GetMessageExtraInfo();
 
             SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+
+            // Dual-trigger keybd_event for release
+            byte bVk = (byte)(vk & 0xFF);
+            byte bScan = (byte)(scan & 0xFF);
+            uint kbFlags = KEYEVENTF_KEYUP | (IsExtendedKey(vk) ? KEYEVENTF_EXTENDEDKEY : 0);
+            keybd_event(bVk, bScan, kbFlags, UIntPtr.Zero);
         }
 
         static void SendHardwareKeyTap(ushort vk) {
             SendHardwareKeyDown(vk);
-            Thread.Sleep(30); // 30ms hold ensures 60fps/120fps DirectX engines register the press
+            Thread.Sleep(35); // 35ms hold ensures 60fps/120fps/144fps DirectX engines register the press
             SendHardwareKeyUp(vk);
         }
 
         static void SendHardwareKeyCombo(params ushort[] vks) {
             foreach (var vk in vks) {
                 SendHardwareKeyDown(vk);
-                Thread.Sleep(8);
+                Thread.Sleep(10);
             }
-            Thread.Sleep(20);
+            Thread.Sleep(30);
             for (int i = vks.Length - 1; i >= 0; i--) {
                 SendHardwareKeyUp(vks[i]);
-                Thread.Sleep(8);
+                Thread.Sleep(10);
             }
         }
 
@@ -220,51 +364,36 @@ namespace ArtemiaRemoteInput {
             int normX = (int)Math.Round((double)x * 65535.0 / Math.Max(1, screenW - 1));
             int normY = (int)Math.Round((double)y * 65535.0 / Math.Max(1, screenH - 1));
 
+            int deltaX = lastMouseX >= 0 ? (x - lastMouseX) : 0;
+            int deltaY = lastMouseY >= 0 ? (y - lastMouseY) : 0;
+            lastMouseX = x;
+            lastMouseY = y;
+
             SetCursorPos(x, y);
 
-            INPUT[] inputs = new INPUT[1];
-            inputs[0].type = INPUT_MOUSE;
-            inputs[0].u.mi.dx = normX;
-            inputs[0].u.mi.dy = normY;
-            inputs[0].u.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
-            inputs[0].u.mi.time = 0;
-            inputs[0].u.mi.dwExtraInfo = IntPtr.Zero;
+            // 1. Send Absolute Move for Windows UI / Browser / 2D
+            INPUT[] absInputs = new INPUT[1];
+            absInputs[0].type = INPUT_MOUSE;
+            absInputs[0].u.mi.dx = normX;
+            absInputs[0].u.mi.dy = normY;
+            absInputs[0].u.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+            absInputs[0].u.mi.time = 0;
+            absInputs[0].u.mi.dwExtraInfo = GetMessageExtraInfo();
+            SendInput(1, absInputs, Marshal.SizeOf(typeof(INPUT)));
 
-            SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
-        }
+            // 2. Send Relative Movement Delta for 3D FPS Game Camera (Roblox / Rules of Survival)
+            if (deltaX != 0 || deltaY != 0) {
+                INPUT[] relInputs = new INPUT[1];
+                relInputs[0].type = INPUT_MOUSE;
+                relInputs[0].u.mi.dx = deltaX;
+                relInputs[0].u.mi.dy = deltaY;
+                relInputs[0].u.mi.dwFlags = MOUSEEVENTF_MOVE;
+                relInputs[0].u.mi.time = 0;
+                relInputs[0].u.mi.dwExtraInfo = GetMessageExtraInfo();
+                SendInput(1, relInputs, Marshal.SizeOf(typeof(INPUT)));
 
-        static void SendHardwareMouseClick(int x, int y, string button = "left") {
-            SendHardwareMouseMove(x, y);
-
-            POINT pt = new POINT { X = x, Y = y };
-            IntPtr hwnd = WindowFromPoint(pt);
-            if (hwnd != IntPtr.Zero && hwnd != GetForegroundWindow()) {
-                SetForegroundWindow(hwnd);
+                mouse_event(MOUSEEVENTF_MOVE, (uint)deltaX, (uint)deltaY, 0, 0);
             }
-
-            int screenW = GetSystemMetrics(0);
-            int screenH = GetSystemMetrics(1);
-            int normX = (int)Math.Round((double)x * 65535.0 / Math.Max(1, screenW - 1));
-            int normY = (int)Math.Round((double)y * 65535.0 / Math.Max(1, screenH - 1));
-
-            uint downFlag = button == "right" ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_LEFTDOWN;
-            uint upFlag = button == "right" ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_LEFTUP;
-
-            INPUT[] down = new INPUT[1];
-            down[0].type = INPUT_MOUSE;
-            down[0].u.mi.dx = normX;
-            down[0].u.mi.dy = normY;
-            down[0].u.mi.dwFlags = downFlag | MOUSEEVENTF_ABSOLUTE;
-            SendInput(1, down, Marshal.SizeOf(typeof(INPUT)));
-
-            Thread.Sleep(30); // 30ms hold ensures frame loop captures the click
-
-            INPUT[] up = new INPUT[1];
-            up[0].type = INPUT_MOUSE;
-            up[0].u.mi.dx = normX;
-            up[0].u.mi.dy = normY;
-            up[0].u.mi.dwFlags = upFlag | MOUSEEVENTF_ABSOLUTE;
-            SendInput(1, up, Marshal.SizeOf(typeof(INPUT)));
         }
 
         static void SendHardwareMouseDown(int x, int y, string button = "left") {
@@ -272,22 +401,26 @@ namespace ArtemiaRemoteInput {
 
             POINT pt = new POINT { X = x, Y = y };
             IntPtr hwnd = WindowFromPoint(pt);
-            if (hwnd != IntPtr.Zero && hwnd != GetForegroundWindow()) {
-                SetForegroundWindow(hwnd);
-            }
+            EnsureWindowFocus(hwnd);
 
             int screenW = GetSystemMetrics(0);
             int screenH = GetSystemMetrics(1);
             int normX = (int)Math.Round((double)x * 65535.0 / Math.Max(1, screenW - 1));
             int normY = (int)Math.Round((double)y * 65535.0 / Math.Max(1, screenH - 1));
 
-            uint downFlag = button == "right" ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_LEFTDOWN;
+            uint downFlag = button == "right" ? MOUSEEVENTF_RIGHTDOWN : (button == "middle" ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_LEFTDOWN);
+
             INPUT[] down = new INPUT[1];
             down[0].type = INPUT_MOUSE;
             down[0].u.mi.dx = normX;
             down[0].u.mi.dy = normY;
-            down[0].u.mi.dwFlags = downFlag | MOUSEEVENTF_ABSOLUTE;
+            // Microsoft documentation requires MOUSEEVENTF_MOVE alongside MOUSEEVENTF_ABSOLUTE
+            down[0].u.mi.dwFlags = downFlag | MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+            down[0].u.mi.time = 0;
+            down[0].u.mi.dwExtraInfo = GetMessageExtraInfo();
             SendInput(1, down, Marshal.SizeOf(typeof(INPUT)));
+
+            mouse_event(downFlag, 0, 0, 0, 0);
         }
 
         static void SendHardwareMouseUp(int x, int y, string button = "left") {
@@ -296,13 +429,24 @@ namespace ArtemiaRemoteInput {
             int normX = (int)Math.Round((double)x * 65535.0 / Math.Max(1, screenW - 1));
             int normY = (int)Math.Round((double)y * 65535.0 / Math.Max(1, screenH - 1));
 
-            uint upFlag = button == "right" ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_LEFTUP;
+            uint upFlag = button == "right" ? MOUSEEVENTF_RIGHTUP : (button == "middle" ? MOUSEEVENTF_MIDDLEUP : MOUSEEVENTF_LEFTUP);
+
             INPUT[] up = new INPUT[1];
             up[0].type = INPUT_MOUSE;
             up[0].u.mi.dx = normX;
             up[0].u.mi.dy = normY;
-            up[0].u.mi.dwFlags = upFlag | MOUSEEVENTF_ABSOLUTE;
+            up[0].u.mi.dwFlags = upFlag | MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+            up[0].u.mi.time = 0;
+            up[0].u.mi.dwExtraInfo = GetMessageExtraInfo();
             SendInput(1, up, Marshal.SizeOf(typeof(INPUT)));
+
+            mouse_event(upFlag, 0, 0, 0, 0);
+        }
+
+        static void SendHardwareMouseClick(int x, int y, string button = "left") {
+            SendHardwareMouseDown(x, y, button);
+            Thread.Sleep(35); // 35ms hold ensures frame tick captures the click
+            SendHardwareMouseUp(x, y, button);
         }
 
         static void SendHardwareMouseScroll(int delta) {
@@ -310,7 +454,11 @@ namespace ArtemiaRemoteInput {
             scroll[0].type = INPUT_MOUSE;
             scroll[0].u.mi.mouseData = (uint)delta;
             scroll[0].u.mi.dwFlags = MOUSEEVENTF_WHEEL;
+            scroll[0].u.mi.time = 0;
+            scroll[0].u.mi.dwExtraInfo = GetMessageExtraInfo();
             SendInput(1, scroll, Marshal.SizeOf(typeof(INPUT)));
+
+            mouse_event(MOUSEEVENTF_WHEEL, 0, 0, (uint)delta, 0);
         }
 
         static ImageCodecInfo GetEncoder(ImageFormat format) {
@@ -368,8 +516,9 @@ namespace ArtemiaRemoteInput {
             }
 
             // Mouse Actions
-            if (cmd == "click" || cmd == "dclick" || cmd == "rclick" || cmd == "move" ||
-                cmd == "down" || cmd == "up" || cmd == "rdown" || cmd == "rup") {
+            if (cmd == "click" || cmd == "dclick" || cmd == "rclick" || cmd == "mclick" ||
+                cmd == "move" || cmd == "down" || cmd == "up" || cmd == "rdown" || cmd == "rup" ||
+                cmd == "mdown" || cmd == "mup") {
                 if (args.Length >= 3) {
                     int x = int.Parse(args[1]);
                     int y = int.Parse(args[2]);
@@ -382,6 +531,8 @@ namespace ArtemiaRemoteInput {
                         SendHardwareMouseClick(x, y, "left");
                     } else if (cmd == "rclick") {
                         SendHardwareMouseClick(x, y, "right");
+                    } else if (cmd == "mclick") {
+                        SendHardwareMouseClick(x, y, "middle");
                     } else if (cmd == "move") {
                         SendHardwareMouseMove(x, y);
                     } else if (cmd == "down") {
@@ -392,8 +543,28 @@ namespace ArtemiaRemoteInput {
                         SendHardwareMouseDown(x, y, "right");
                     } else if (cmd == "rup") {
                         SendHardwareMouseUp(x, y, "right");
+                    } else if (cmd == "mdown") {
+                        SendHardwareMouseDown(x, y, "middle");
+                    } else if (cmd == "mup") {
+                        SendHardwareMouseUp(x, y, "middle");
                     }
                 }
+                return;
+            }
+
+            // Relative Mouse Delta (Direct camera aiming / 3D rotation)
+            if (cmd == "relmove" && args.Length >= 3) {
+                int dx = int.Parse(args[1]);
+                int dy = int.Parse(args[2]);
+                INPUT[] rel = new INPUT[1];
+                rel[0].type = INPUT_MOUSE;
+                rel[0].u.mi.dx = dx;
+                rel[0].u.mi.dy = dy;
+                rel[0].u.mi.dwFlags = MOUSEEVENTF_MOVE;
+                rel[0].u.mi.time = 0;
+                rel[0].u.mi.dwExtraInfo = GetMessageExtraInfo();
+                SendInput(1, rel, Marshal.SizeOf(typeof(INPUT)));
+                mouse_event(MOUSEEVENTF_MOVE, (uint)dx, (uint)dy, 0, 0);
                 return;
             }
 

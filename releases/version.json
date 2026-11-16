@@ -1,9 +1,9 @@
 {
-  "version": "1.0.30",
+  "version": "1.0.31",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-16T13:52:00.000Z",
+  "releaseDate": "2026-11-16T14:14:00.000Z",
   "asarFileName": "app.asar",
-  "size": 470869,
-  "sha256": "8B10B9995687632D9BE26146D26EFAA8A8A31E38976E6BE3FBC0460B05680B40",
-  "changelog": "DirectX & Fullscreen Game Remote Control Overhaul: SendInput kernel-level simulation with hardware scan codes (KEYEVENTF_SCANCODE), MOUSEEVENTF_ABSOLUTE coordinate normalization, 30ms frame-buffered mouse clicks, keydown/keyup continuous hold for in-game movement (WASD, shift, space), and automatic foreground window activation."
+  "size": 471230,
+  "sha256": "A1F68D5E7E308683D76EB75B9EF05CE22C284DC1A0A84DAC63389D289D1D49A1",
+  "changelog": "DirectX 3D FPS & Anti-Cheat Controller Engine Overhaul: Rules of Survival (RoS Legacy) & Roblox full camera rotation (relative mouse delta + MOUSEEVENTF_MOVE), DirectInput zero-wVk hardware scan codes, dual-trigger SendInput + mouse_event/keybd_event, AttachThreadInput window focus forcing, and right-click camera drag support."
 }

@@ -3006,6 +3006,8 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
   yPercent?: number;
   x?: number;
   y?: number;
+  dx?: number;
+  dy?: number;
   key?: string;
   text?: string;
   delta?: number;
@@ -3065,9 +3067,14 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
       if (helperExe && process.platform === 'win32') {
         let cmdLine = '';
         let args: string[] = [];
-        if (type === 'click' || type === 'dclick' || type === 'rclick' || type === 'move' || type === 'down' || type === 'up' || type === 'rdown' || type === 'rup') {
+        if (type === 'click' || type === 'dclick' || type === 'rclick' || type === 'mclick' || type === 'move' || type === 'down' || type === 'up' || type === 'rdown' || type === 'rup' || type === 'mdown' || type === 'mup') {
           cmdLine = `${type} ${targetX} ${targetY}`;
           args = [type, String(targetX), String(targetY)];
+        } else if (type === 'relmove') {
+          const dx = Math.round(payload.dx || 0);
+          const dy = Math.round(payload.dy || 0);
+          cmdLine = `relmove ${dx} ${dy}`;
+          args = ['relmove', String(dx), String(dy)];
         } else if (type === 'scroll') {
           const delta = payload.delta || 120;
           cmdLine = `scroll ${delta}`;

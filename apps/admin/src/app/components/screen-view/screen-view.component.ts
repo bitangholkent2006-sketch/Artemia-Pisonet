@@ -1056,6 +1056,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   // Mouse Dragging and Down State
   isMouseDown = false;
+  activeMouseButton: 'left' | 'right' = 'left';
   private mouseDownX = 0;
   private mouseDownY = 0;
   private mouseDownTime = 0;
@@ -1390,11 +1391,14 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     }
   }
 
-  // Mouse Down (Starts Dragging or Press)
+  // Mouse Down (Starts Dragging or Press - Left or Right Button)
   onScreenMouseDown(event: MouseEvent) {
     if (Date.now() - this.lastTouchTime < 500) return;
     if (!this.isControlEnabled || !this.selectedPc) return;
-    if (event.button !== 0) return; // Left button only for drag tracking
+    if (event.button !== 0 && event.button !== 2) return;
+
+    const isRight = event.button === 2;
+    this.activeMouseButton = isRight ? 'right' : 'left';
 
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
@@ -1409,16 +1413,17 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.mouseDownY = y;
     this.mouseDownTime = Date.now();
 
+    const inputType = isRight ? 'rdown' : 'down';
     this.adminState.sendRemoteInput({
       pcId: this.selectedPc.id,
-      type: 'down',
+      type: inputType,
       xPercent,
       yPercent
     });
     this.addRipple(x, y);
   }
 
-  // Mouse Move (Handles Dragging & Live Pointer)
+  // Mouse Move (Handles Dragging & Live Pointer - 3D Camera / Pan)
   onScreenMouseMove(event: MouseEvent) {
     if (!this.isControlEnabled || !this.selectedPc || !this.isMouseDown) return;
 
@@ -1433,8 +1438,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     }
 
     const now = Date.now();
-    // Throttle move events to ~35ms (~28 updates/sec)
-    if (now - this.lastMouseMoveTime > 35) {
+    // Throttle move events to ~30ms (~33 updates/sec)
+    if (now - this.lastMouseMoveTime > 30) {
       this.lastMouseMoveTime = now;
       const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
       const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
@@ -1445,7 +1450,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
         xPercent,
         yPercent
       });
-      this.lastActionMessage = `🖐️ Dragging at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+      const mode = this.activeMouseButton === 'right' ? '🎥 3D Camera Look' : '🖐️ Dragging';
+      this.lastActionMessage = `${mode} at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
     }
   }
 
@@ -1462,9 +1468,10 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
     const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
 
+    const inputType = this.activeMouseButton === 'right' ? 'rup' : 'up';
     this.adminState.sendRemoteInput({
       pcId: this.selectedPc.id,
-      type: 'up',
+      type: inputType,
       xPercent,
       yPercent
     });
@@ -1472,7 +1479,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (this.hasDragged) {
       this.lastActionMessage = `🖐️ Drag released at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
     } else {
-      this.lastActionMessage = `🖱️ Click at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+      const btnName = this.activeMouseButton === 'right' ? 'Right Click' : 'Click';
+      this.lastActionMessage = `🖱️ ${btnName} at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
     }
   }
 
@@ -1486,9 +1494,10 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
       const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
 
+      const inputType = this.activeMouseButton === 'right' ? 'rup' : 'up';
       this.adminState.sendRemoteInput({
         pcId: this.selectedPc.id,
-        type: 'up',
+        type: inputType,
         xPercent,
         yPercent
       });
@@ -1555,6 +1564,11 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (!this.isControlEnabled || !this.selectedPc) return;
     event.preventDefault();
     event.stopPropagation();
+
+    // If already handled by mousedown/mouseup (rdown/rup), skip duplicate synthetic rclick
+    if (this.hasDragged || this.activeMouseButton === 'right') {
+      return;
+    }
 
     const targetId = this.selectedPc.id;
     const target = event.currentTarget as HTMLElement;
