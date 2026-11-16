@@ -70,7 +70,7 @@ interface WindowWithDesktop extends Window {
   };
 }
 
-const CLIENT_AGENT_VERSION = '1.0.26';
+const CLIENT_AGENT_VERSION = '1.0.27';
 const desktopWindow = window as unknown as WindowWithDesktop;
 
 function getApiBaseUrl(): string {
@@ -334,7 +334,7 @@ class StationMaintenanceAgent {
     return canvas.toDataURL('image/png');
   }
 
-  public startContinuousScreenStream(intervalMs: number = 200, width: number = 960, height: number = 540, quality: number = 50) {
+  public startContinuousScreenStream(intervalMs: number = 100, width: number = 960, height: number = 540, quality: number = 45) {
     this.isScreenStreaming = true;
     this.lastAdminStreamPing = Date.now();
     if (this.screenStreamTimer) {
@@ -342,17 +342,20 @@ class StationMaintenanceAgent {
       this.screenStreamTimer = null;
     }
 
-    const safeInterval = Math.max(80, Math.min(2000, intervalMs || 200));
+    // Ultra-smooth streaming: Allow high-FPS refresh down to 40ms (~25 FPS) for gaming & live control
+    const safeInterval = Math.max(40, Math.min(2000, intervalMs || 100));
 
     const loop = async () => {
       if (!this.isScreenStreaming) return;
 
-      // Watchdog: If Admin hasn't sent a ping for 12 seconds, automatically stop streaming to conserve CPU & bandwidth
-      if (Date.now() - this.lastAdminStreamPing > 12000) {
+      // Watchdog: If Admin hasn't sent a ping for 14 seconds, automatically stop streaming to conserve CPU & bandwidth
+      if (Date.now() - this.lastAdminStreamPing > 14000) {
         this.stopContinuousScreenStream();
-        this.logMessage('[ScreenStream] Inactive admin watchdog timeout (12s). Stream auto-stopped.');
+        this.logMessage('[ScreenStream] Inactive admin watchdog timeout (14s). Stream auto-stopped.');
         return;
       }
+
+      const frameStartTime = Date.now();
 
       if (!this.isScreenStreamInFlight) {
         this.isScreenStreamInFlight = true;
@@ -387,7 +390,9 @@ class StationMaintenanceAgent {
       }
 
       if (this.isScreenStreaming) {
-        this.screenStreamTimer = setTimeout(loop, safeInterval);
+        const elapsed = Date.now() - frameStartTime;
+        const nextDelay = Math.max(10, safeInterval - elapsed);
+        this.screenStreamTimer = setTimeout(loop, nextDelay);
       }
     };
 

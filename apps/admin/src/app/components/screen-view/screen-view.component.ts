@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, Input, OnChanges, SimpleChanges, ElementRef, ViewChild } from '@angular/core';
+import { Component, OnInit, OnDestroy, Input, OnChanges, SimpleChanges, ElementRef, ViewChild, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
@@ -25,7 +25,7 @@ export interface ClickRipple {
             <span>Remote Screen & AnyDesk Desktop Control</span>
           </h1>
           <p class="page-subtitle">
-            Direktang kontrol sa customer PC gamit ang imong kaugalingong mouse ug physical keyboard — parehas gyud sa AnyDesk.
+            Direktang kontrol sa customer PC gamit ang imong kaugalingong mouse ug physical keyboard — parehas gyud sa AnyDesk. Pwede mag-drag, mag-click, mag-type, ug mag-handle sa mga dula o apps.
           </p>
         </div>
 
@@ -52,16 +52,36 @@ export interface ClickRipple {
             <span>{{ isFullscreen ? 'Exit Fullscreen' : 'Fullscreen View' }}</span>
           </button>
 
+          <!-- Resolution Quality Toggle -->
+          <button
+            type="button"
+            class="btn btn-secondary resolution-btn"
+            (click)="toggleResolution()"
+            title="I-toggle ang Resolution (540p Ultra Fast vs 720p HD)"
+          >
+            <span>📺</span>
+            <span>{{ streamWidth === 960 ? '540p Fast' : '720p HD' }}</span>
+          </button>
+
           <!-- Refresh Rate / Auto-Streaming Selector -->
           <div class="stream-rate-select">
             <span class="rate-label">Live Stream:</span>
             <select [(ngModel)]="streamIntervalMs" (ngModelChange)="onStreamRateChange()">
-              <option [ngValue]="150">⚡ Turbo Extreme (150ms / ~7 FPS)</option>
-              <option [ngValue]="250">🚀 Real-Time Smooth (250ms / 4 FPS)</option>
-              <option [ngValue]="500">⚡ Balanced (500ms / 2 FPS)</option>
-              <option [ngValue]="1000">Normal (1.0s)</option>
-              <option [ngValue]="0">Manual (Click Capture)</option>
+              <option [ngValue]="60">⚡ Ultra Real-Time (60ms / ~16 FPS)</option>
+              <option [ngValue]="100">🚀 High Performance (100ms / 10 FPS)</option>
+              <option [ngValue]="150">⚡ Turbo Smooth (150ms / ~7 FPS)</option>
+              <option [ngValue]="250">⚖️ Standard Smooth (250ms / 4 FPS)</option>
+              <option [ngValue]="500">🔋 Low Bandwidth (500ms / 2 FPS)</option>
+              <option [ngValue]="0">📸 Manual (Click Capture)</option>
             </select>
+          </div>
+
+          <!-- Live FPS & Latency Counter Badge -->
+          <div class="fps-badge" *ngIf="liveFps > 0" title="Live stream performance">
+            <span class="fps-dot"></span>
+            <span>{{ liveFps }} FPS</span>
+            <span class="latency-divider">•</span>
+            <span>{{ streamLatencyMs }}ms</span>
           </div>
 
           <button class="btn btn-primary" (click)="captureCurrentScreen()" [disabled]="isCapturing">
@@ -97,13 +117,15 @@ export interface ClickRipple {
             <span class="pulse-indicator live"></span>
             <span class="banner-title">🟢 ANYDESK REMOTE CONTROL ACTIVE</span>
             <span class="banner-desc">
-              Naka-lock ang controls sa <strong>{{ selectedPc.name }}</strong>. Pwede ka mag-tap sa screen sa cellphone o mag-mouse ug keyboard sa PC.
+              Naka-lock ang controls sa <strong>{{ selectedPc.name }}</strong>. Pwede ka mag-mouse click, drag, scroll, ug mag-type sa physical keyboard or touchscreen.
             </span>
             <span class="banner-exit-hint">(Pindota ang <strong>Shift + Esc</strong> aron ma-unlock)</span>
           </div>
-          <button type="button" class="btn-unlock-chip" (click)="toggleControlMode()">
-            🔓 Unlock Controls
-          </button>
+          <div class="banner-actions">
+            <button type="button" class="btn-unlock-chip" (click)="toggleControlMode()">
+              🔓 Unlock Controls
+            </button>
+          </div>
         </div>
 
         <!-- Monitor Header (Compact in standard mode, floating chip in fullscreen) -->
@@ -111,6 +133,7 @@ export interface ClickRipple {
           <div class="monitor-station-info">
             <span class="pulse-indicator" [ngClass]="{'live': selectedPc.status !== 'offline'}"></span>
             <strong>{{ selectedPc.name }}</strong> • {{ selectedPc.identifier }} ({{ selectedPc.ipAddress }})
+            <span class="stream-stat-chip" *ngIf="liveFps > 0">⚡ {{ liveFps }} FPS ({{ streamLatencyMs }}ms)</span>
           </div>
           <div class="monitor-meta-right">
             <span class="last-action-msg" *ngIf="lastActionMessage">{{ lastActionMessage }}</span>
@@ -122,13 +145,15 @@ export interface ClickRipple {
 
         <!-- Mobile & Desktop Quick Remote Action Toolbar -->
         <div class="remote-action-toolbar" *ngIf="isControlEnabled">
+          <!-- Click / Touch Mode -->
           <div class="toolbar-group">
-            <span class="group-label">Click Mode:</span>
+            <span class="group-label">Mouse / Touch:</span>
             <button
               type="button"
               class="tool-btn"
-              [ngClass]="{'active': activeClickType === 'click'}"
-              (click)="setClickType('click')"
+              [ngClass]="{'active': activeClickType === 'click' && touchInteractionMode === 'click'}"
+              (click)="setClickType('click'); touchInteractionMode = 'click'"
+              title="Left Click"
             >
               👆 Left Click
             </button>
@@ -137,6 +162,7 @@ export interface ClickRipple {
               class="tool-btn"
               [ngClass]="{'active': activeClickType === 'rclick'}"
               (click)="setClickType('rclick')"
+              title="Right Click"
             >
               🖱️ Right Click
             </button>
@@ -145,32 +171,55 @@ export interface ClickRipple {
               class="tool-btn"
               [ngClass]="{'active': activeClickType === 'dclick'}"
               (click)="setClickType('dclick')"
+              title="Double Click"
             >
               ✌️ Double Click
             </button>
-            <button type="button" class="tool-btn" (click)="sendScroll(120)">
+            <button
+              type="button"
+              class="tool-btn"
+              [ngClass]="{'active': touchInteractionMode === 'drag'}"
+              (click)="touchInteractionMode = 'drag'"
+              title="Touch Drag / Select Mode"
+            >
+              🖐️ Drag Mode
+            </button>
+            <button type="button" class="tool-btn" (click)="sendScroll(120)" title="Scroll Up">
               📜 Scroll Up
             </button>
-            <button type="button" class="tool-btn" (click)="sendScroll(-120)">
+            <button type="button" class="tool-btn" (click)="sendScroll(-120)" title="Scroll Down">
               📜 Scroll Down
             </button>
           </div>
 
+          <!-- Windows Navigation & System Keys -->
           <div class="toolbar-group key-group">
-            <span class="group-label">Quick Keys:</span>
-            <button type="button" class="tool-btn key-btn" (click)="sendKey('win')">🪟 Start</button>
-            <button type="button" class="tool-btn key-btn" (click)="sendKey('alttab')">📑 Alt+Tab</button>
+            <span class="group-label">System:</span>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('win')" title="Windows Start Menu">🪟 Start</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('wind')" title="Show Desktop">🖥️ Desktop</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('wine')" title="File Explorer">📁 Explorer</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('winr')" title="Run Dialog">🚀 Run</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('alttab')" title="Switch Window">📑 Alt+Tab</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('taskmgr')" title="Task Manager">⚡ TaskMgr</button>
+            <button type="button" class="tool-btn key-btn warn" (click)="sendKey('altf4')" title="Close Active Window">❌ Alt+F4</button>
+          </div>
+
+          <!-- Game & Audio Controls -->
+          <div class="toolbar-group key-group">
+            <span class="group-label">Game & App:</span>
             <button type="button" class="tool-btn key-btn" (click)="sendKey('enter')">⏎ Enter</button>
-            <button type="button" class="tool-btn key-btn" (click)="sendKey('backspace')">⌫ Back</button>
-            <button type="button" class="tool-btn key-btn" (click)="sendKey('space')">␣ Space</button>
             <button type="button" class="tool-btn key-btn" (click)="sendKey('esc')">⎋ Esc</button>
-            <button type="button" class="tool-btn key-btn" (click)="sendKey('taskmgr')">⚡ TaskMgr</button>
-            <button type="button" class="tool-btn key-btn warn" (click)="sendKey('altf4')">❌ Alt+F4</button>
-            <button type="button" class="tool-btn key-btn" (click)="sendKey('^c')">📋 Copy</button>
-            <button type="button" class="tool-btn key-btn" (click)="sendKey('^v')">📥 Paste</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('space')">␣ Space</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('backspace')">⌫ Back</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('f5')" title="Refresh">🔄 F5</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('volup')" title="Volume Up">🔊 Vol+</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('voldown')" title="Volume Down">🔉 Vol-</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('volmute')" title="Mute/Unmute">🔇 Mute</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('ctrlc')" title="Copy">📋 Copy</button>
+            <button type="button" class="tool-btn key-btn" (click)="sendKey('ctrlv')" title="Paste">📥 Paste</button>
             <button
               type="button"
-              class="tool-btn"
+              class="tool-btn keyboard-toggle-btn"
               [ngClass]="{'active': showTextBar}"
               (click)="toggleTextBar()"
             >
@@ -185,7 +234,7 @@ export interface ClickRipple {
               class="mobile-text-input"
               [(ngModel)]="mobileTextInput"
               (keydown.enter)="sendMobileText()"
-              placeholder="I-type diri sa cellphone (e.g. password, chat, text)..."
+              placeholder="I-type diri sa cellphone/laptop (e.g. password, chat, text)..."
             />
             <button type="button" class="btn btn-primary btn-sm" (click)="sendMobileText()">
               Send ➔
@@ -194,7 +243,7 @@ export interface ClickRipple {
               ⏎ Enter
             </button>
             <button type="button" class="btn btn-secondary btn-sm" (click)="sendKey('backspace')">
-              ⌫
+              ⌫ Back
             </button>
           </div>
         </div>
@@ -203,7 +252,7 @@ export interface ClickRipple {
         <div
           #viewportElem
           class="monitor-viewport"
-          [ngClass]="{'interactive': isControlEnabled, 'fullscreen-viewport': isFullscreen}"
+          [ngClass]="{'interactive': isControlEnabled, 'fullscreen-viewport': isFullscreen, 'mouse-down': isMouseDown}"
         >
           <!-- Loading State for this specific PC -->
           <div *ngIf="isCapturing && !currentScreenImage" class="viewport-placeholder">
@@ -221,16 +270,23 @@ export interface ClickRipple {
           <!-- Live Remote Screen Display -->
           <div class="screen-wrapper" *ngIf="currentScreenImage">
             <img
+              #screenImg
               [src]="currentScreenImage"
               class="live-screen-image"
               alt="Live Screen Stream"
               draggable="false"
               loading="eager"
               decoding="sync"
+              (mousedown)="onScreenMouseDown($event)"
+              (mousemove)="onScreenMouseMove($event)"
+              (mouseup)="onScreenMouseUp($event)"
+              (mouseleave)="onScreenMouseLeave($event)"
               (click)="onScreenClick($event)"
               (dblclick)="onScreenDblClick($event)"
               (contextmenu)="onScreenContextMenu($event)"
+              (wheel)="onScreenWheel($event)"
               (touchstart)="onTouchStart($event)"
+              (touchmove)="onTouchMove($event)"
               (touchend)="onTouchEnd($event)"
             />
 
@@ -334,6 +390,10 @@ export interface ClickRipple {
       50% { transform: scale(1.3); opacity: 1; }
       100% { transform: scale(0.9); opacity: 0.7; }
     }
+    .resolution-btn {
+      font-family: monospace;
+      font-size: 0.8rem;
+    }
     .stream-rate-select {
       display: flex;
       align-items: center;
@@ -356,6 +416,40 @@ export interface ClickRipple {
     .stream-rate-select select option {
       background: #0f172a;
       color: #fff;
+    }
+    .fps-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #34d399;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-family: monospace;
+      font-weight: 700;
+    }
+    .fps-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 6px #10b981;
+    }
+    .latency-divider {
+      color: #64748b;
+    }
+    .stream-stat-chip {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-family: monospace;
+      font-weight: 600;
+      margin-left: 8px;
     }
     .btn {
       display: flex;
@@ -385,58 +479,59 @@ export interface ClickRipple {
       background: #334155;
       color: #fff;
     }
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
+    .btn-sm {
+      padding: 4px 10px;
+      font-size: 0.78rem;
     }
 
-    /* Station Selector Card */
+    /* Station Selector Bar */
     .station-selector-card {
       background: #0f172a;
       border: 1px solid #1e293b;
       border-radius: 12px;
-      padding: 14px 18px;
-      margin-bottom: 20px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
       display: flex;
       align-items: center;
-      gap: 16px;
-      flex-wrap: wrap;
+      gap: 14px;
     }
     .selector-label {
       font-size: 0.82rem;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
       color: #64748b;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
     }
     .station-pills {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
     }
     .station-pill {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 7px 14px;
-      border-radius: 9999px;
-      border: 1px solid #334155;
       background: #1e293b;
+      border: 1px solid #334155;
       color: #cbd5e1;
-      font-size: 0.84rem;
-      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: all 0.2s;
     }
     .station-pill:hover {
       background: #334155;
       color: #fff;
+      transform: translateY(-1px);
     }
     .station-pill.active {
-      background: #2563eb;
-      border-color: #60a5fa;
+      background: #0284c7;
       color: #fff;
-      box-shadow: 0 0 12px rgba(37, 99, 235, 0.4);
+      border-color: #38bdf8;
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.35);
     }
     .station-pill.offline {
       opacity: 0.6;
@@ -445,8 +540,9 @@ export interface ClickRipple {
       width: 7px;
       height: 7px;
       border-radius: 50%;
+      background: #64748b;
     }
-    .station-pill .dot.available, .station-pill .dot.in-use {
+    .station-pill .dot.online {
       background: #10b981;
       box-shadow: 0 0 6px #10b981;
     }
@@ -587,6 +683,9 @@ export interface ClickRipple {
     }
     .monitor-viewport.interactive {
       cursor: crosshair;
+    }
+    .monitor-viewport.interactive.mouse-down {
+      cursor: grabbing;
     }
     .viewport-placeholder {
       display: flex;
@@ -861,7 +960,6 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   state: any = { pcs: [] };
   private sub!: Subscription;
-  private streamTimer: any = null;
   private streamPingTimer: any = null;
   private streamFallbackTimer: any = null;
   private streamSub?: () => void;
@@ -888,15 +986,75 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   // Remote Desktop Control state
   isControlEnabled = false;
   isFullscreen = false;
-  streamIntervalMs: number = 250; // 250ms ultra-smooth low-latency push stream (~4 FPS)
+  streamIntervalMs: number = 80; // 80ms Ultra-Smooth Stream (~12-16 FPS)
   lastActionMessage: string | null = null;
   clickRipples: ClickRipple[] = [];
   private rippleCounter = 0;
 
+  // Stream Resolution & Quality settings
+  streamWidth = 960;
+  streamHeight = 540;
+  streamQuality = 45;
+
+  // Live Stream FPS and Latency measurement
+  liveFps: number = 0;
+  streamLatencyMs: number = 0;
+  private frameCount = 0;
+  private lastFpsCalcTime = Date.now();
+
+  // Mouse Dragging and Down State
+  isMouseDown = false;
+  private mouseDownX = 0;
+  private mouseDownY = 0;
+  private mouseDownTime = 0;
+  private hasDragged = false;
+  private lastMouseMoveTime = 0;
+  private lastWheelTime = 0;
+
   // Touch & Mobile Input State
   activeClickType: 'click' | 'rclick' | 'dclick' = 'click';
+  touchInteractionMode: 'click' | 'drag' | 'scroll' = 'click';
   mobileTextInput: string = '';
   showTextBar = false;
+
+  private isTouchDown = false;
+  private touchStartX = 0;
+  private touchStartY = 0;
+  private touchHasDragged = false;
+
+  // Bound window capture listener to intercept physical keys
+  private boundWindowKeyDown = (e: KeyboardEvent) => this.onGlobalWindowKeyDown(e);
+
+  constructor(
+    public adminState: AdminStateService,
+    private cdr: ChangeDetectorRef
+  ) { }
+
+  public matchesStation(p: any, id: string): boolean {
+    if (!p || !id) return false;
+    const a = (p.id || '').toLowerCase();
+    const b = id.toLowerCase();
+    const name = (p.name || '').toLowerCase();
+    const ident = (p.identifier || '').toLowerCase();
+    return a === b || a === `pc-${b}` || `pc-${a}` === b || name === b || ident === b;
+  }
+
+  toggleResolution() {
+    if (this.streamWidth === 960) {
+      this.streamWidth = 1280;
+      this.streamHeight = 720;
+      this.streamQuality = 55;
+      this.lastActionMessage = '📺 Switched to 720p HD (Crisp)';
+    } else {
+      this.streamWidth = 960;
+      this.streamHeight = 540;
+      this.streamQuality = 45;
+      this.lastActionMessage = '⚡ Switched to 540p (Ultra Fast & Smooth)';
+    }
+    if (this.streamIntervalMs > 0 && this.selectedPc) {
+      this.startStreaming(false);
+    }
+  }
 
   setClickType(type: 'click' | 'rclick' | 'dclick') {
     this.activeClickType = type;
@@ -918,7 +1076,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       type: 'text',
       text: txt
     });
-    this.scheduleQuickCapture(300);
+    this.scheduleQuickCapture(250);
   }
 
   sendScroll(delta: number) {
@@ -930,114 +1088,6 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       type: 'scroll',
       delta
     });
-  }
-
-  // Touch Event Handling for Mobile / Cellphone
-  private touchStartX = 0;
-  private touchStartY = 0;
-
-  onTouchStart(event: TouchEvent) {
-    if (!this.isControlEnabled || !this.selectedPc || event.touches.length === 0) return;
-    const touch = event.touches[0];
-    this.touchStartX = touch.clientX;
-    this.touchStartY = touch.clientY;
-
-    if (this.longPressTimer) {
-      clearTimeout(this.longPressTimer);
-      this.longPressTimer = null;
-    }
-
-    const target = event.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const x = touch.clientX - rect.left;
-    const y = touch.clientY - rect.top;
-    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
-
-    // Long-press detection: hold finger for 500ms triggers Right-Click automatically on mobile
-    this.longPressTimer = setTimeout(() => {
-      this.longPressTimer = null;
-      this.lastTouchTime = Date.now();
-      this.addRipple(x, y);
-      this.lastActionMessage = `🔘 Right-click (Long-press) at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
-      if (typeof navigator !== 'undefined' && navigator.vibrate) {
-        try { navigator.vibrate(50); } catch { }
-      }
-      this.adminState.sendRemoteInput({
-        pcId: this.selectedPc!.id,
-        type: 'rclick',
-        xPercent,
-        yPercent
-      });
-      this.scheduleQuickCapture(250);
-    }, 500);
-  }
-
-  onTouchEnd(event: TouchEvent) {
-    if (this.longPressTimer) {
-      clearTimeout(this.longPressTimer);
-      this.longPressTimer = null;
-    }
-    if (!this.isControlEnabled || !this.selectedPc) return;
-    const touch = event.changedTouches[0];
-    if (!touch) return;
-
-    // If long-press already triggered right-click within last 200ms, ignore touch release
-    if (Date.now() - this.lastTouchTime < 200) return;
-
-    // Filter out scrolling gestures
-    const diffX = Math.abs(touch.clientX - this.touchStartX);
-    const diffY = Math.abs(touch.clientY - this.touchStartY);
-    if (diffX > 15 || diffY > 15) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    this.lastTouchTime = Date.now();
-
-    const target = event.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const x = touch.clientX - rect.left;
-    const y = touch.clientY - rect.top;
-    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
-
-    this.addRipple(x, y);
-
-    // Rapid double tap detection on mobile (< 320ms)
-    const now = Date.now();
-    const isDoubleTap = (now - this.lastTapTime < 320);
-    this.lastTapTime = now;
-
-    const type = isDoubleTap ? 'dclick' : this.activeClickType;
-    const typeLabel = type === 'rclick' ? '🔘 Right-click' : type === 'dclick' ? '⚡ Double-click' : '🖱️ Click';
-    this.lastActionMessage = `${typeLabel} at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
-
-    this.adminState.sendRemoteInput({
-      pcId: this.selectedPc.id,
-      type,
-      xPercent,
-      yPercent
-    });
-
-    if (this.activeClickType !== 'click') {
-      this.activeClickType = 'click';
-    }
-
-    this.scheduleQuickCapture(250);
-  }
-
-  // Bound window capture listener to intercept physical keys
-  private boundWindowKeyDown = (e: KeyboardEvent) => this.onGlobalWindowKeyDown(e);
-
-  constructor(public adminState: AdminStateService) { }
-
-  public matchesStation(p: any, id: string): boolean {
-    if (!p || !id) return false;
-    const a = (p.id || '').toLowerCase();
-    const b = id.toLowerCase();
-    const name = (p.name || '').toLowerCase();
-    const ident = (p.identifier || '').toLowerCase();
-    return a === b || a === `pc-${b}` || `pc-${a}` === b || name === b || ident === b;
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -1052,6 +1102,18 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (!data?.frame || !this.selectedPc) return;
     if (!this.matchesStation(this.selectedPc, data.pcId)) return;
 
+    const now = Date.now();
+    this.frameCount++;
+    if (now - this.lastFpsCalcTime >= 1000) {
+      this.liveFps = Math.round((this.frameCount * 1000) / (now - this.lastFpsCalcTime) * 10) / 10;
+      this.frameCount = 0;
+      this.lastFpsCalcTime = now;
+    }
+
+    if (data.timestamp) {
+      this.streamLatencyMs = Math.max(5, now - data.timestamp);
+    }
+
     const targetId = this.selectedPc.id;
     this.screenImages[targetId] = data.frame;
     this.screenImages[targetId.toLowerCase()] = data.frame;
@@ -1059,8 +1121,9 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       this.screenImages[this.selectedPc.name.toLowerCase()] = data.frame;
     }
     this.lastCapturedTime = new Date();
-    this.lastStreamFrameAt = Date.now();
+    this.lastStreamFrameAt = now;
     this.isCapturing = false;
+    this.cdr.markForCheck();
   }
 
   ngOnInit() {
@@ -1115,6 +1178,9 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.selectedPcId = pcId;
     this.inFlightCapture = false;
     this.lastStreamFrameAt = 0;
+    this.liveFps = 0;
+    this.frameCount = 0;
+    this.lastFpsCalcTime = Date.now();
 
     if (this.selectedPc?.status === 'offline') {
       this.isCapturing = false;
@@ -1134,11 +1200,12 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   toggleControlMode() {
     this.isControlEnabled = !this.isControlEnabled;
     if (this.isControlEnabled) {
-      this.lastActionMessage = '🎮 AnyDesk Mode: Mouse & Keyboard Locked to Remote Desktop.';
+      this.lastActionMessage = '🎮 AnyDesk Mode: Mouse & Keyboard Connected to Remote PC.';
       this.addGlobalKeyListeners();
     } else {
       this.lastActionMessage = null;
       this.removeGlobalKeyListeners();
+      this.isMouseDown = false;
     }
   }
 
@@ -1173,6 +1240,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       this.startStreaming(false);
     } else {
       this.stopStreaming(true);
+      this.liveFps = 0;
     }
   }
 
@@ -1188,9 +1256,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     const targetId = this.selectedPc.id;
     this.isCapturing = !this.currentScreenImage;
     this.lastStreamFrameAt = 0;
-    this.adminState.startScreenStream(targetId, this.streamIntervalMs, 960, 540, 50);
+    this.adminState.startScreenStream(targetId, this.streamIntervalMs, this.streamWidth, this.streamHeight, this.streamQuality);
 
-    // Fire an immediate single-frame snapshot simultaneously so older/slow agents display immediately
     if (!this.currentScreenImage) {
       this.captureCurrentScreen();
     }
@@ -1202,12 +1269,11 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       }
     }, 4000);
 
-    // Fallback monitor: if no live stream frames arrived in 2.5s, re-request stream + pull snapshot
+    // Fallback monitor: if no live stream frames arrived in 2.8s, re-request stream
     this.streamFallbackTimer = setInterval(() => {
       if (!this.selectedPc || this.streamIntervalMs <= 0 || this.selectedPc.status === 'offline') return;
       if (Date.now() - this.lastStreamFrameAt > 2800) {
-        this.adminState.startScreenStream(this.selectedPc.id, this.streamIntervalMs, 960, 540, 50);
-        this.captureCurrentScreen();
+        this.adminState.startScreenStream(this.selectedPc.id, this.streamIntervalMs, this.streamWidth, this.streamHeight, this.streamQuality);
       }
     }, 2800);
   }
@@ -1221,10 +1287,6 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       clearInterval(this.streamFallbackTimer);
       this.streamFallbackTimer = null;
     }
-    if (this.streamTimer) {
-      clearInterval(this.streamTimer);
-      this.streamTimer = null;
-    }
     if (emitStopToRemote && this.selectedPc) {
       this.adminState.stopScreenStream(this.selectedPc.id);
     }
@@ -1232,7 +1294,6 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   scheduleQuickCapture(delayMs: number = 250) {
     if (this.streamIntervalMs > 0 && Date.now() - this.lastStreamFrameAt < 2500) {
-      // Stream is continuously pushing frames, no slow polling needed
       return;
     }
     if (this.quickCaptureTimer) clearTimeout(this.quickCaptureTimer);
@@ -1257,6 +1318,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
           this.screenImages[this.selectedPc.name.toLowerCase()] = img;
         }
         this.lastCapturedTime = new Date();
+        this.cdr.markForCheck();
       }
     } finally {
       this.inFlightCapture = false;
@@ -1264,13 +1326,12 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     }
   }
 
-  // Mouse Interactivity on Remote Screen
-  onScreenClick(event: MouseEvent) {
+  // Mouse Down (Starts Dragging or Press)
+  onScreenMouseDown(event: MouseEvent) {
     if (Date.now() - this.lastTouchTime < 500) return;
     if (!this.isControlEnabled || !this.selectedPc) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const targetId = this.selectedPc.id;
+    if (event.button !== 0) return; // Left button only for drag tracking
+
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -1278,17 +1339,124 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
     const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
 
-    this.addRipple(x, y);
-    this.lastActionMessage = `🖱️ Click sent at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+    this.isMouseDown = true;
+    this.hasDragged = false;
+    this.mouseDownX = x;
+    this.mouseDownY = y;
+    this.mouseDownTime = Date.now();
 
     this.adminState.sendRemoteInput({
-      pcId: targetId,
-      type: 'click',
+      pcId: this.selectedPc.id,
+      type: 'down',
+      xPercent,
+      yPercent
+    });
+    this.addRipple(x, y);
+  }
+
+  // Mouse Move (Handles Dragging & Live Pointer)
+  onScreenMouseMove(event: MouseEvent) {
+    if (!this.isControlEnabled || !this.selectedPc || !this.isMouseDown) return;
+
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    const dist = Math.hypot(x - this.mouseDownX, y - this.mouseDownY);
+    if (dist > 4) {
+      this.hasDragged = true;
+    }
+
+    const now = Date.now();
+    // Throttle move events to ~35ms (~28 updates/sec)
+    if (now - this.lastMouseMoveTime > 35) {
+      this.lastMouseMoveTime = now;
+      const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+      const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+
+      this.adminState.sendRemoteInput({
+        pcId: this.selectedPc.id,
+        type: 'move',
+        xPercent,
+        yPercent
+      });
+      this.lastActionMessage = `🖐️ Dragging at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+    }
+  }
+
+  // Mouse Up (Releases Drag or Completes Click)
+  onScreenMouseUp(event: MouseEvent) {
+    if (Date.now() - this.lastTouchTime < 500) return;
+    if (!this.isControlEnabled || !this.selectedPc || !this.isMouseDown) return;
+    this.isMouseDown = false;
+
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+
+    this.adminState.sendRemoteInput({
+      pcId: this.selectedPc.id,
+      type: 'up',
       xPercent,
       yPercent
     });
 
-    this.scheduleQuickCapture(250);
+    if (this.hasDragged) {
+      this.lastActionMessage = `🖐️ Drag released at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+    } else {
+      this.lastActionMessage = `🖱️ Click at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+    }
+  }
+
+  onScreenMouseLeave(event: MouseEvent) {
+    if (this.isMouseDown && this.selectedPc) {
+      this.isMouseDown = false;
+      const target = event.currentTarget as HTMLElement;
+      const rect = target.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+      const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+
+      this.adminState.sendRemoteInput({
+        pcId: this.selectedPc.id,
+        type: 'up',
+        xPercent,
+        yPercent
+      });
+    }
+  }
+
+  // Mouse Wheel (Native Windows Wheel Scrolling)
+  onScreenWheel(event: WheelEvent) {
+    if (!this.isControlEnabled || !this.selectedPc) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const now = Date.now();
+    if (now - this.lastWheelTime < 50) return;
+    this.lastWheelTime = now;
+
+    const delta = event.deltaY < 0 ? 120 : -120;
+    const dir = delta > 0 ? 'Up' : 'Down';
+    this.lastActionMessage = `📜 Scroll ${dir}`;
+
+    this.adminState.sendRemoteInput({
+      pcId: this.selectedPc.id,
+      type: 'scroll',
+      delta
+    });
+  }
+
+  onScreenClick(event: MouseEvent) {
+    // If handled by mousedown + mouseup, avoid double-click
+    if (Date.now() - this.lastTouchTime < 500) return;
+    if (!this.isControlEnabled || !this.selectedPc) return;
+    event.preventDefault();
   }
 
   onScreenDblClick(event: MouseEvent) {
@@ -1296,6 +1464,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (!this.isControlEnabled || !this.selectedPc) return;
     event.preventDefault();
     event.stopPropagation();
+
     const targetId = this.selectedPc.id;
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
@@ -1314,7 +1483,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       yPercent
     });
 
-    this.scheduleQuickCapture(350);
+    this.scheduleQuickCapture(300);
   }
 
   onScreenContextMenu(event: MouseEvent) {
@@ -1322,6 +1491,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (!this.isControlEnabled || !this.selectedPc) return;
     event.preventDefault();
     event.stopPropagation();
+
     const targetId = this.selectedPc.id;
     const target = event.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
@@ -1351,7 +1521,165 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     }, 500);
   }
 
-  // AnyDesk-Style Global Window Keyboard Capture (Capture Phase)
+  // Touch Event Handling for Mobile / Tablet
+  onTouchStart(event: TouchEvent) {
+    if (!this.isControlEnabled || !this.selectedPc || event.touches.length === 0) return;
+    const touch = event.touches[0];
+    this.touchStartX = touch.clientX;
+    this.touchStartY = touch.clientY;
+    this.isTouchDown = true;
+    this.touchHasDragged = false;
+
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = null;
+    }
+
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+
+    if (this.touchInteractionMode === 'drag') {
+      this.adminState.sendRemoteInput({
+        pcId: this.selectedPc.id,
+        type: 'down',
+        xPercent,
+        yPercent
+      });
+      this.addRipple(x, y);
+      return;
+    }
+
+    // Long-press detection: hold finger for 450ms triggers Right-Click automatically
+    this.longPressTimer = setTimeout(() => {
+      this.longPressTimer = null;
+      this.lastTouchTime = Date.now();
+      this.addRipple(x, y);
+      this.lastActionMessage = `🔘 Right-click (Long-press) at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate(50); } catch { }
+      }
+      this.adminState.sendRemoteInput({
+        pcId: this.selectedPc!.id,
+        type: 'rclick',
+        xPercent,
+        yPercent
+      });
+    }, 450);
+  }
+
+  onTouchMove(event: TouchEvent) {
+    if (!this.isControlEnabled || !this.selectedPc) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    const diffX = touch.clientX - this.touchStartX;
+    const diffY = touch.clientY - this.touchStartY;
+
+    if (Math.hypot(diffX, diffY) > 8) {
+      this.touchHasDragged = true;
+      if (this.longPressTimer) {
+        clearTimeout(this.longPressTimer);
+        this.longPressTimer = null;
+      }
+    }
+
+    if (this.touchInteractionMode === 'scroll') {
+      const now = Date.now();
+      if (now - this.lastWheelTime > 60 && Math.abs(diffY) > 12) {
+        this.lastWheelTime = now;
+        const delta = diffY > 0 ? 120 : -120;
+        this.touchStartY = touch.clientY;
+        this.sendScroll(delta);
+      }
+      return;
+    }
+
+    if (this.touchInteractionMode === 'drag' && this.isTouchDown) {
+      const now = Date.now();
+      if (now - this.lastMouseMoveTime > 40) {
+        this.lastMouseMoveTime = now;
+        const target = event.currentTarget as HTMLElement;
+        const rect = target.getBoundingClientRect();
+        const x = touch.clientX - rect.left;
+        const y = touch.clientY - rect.top;
+        const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+        const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+
+        this.adminState.sendRemoteInput({
+          pcId: this.selectedPc.id,
+          type: 'move',
+          xPercent,
+          yPercent
+        });
+      }
+    }
+  }
+
+  onTouchEnd(event: TouchEvent) {
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = null;
+    }
+    if (!this.isControlEnabled || !this.selectedPc) return;
+    this.isTouchDown = false;
+
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+
+    if (this.touchInteractionMode === 'drag') {
+      this.adminState.sendRemoteInput({
+        pcId: this.selectedPc.id,
+        type: 'up',
+        xPercent,
+        yPercent
+      });
+      return;
+    }
+
+    if (this.touchInteractionMode === 'scroll' && this.touchHasDragged) {
+      return;
+    }
+
+    // If long-press already handled it, ignore
+    if (Date.now() - this.lastTouchTime < 200) return;
+    if (this.touchHasDragged) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.lastTouchTime = Date.now();
+    this.addRipple(x, y);
+
+    const now = Date.now();
+    const isDoubleTap = (now - this.lastTapTime < 320);
+    this.lastTapTime = now;
+
+    const type = isDoubleTap ? 'dclick' : this.activeClickType;
+    const typeLabel = type === 'rclick' ? '🔘 Right-click' : type === 'dclick' ? '⚡ Double-click' : '🖱️ Click';
+    this.lastActionMessage = `${typeLabel} at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+
+    this.adminState.sendRemoteInput({
+      pcId: this.selectedPc.id,
+      type,
+      xPercent,
+      yPercent
+    });
+
+    if (this.activeClickType !== 'click') {
+      this.activeClickType = 'click';
+    }
+  }
+
+  // AnyDesk-Style Global Window Keyboard Capture (Direct Hardware Keyboard Passthrough)
   private onGlobalWindowKeyDown(event: KeyboardEvent) {
     if (!this.isControlEnabled || !this.selectedPc) return;
 
@@ -1363,59 +1691,22 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       return;
     }
 
+    // If user is focused on the mobile text input, allow normal typing there
+    const activeElem = document.activeElement;
+    if (activeElem && (activeElem.tagName === 'INPUT' || activeElem.tagName === 'TEXTAREA')) {
+      if (activeElem.classList.contains('mobile-text-input')) {
+        return;
+      }
+    }
+
     // STRICT LOCK: Stop browser from tabbing through buttons, scrolling, or switching pages!
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    // Alt+Tab or Ctrl+Tab -> Native Win32 Window Switcher
+    // Alt+Tab
     if ((event.altKey && event.key === 'Tab') || (event.ctrlKey && event.key === 'Tab')) {
       this.sendKey('alttab');
-      return;
-    }
-
-    // Tab Key
-    if (event.key === 'Tab') {
-      this.sendKey('tab');
-      return;
-    }
-
-    // Enter Key
-    if (event.key === 'Enter') {
-      this.sendKey('enter');
-      return;
-    }
-
-    // Backspace Key
-    if (event.key === 'Backspace') {
-      this.sendKey('backspace');
-      return;
-    }
-
-    // Escape Key
-    if (event.key === 'Escape') {
-      this.sendKey('esc');
-      return;
-    }
-
-    // Space Key
-    if (event.key === ' ' || event.code === 'Space') {
-      this.sendKey('space');
-      return;
-    }
-
-    // Arrow Keys
-    if (event.key === 'ArrowUp') { this.sendKey('up'); return; }
-    if (event.key === 'ArrowDown') { this.sendKey('down'); return; }
-    if (event.key === 'ArrowLeft') { this.sendKey('left'); return; }
-    if (event.key === 'ArrowRight') { this.sendKey('right'); return; }
-
-    // Delete Key
-    if (event.key === 'Delete') { this.sendKey('delete'); return; }
-
-    // Windows Start Key
-    if (event.key === 'Meta' || event.key === 'OS') {
-      this.sendKey('win');
       return;
     }
 
@@ -1425,22 +1716,52 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       return;
     }
 
-    // Standard Ctrl Shortcuts
+    // Win Shortcuts
+    if (event.metaKey || (event.altKey && event.key.toLowerCase() === 'd')) {
+      const k = event.key.toLowerCase();
+      if (k === 'd') { this.sendKey('wind'); return; }
+      if (k === 'e') { this.sendKey('wine'); return; }
+      if (k === 'r') { this.sendKey('winr'); return; }
+      if (event.key === 'Meta' || event.key === 'OS') { this.sendKey('win'); return; }
+    }
+
+    // Ctrl Shortcuts
     if (event.ctrlKey && !event.altKey) {
       const k = event.key.toLowerCase();
-      if (k === 'v') { this.sendKey('^v'); return; }
-      if (k === 'c') { this.sendKey('^c'); return; }
-      if (k === 'a') { this.sendKey('^a'); return; }
-      if (k === 'z') { this.sendKey('^z'); return; }
       if (event.shiftKey && (k === 'escape' || event.key === 'Escape')) {
         this.sendKey('taskmgr');
         return;
       }
+      if (k === 'c') { this.sendKey('ctrlc'); return; }
+      if (k === 'v') { this.sendKey('ctrlv'); return; }
+      if (k === 'a') { this.sendKey('ctrla'); return; }
+      if (k === 'z') { this.sendKey('ctrlz'); return; }
+      if (k === 'x') { this.sendKey('ctrlx'); return; }
+      if (k === 'w') { this.sendKey('ctrlw'); return; }
+      if (k === 't') { this.sendKey('ctrlt'); return; }
+      if (k === 'r') { this.sendKey('f5'); return; }
     }
 
+    // Standard Navigation & Edit Keys
+    if (event.key === 'Tab') { this.sendKey('tab'); return; }
+    if (event.key === 'Enter') { this.sendKey('enter'); return; }
+    if (event.key === 'Backspace') { this.sendKey('backspace'); return; }
+    if (event.key === 'Escape') { this.sendKey('esc'); return; }
+    if (event.key === ' ' || event.code === 'Space') { this.sendKey('space'); return; }
+    if (event.key === 'Delete') { this.sendKey('delete'); return; }
+    if (event.key === 'Insert') { this.sendKey('insert'); return; }
+    if (event.key === 'Home') { this.sendKey('home'); return; }
+    if (event.key === 'End') { this.sendKey('end'); return; }
+    if (event.key === 'PageUp') { this.sendKey('pageup'); return; }
+    if (event.key === 'PageDown') { this.sendKey('pagedown'); return; }
+    if (event.key === 'ArrowUp') { this.sendKey('up'); return; }
+    if (event.key === 'ArrowDown') { this.sendKey('down'); return; }
+    if (event.key === 'ArrowLeft') { this.sendKey('left'); return; }
+    if (event.key === 'ArrowRight') { this.sendKey('right'); return; }
+
     // F-Keys
-    if (/^F[1-9]|F1[0-2]$/.test(event.key)) {
-      this.sendKey(`{${event.key}}`);
+    if (/^F[1-9]|F1[0-2]$/i.test(event.key)) {
+      this.sendKey(event.key.toLowerCase());
       return;
     }
 
@@ -1459,7 +1780,6 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       type: 'text',
       text: char
     });
-    this.scheduleQuickCapture(300);
   }
 
   sendKey(keyString: string) {
@@ -1485,6 +1805,5 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       type: 'key',
       key: normalizedKey
     });
-    this.scheduleQuickCapture(300);
   }
 }

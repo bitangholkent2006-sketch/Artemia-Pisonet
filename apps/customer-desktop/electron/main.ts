@@ -2902,6 +2902,31 @@ ipcMain.handle('maintenance:capture-screen', async (_event, options?: { width?: 
   return { base64Image: '', error: 'Screen capture currently unavailable on station.' };
 });
 
+// Persistent RemoteInput Worker for Ultra-Low Latency (<1ms input response)
+let remoteInputWorkerProc: any = null;
+
+function ensureRemoteInputWorker(helperExe: string): any {
+  if (remoteInputWorkerProc && !remoteInputWorkerProc.killed && remoteInputWorkerProc.exitCode === null) {
+    return remoteInputWorkerProc;
+  }
+  try {
+    const proc = spawn(helperExe, ['worker'], {
+      windowsHide: true,
+      stdio: ['pipe', 'ignore', 'ignore']
+    });
+    proc.on('exit', () => {
+      if (remoteInputWorkerProc === proc) remoteInputWorkerProc = null;
+    });
+    proc.on('error', () => {
+      if (remoteInputWorkerProc === proc) remoteInputWorkerProc = null;
+    });
+    remoteInputWorkerProc = proc;
+    return proc;
+  } catch {
+    return null;
+  }
+}
+
 // 8.1 Remote Desktop Input Simulator (Mouse clicks, double-clicks, right-clicks, typing, shortcuts)
 ipcMain.handle('maintenance:remote-input', async (_event, payload: {
   type: string;
@@ -2943,6 +2968,16 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
       const escapeSendKeysText = (txt: string) => txt.replace(/([{}()[\]+^%~])/g, '{$1}');
 
       if (type === 'key' && (kLower === 'taskmgr' || kLower === '^+{esc}')) {
+        if (helperExe && process.platform === 'win32') {
+          const worker = ensureRemoteInputWorker(helperExe);
+          if (worker && worker.stdin && !worker.stdin.destroyed) {
+            try {
+              worker.stdin.write('taskmgr\n');
+              resolve({ success: true, x: targetX, y: targetY });
+              return;
+            } catch {}
+          }
+        }
         if (process.platform === 'win32') {
           const psTaskMgr = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K { [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, UIntPtr e); public static void TaskMgr() { keybd_event(0x11,0,0,UIntPtr.Zero); keybd_event(0x10,0,0,UIntPtr.Zero); keybd_event(0x1B,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(30); keybd_event(0x1B,0,2,UIntPtr.Zero); keybd_event(0x10,0,2,UIntPtr.Zero); keybd_event(0x11,0,2,UIntPtr.Zero); } }'; [K]::TaskMgr();`;
           execFile('powershell.exe', ['-NoProfile', '-Command', psTaskMgr], { windowsHide: true }, (err) => {
@@ -2955,20 +2990,40 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
       }
 
       if (helperExe && process.platform === 'win32') {
+        let cmdLine = '';
         let args: string[] = [];
-        if (type === 'click' || type === 'dclick' || type === 'rclick' || type === 'move' || type === 'down' || type === 'up') {
+        if (type === 'click' || type === 'dclick' || type === 'rclick' || type === 'move' || type === 'down' || type === 'up' || type === 'rdown' || type === 'rup') {
+          cmdLine = `${type} ${targetX} ${targetY}`;
           args = [type, String(targetX), String(targetY)];
         } else if (type === 'scroll') {
-          args = ['scroll', String(payload.delta || 120)];
+          const delta = payload.delta || 120;
+          cmdLine = `scroll ${delta}`;
+          args = ['scroll', String(delta)];
         } else if (type === 'key') {
-          args = ['key', payload.key || '{ENTER}'];
+          const keyVal = payload.key || '{ENTER}';
+          cmdLine = `key ${keyVal}`;
+          args = ['key', keyVal];
         } else if (type === 'text') {
           const rawText = payload.text || '';
           if (!rawText) {
             resolve({ success: true });
             return;
           }
-          args = ['text', escapeSendKeysText(rawText)];
+          const escaped = escapeSendKeysText(rawText);
+          cmdLine = `text ${escaped}`;
+          args = ['text', escaped];
+        }
+
+        // Try persistent worker first for sub-millisecond execution!
+        const worker = ensureRemoteInputWorker(helperExe);
+        if (worker && worker.stdin && !worker.stdin.destroyed && cmdLine) {
+          try {
+            worker.stdin.write(`${cmdLine}\n`);
+            resolve({ success: true, x: targetX, y: targetY });
+            return;
+          } catch (writeErr) {
+            console.warn('[RemoteInput] Worker write failed, falling back to execFile:', writeErr);
+          }
         }
 
         execFile(helperExe, args, { windowsHide: true }, (err) => {

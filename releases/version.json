@@ -1,7 +1,9 @@
 {
-  "version": "1.0.26",
+  "version": "1.0.27",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-16T10:35:00.000Z",
+  "releaseDate": "2026-11-16T11:35:00.000Z",
   "asarFileName": "app.asar",
-  "changelog": "Professional Esports Cyber HUD Game Launcher: Removed exposed admin/operator buttons from customer view, hardened anti-minimize controls, added quick keyboard search (/), enhanced dark glassmorphism card grid and category styling."
+  "size": 425104,
+  "sha256": "2E6B9886524B0C5FB1AF99C6B3E50785CB636CAB91287A6A5EEF3426604B8C58",
+  "changelog": "Ultra-Smooth AnyDesk Remote Desktop Controller: 16 FPS high-speed streaming, sub-millisecond persistent RemoteInput worker, live mouse dragging, native mouse wheel scrolling, hardware keyboard passthrough, system and game shortcuts (Win+D, Win+E, Alt+Tab, TaskMgr, Volume, F1-F12)."
 }
