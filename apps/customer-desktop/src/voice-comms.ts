@@ -20,6 +20,15 @@ export interface VoiceRoom {
   members: VoiceMember[];
 }
 
+export const DEFAULT_CLIENT_VOICE_ROOMS: VoiceRoom[] = [
+  { id: 'lobby', name: '🔊 Shop Lobby', description: 'General All-PC Chat', maxSlots: 20, memberCount: 0, members: [] },
+  { id: 'squad-1', name: '⚔️ Squad 1 (Team Alpha)', description: 'Party / Competitive Match', maxSlots: 5, memberCount: 0, members: [] },
+  { id: 'squad-2', name: '🔥 Squad 2 (Team Bravo)', description: 'Party / Competitive Match', maxSlots: 5, memberCount: 0, members: [] },
+  { id: 'squad-3', name: '⚡ Squad 3 (Team Charlie)', description: 'Party / Casual Match', maxSlots: 5, memberCount: 0, members: [] },
+  { id: 'duo-1', name: '👥 Duo Room 1', description: '2-Player Private Duo', maxSlots: 2, memberCount: 0, members: [] },
+  { id: 'duo-2', name: '👥 Duo Room 2', description: '2-Player Private Duo', maxSlots: 2, memberCount: 0, members: [] }
+];
+
 export class VoiceCommsService {
   private socket: any = null;
   private pcId: string = '';
@@ -45,7 +54,7 @@ export class VoiceCommsService {
   public vadThreshold: number = 0.015; // Voice Activity Detection Threshold
   public volume: number = 0.85; // 0 to 1.0
 
-  public rooms: VoiceRoom[] = [];
+  public rooms: VoiceRoom[] = [...DEFAULT_CLIENT_VOICE_ROOMS];
   public members: VoiceMember[] = [];
   public speakingMembers: Set<string> = new Set();
   private speakingTimeouts: Map<string, any> = new Map();

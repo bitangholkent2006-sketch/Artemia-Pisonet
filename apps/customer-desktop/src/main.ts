@@ -2292,7 +2292,7 @@ class StationMaintenanceAgent {
           display: none; align-items: center; justify-content: center; padding: 24px;
           animation: fadeIn 0.2s ease-out;
         }
-        .voice-modal-overlay.visible { display: flex; }
+        .voice-modal-overlay.visible { display: flex !important; }
         .voice-modal-card {
           background: linear-gradient(145deg, #0b1120 0%, #0f172a 60%, #1e1b4b 100%);
           border: 1px solid rgba(56, 189, 248, 0.35);
@@ -2772,7 +2772,7 @@ class StationMaintenanceAgent {
         </div>
 
         <!-- VOICE COMMS MODAL DIALOG -->
-        <div id="voice-modal" class="voice-modal-overlay" style="display:none;">
+        <div id="voice-modal" class="voice-modal-overlay">
           <div class="voice-modal-card">
             <div class="voice-modal-header">
               <div class="voice-modal-brand">
@@ -3177,30 +3177,53 @@ class StationMaintenanceAgent {
 
     // Open/Close Voice Modal
     const voiceModal = document.getElementById('voice-modal');
-    document.getElementById('btn-launcher-voice')?.addEventListener('click', () => {
+    const openVoiceModal = () => {
+      this.isVoiceModalOpen = true;
       if (voiceModal) {
-        this.isVoiceModalOpen = !this.isVoiceModalOpen;
-        voiceModal.classList.toggle('visible', this.isVoiceModalOpen);
-        if (this.isVoiceModalOpen) {
-          this.socket?.emit('voice:get-rooms');
-          this.renderVoiceCommsUi();
-        }
-      }
-    });
-
-    document.getElementById('btn-hud-expand')?.addEventListener('click', () => {
-      if (voiceModal) {
-        this.isVoiceModalOpen = true;
         voiceModal.classList.add('visible');
-        this.socket?.emit('voice:get-rooms');
-        this.renderVoiceCommsUi();
+        voiceModal.style.display = 'flex';
       }
+      this.socket?.emit('voice:get-rooms');
+      this.renderVoiceCommsUi();
+    };
+
+    const closeVoiceModal = () => {
+      this.isVoiceModalOpen = false;
+      if (voiceModal) {
+        voiceModal.classList.remove('visible');
+        voiceModal.style.display = 'none';
+      }
+    };
+
+    const toggleVoiceModal = () => {
+      if (this.isVoiceModalOpen) {
+        closeVoiceModal();
+      } else {
+        openVoiceModal();
+      }
+    };
+
+    document.getElementById('btn-launcher-voice')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleVoiceModal();
     });
 
-    document.getElementById('btn-voice-modal-close')?.addEventListener('click', () => {
-      if (voiceModal) {
-        this.isVoiceModalOpen = false;
-        voiceModal.classList.remove('visible');
+    document.getElementById('btn-hud-expand')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openVoiceModal();
+    });
+
+    document.getElementById('btn-voice-modal-close')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeVoiceModal();
+    });
+
+    voiceModal?.addEventListener('click', (e) => {
+      if (e.target === voiceModal) {
+        closeVoiceModal();
       }
     });
 

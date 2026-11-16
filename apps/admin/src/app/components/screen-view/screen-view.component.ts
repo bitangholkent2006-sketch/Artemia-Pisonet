@@ -235,28 +235,30 @@ export interface ClickRipple {
               class="tool-btn intercom-btn"
               [ngClass]="{'transmitting': isIntercomTransmitting && intercomTargetMode === 'station'}"
               (mousedown)="startIntercom('station')"
-              (mouseup)="stopIntercom()"
-              (mouseleave)="stopIntercom()"
+              (mouseup)="stopIntercom(true)"
+              (mouseleave)="stopIntercom(true)"
               (touchstart)="startIntercom('station')"
-              (touchend)="stopIntercom()"
-              title="Pindota ug hupti aron makigsulti direkta sa headset/speaker sa {{ selectedPc.name }}"
+              (touchend)="stopIntercom(true)"
+              (click)="toggleIntercom('station')"
+              title="Pindota o hupti aron makigsulti direkta sa headset/speaker sa {{ selectedPc?.name || 'PC' }}"
             >
               <span>🎙️</span>
-              <span>{{ isIntercomTransmitting && intercomTargetMode === 'station' ? 'TRANSMITTING...' : 'Hold to Talk (Station)' }}</span>
+              <span>{{ isIntercomTransmitting && intercomTargetMode === 'station' ? 'TRANSMITTING...' : 'Hold / Click (Station)' }}</span>
             </button>
             <button
               type="button"
               class="tool-btn intercom-btn shop-broadcast"
               [ngClass]="{'transmitting': isIntercomTransmitting && intercomTargetMode === 'shop'}"
               (mousedown)="startIntercom('shop')"
-              (mouseup)="stopIntercom()"
-              (mouseleave)="stopIntercom()"
+              (mouseup)="stopIntercom(true)"
+              (mouseleave)="stopIntercom(true)"
               (touchstart)="startIntercom('shop')"
-              (touchend)="stopIntercom()"
-              title="Pindota ug hupti aron mag-broadcast sa imong tingog sa TANANG PC sa pisonet"
+              (touchend)="stopIntercom(true)"
+              (click)="toggleIntercom('shop')"
+              title="Pindota o hupti aron mag-broadcast sa imong tingog sa TANANG PC sa pisonet"
             >
               <span>📢</span>
-              <span>{{ isIntercomTransmitting && intercomTargetMode === 'shop' ? 'BROADCASTING...' : 'Hold to Broadcast (Shop)' }}</span>
+              <span>{{ isIntercomTransmitting && intercomTargetMode === 'shop' ? 'BROADCASTING...' : 'Hold / Click Broadcast' }}</span>
             </button>
           </div>
 
@@ -1075,6 +1077,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   // Intercom Walkie-Talkie & Broadcast State
   isIntercomTransmitting = false;
   intercomTargetMode: 'station' | 'shop' = 'station';
+  private intercomPressStartTime = 0;
   private intercomStream: MediaStream | null = null;
   private intercomCtx: AudioContext | null = null;
   private intercomProcessor: ScriptProcessorNode | null = null;
@@ -1866,10 +1869,28 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   // Admin Intercom Walkie-Talkie & Broadcast
+  toggleIntercom(mode: 'station' | 'shop') {
+    if (this.isIntercomTransmitting) {
+      this.stopIntercom(false);
+    } else {
+      this.startIntercom(mode);
+    }
+  }
+
   async startIntercom(mode: 'station' | 'shop') {
     if (this.isIntercomTransmitting) return;
-    if (mode === 'station' && !this.selectedPc) return;
+    if (mode === 'station' && !this.selectedPc) {
+      this.lastActionMessage = '⚠️ Palihog pagpili una og PC station aron makig-intercom!';
+      return;
+    }
 
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      this.lastActionMessage = '❌ Browser mic requires HTTPS or localhost.';
+      alert('Ang browser microphone nanginahanglan og HTTPS o localhost aron magamit ang Intercom.');
+      return;
+    }
+
+    this.intercomPressStartTime = Date.now();
     this.intercomTargetMode = mode;
     this.isIntercomTransmitting = true;
     this.lastActionMessage = mode === 'shop'
@@ -1905,12 +1926,16 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       silentGain.connect(this.intercomCtx.destination);
     } catch (err: any) {
       console.warn('[Intercom] Mic capture error:', err);
-      this.stopIntercom();
+      this.stopIntercom(false);
       this.lastActionMessage = `❌ Mic unavailable: ${err?.message}`;
     }
   }
 
-  stopIntercom() {
+  stopIntercom(fromHold: boolean = false) {
+    // If it was a quick mouse tap (< 350ms), allow it to stay active as a click-to-talk toggle
+    if (fromHold && Date.now() - this.intercomPressStartTime < 350) {
+      return;
+    }
     if (!this.isIntercomTransmitting) return;
     this.isIntercomTransmitting = false;
     if (this.intercomStream) {
