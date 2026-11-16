@@ -1,9 +1,9 @@
 {
-  "version": "1.0.31",
+  "version": "1.0.32",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-16T14:14:00.000Z",
+  "releaseDate": "2026-11-16T14:35:00.000Z",
   "asarFileName": "app.asar",
-  "size": 471230,
-  "sha256": "A1F68D5E7E308683D76EB75B9EF05CE22C284DC1A0A84DAC63389D289D1D49A1",
-  "changelog": "DirectX 3D FPS & Anti-Cheat Controller Engine Overhaul: Rules of Survival (RoS Legacy) & Roblox full camera rotation (relative mouse delta + MOUSEEVENTF_MOVE), DirectInput zero-wVk hardware scan codes, dual-trigger SendInput + mouse_event/keybd_event, AttachThreadInput window focus forcing, and right-click camera drag support."
+  "size": 471928,
+  "sha256": "25C1434F0081214C0ABBF0E98652B88CE2585C0547FC9B060CADF5F3881ED849",
+  "changelog": "Persistent Voice Comms & Zero-Drop Reconnect Overhaul: Socket.IO ping timeout extended to 30s, 15-second disconnection grace period prevents abrupt voice leaves, background tab persistence in Admin Dashboard via AdminVoiceService, automatic voice room rejoin on reconnect, and persistent navbar voice status pill."
 }

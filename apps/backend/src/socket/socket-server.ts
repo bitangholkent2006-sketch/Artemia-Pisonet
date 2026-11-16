@@ -46,6 +46,7 @@ const DEFAULT_VOICE_ROOMS = [
 ];
 
 const activeVoiceRooms = new Map<string, Map<string, VoiceMember>>();
+const voiceDisconnectTimers = new Map<string, any>();
 
 function getVoiceRoomsSummary() {
   return DEFAULT_VOICE_ROOMS.map(def => {
@@ -267,8 +268,8 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       methods: ['GET', 'POST'],
       credentials: true
     },
-    pingInterval: 10000,
-    pingTimeout: 12000
+    pingInterval: 25000,
+    pingTimeout: 30000
   });
 
   PcService.setIoInstance(io);
@@ -768,16 +769,28 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     authSocket.on('voice:join', (payload: { roomId: string; pcId: string; pcName: string; isMuted?: boolean; isDeafened?: boolean }) => {
       if (!payload?.roomId || !payload?.pcId) return;
       const rId = payload.roomId.toLowerCase();
+      const pId = payload.pcId.toLowerCase();
 
-      // Leave any existing voice rooms first
+      // Clear any pending disconnect grace timer for this pcId
       for (const [existingRoomId, membersMap] of activeVoiceRooms.entries()) {
-        if (membersMap.has(authSocket.id)) {
-          membersMap.delete(authSocket.id);
-          authSocket.leave(`voice:${existingRoomId}`);
-          io?.to(`voice:${existingRoomId}`).emit('voice:members-updated', {
-            roomId: existingRoomId,
-            members: Array.from(membersMap.values())
-          });
+        const timerKey = `${existingRoomId}:${pId}`;
+        if (voiceDisconnectTimers.has(timerKey)) {
+          clearTimeout(voiceDisconnectTimers.get(timerKey));
+          voiceDisconnectTimers.delete(timerKey);
+        }
+
+        // Remove previous socket entry for this same pcId if switching or reconnecting
+        for (const [sId, mem] of membersMap.entries()) {
+          if (mem.pcId.toLowerCase() === pId || sId === authSocket.id) {
+            membersMap.delete(sId);
+            if (existingRoomId !== rId) {
+              authSocket.leave(`voice:${existingRoomId}`);
+              io?.to(`voice:${existingRoomId}`).emit('voice:members-updated', {
+                roomId: existingRoomId,
+                members: Array.from(membersMap.values())
+              });
+            }
+          }
         }
       }
 
@@ -806,11 +819,24 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.emit('voice:rooms-status', { rooms: getVoiceRoomsSummary() });
     });
 
-    authSocket.on('voice:leave', () => {
+    authSocket.on('voice:leave', (payload?: { roomId?: string }) => {
+      const pId = (authSocket.data?.pcId || '').toLowerCase();
       for (const [existingRoomId, membersMap] of activeVoiceRooms.entries()) {
-        if (membersMap.has(authSocket.id)) {
-          membersMap.delete(authSocket.id);
-          authSocket.leave(`voice:${existingRoomId}`);
+        const timerKey = `${existingRoomId}:${pId}`;
+        if (voiceDisconnectTimers.has(timerKey)) {
+          clearTimeout(voiceDisconnectTimers.get(timerKey));
+          voiceDisconnectTimers.delete(timerKey);
+        }
+
+        let changed = false;
+        for (const [sId, mem] of membersMap.entries()) {
+          if (sId === authSocket.id || (pId && mem.pcId.toLowerCase() === pId)) {
+            membersMap.delete(sId);
+            authSocket.leave(`voice:${existingRoomId}`);
+            changed = true;
+          }
+        }
+        if (changed) {
           io?.to(`voice:${existingRoomId}`).emit('voice:members-updated', {
             roomId: existingRoomId,
             members: Array.from(membersMap.values())
@@ -876,17 +902,32 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
     });
 
     authSocket.on('disconnect', () => {
-      // Clean up voice room membership on disconnect
+      // Clean up voice room membership on disconnect with a 15-second grace period for brief Wi-Fi or packet hiccups
+      const disconnectedSocketId = authSocket.id;
       for (const [existingRoomId, membersMap] of activeVoiceRooms.entries()) {
-        if (membersMap.has(authSocket.id)) {
-          membersMap.delete(authSocket.id);
-          io?.to(`voice:${existingRoomId}`).emit('voice:members-updated', {
-            roomId: existingRoomId,
-            members: Array.from(membersMap.values())
-          });
+        if (membersMap.has(disconnectedSocketId)) {
+          const mem = membersMap.get(disconnectedSocketId)!;
+          const timerKey = `${existingRoomId}:${mem.pcId.toLowerCase()}`;
+
+          if (voiceDisconnectTimers.has(timerKey)) {
+            clearTimeout(voiceDisconnectTimers.get(timerKey));
+          }
+
+          const timer = setTimeout(() => {
+            voiceDisconnectTimers.delete(timerKey);
+            const currentMap = activeVoiceRooms.get(existingRoomId);
+            if (currentMap && currentMap.has(disconnectedSocketId)) {
+              currentMap.delete(disconnectedSocketId);
+              io?.to(`voice:${existingRoomId}`).emit('voice:members-updated', {
+                roomId: existingRoomId,
+                members: Array.from(currentMap.values())
+              });
+              io?.emit('voice:rooms-status', { rooms: getVoiceRoomsSummary() });
+            }
+          }, 15000);
+          voiceDisconnectTimers.set(timerKey, timer);
         }
       }
-      io?.emit('voice:rooms-status', { rooms: getVoiceRoomsSummary() });
 
       if (authSocket.data.explicitOffline) return;
       const targetPcId = authSocket.data.pcId || pcId;

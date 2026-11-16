@@ -232,6 +232,31 @@
           <span>Download Client (.zip)</span>
         </a>
 
+        <!-- Persistent Squad Voice Pill (Shows on all tabs when connected!) -->
+        <div class="voice-persistent-pill" *ngIf="adminVoice.currentRoomId">
+          <span class="voice-dot"></span>
+          <span class="voice-channel-name" (click)="setActiveNav('squad-voice')" title="Pindota aron mobalik sa Squad Voice tab">
+            🎙️ {{ adminVoice.currentRoomName }}
+          </span>
+          <button
+            type="button"
+            class="voice-chip-btn"
+            [ngClass]="{'muted': adminVoice.isMuted}"
+            (click)="adminVoice.toggleMute()"
+            [title]="adminVoice.isMuted ? 'Unmute Mic' : 'Mute Mic'"
+          >
+            {{ adminVoice.isMuted ? '🔇' : '🎙️' }}
+          </button>
+          <button
+            type="button"
+            class="voice-chip-btn disconnect-btn"
+            (click)="adminVoice.leaveRoom()"
+            title="Disconnect Voice"
+          >
+            ❌
+          </button>
+        </div>
+
         <!-- Live Cloud Status Pill -->
         <div class="status-indicator connected">
           <span class="dot"></span>

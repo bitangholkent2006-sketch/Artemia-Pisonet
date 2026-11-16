@@ -12,6 +12,7 @@ import { ScreenViewComponent } from './components/screen-view/screen-view.compon
 import { PcsComponent } from './components/pcs/pcs.component';
 import { LauncherComponent } from './components/launcher/launcher.component';
 import { SquadVoiceComponent } from './components/squad-voice/squad-voice.component';
+import { AdminVoiceService } from './services/admin-voice.service';
 import { PisonetAppState } from '@pisonet/shared';
 
 export type NavTab = 
@@ -54,7 +55,10 @@ export class AppComponent implements OnInit, OnDestroy {
   showResetConfirmModal = false;
   targetStationId?: string;
 
-  constructor(public adminState: AdminStateService) {}
+  constructor(
+    public adminState: AdminStateService,
+    public adminVoice: AdminVoiceService
+  ) {}
 
   ngOnInit() {
     this.sub = this.adminState.state$.subscribe((s) => {

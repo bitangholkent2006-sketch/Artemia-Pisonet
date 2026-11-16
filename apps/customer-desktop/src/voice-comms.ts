@@ -112,6 +112,7 @@ export class VoiceCommsService {
   private socket: any = null;
   private pcId: string = '';
   private pcName: string = '';
+  private isListenersSetup: boolean = false;
 
   // Audio Contexts
   private captureCtx: AudioContext | null = null;
@@ -158,6 +159,17 @@ export class VoiceCommsService {
     this.setupSocketListeners();
     this.setupPttKeyListeners();
 
+    // If already in a room and reconnected, re-join immediately
+    if (this.currentRoomId && this.socket?.connected) {
+      this.socket.emit('voice:join', {
+        roomId: this.currentRoomId,
+        pcId: this.pcId,
+        pcName: this.pcName,
+        isMuted: this.isMuted,
+        isDeafened: this.isDeafened
+      });
+    }
+
     // Fetch initial voice rooms
     if (this.socket?.connected) {
       this.socket.emit('voice:get-rooms');
@@ -170,7 +182,28 @@ export class VoiceCommsService {
   }
 
   private setupSocketListeners() {
-    if (!this.socket) return;
+    if (!this.socket || this.isListenersSetup) return;
+    this.isListenersSetup = true;
+
+    this.socket.on('connect', () => {
+      // Re-join active room seamlessly on reconnect
+      if (this.currentRoomId) {
+        this.socket.emit('voice:join', {
+          roomId: this.currentRoomId,
+          pcId: this.pcId,
+          pcName: this.pcName,
+          isMuted: this.isMuted,
+          isDeafened: this.isDeafened
+        });
+      }
+      this.socket.emit('voice:get-rooms');
+      if (this.captureCtx && this.captureCtx.state === 'suspended') {
+        this.captureCtx.resume().catch(() => {});
+      }
+      if (this.playbackCtx && this.playbackCtx.state === 'suspended') {
+        this.playbackCtx.resume().catch(() => {});
+      }
+    });
 
     this.socket.on('voice:rooms-status', (payload: { rooms: VoiceRoom[] }) => {
       this.rooms = payload.rooms || [];
