@@ -2837,7 +2837,7 @@ class StationMaintenanceAgent {
 
           <div class="header-actions">
             <!-- SQUAD VOICE COMMS BUTTON -->
-            <button type="button" class="launcher-voice-btn" id="btn-launcher-voice" onclick="window.__toggleSquadVoice &amp;&amp; window.__toggleSquadVoice()" title="Squad Voice Comms (Pakigsulti sa ubang PC nga walay Discord)">
+            <button type="button" class="launcher-voice-btn" id="btn-launcher-voice" title="Squad Voice Comms (Pakigsulti sa ubang PC nga walay Discord)">
               <span class="voice-btn-mic" id="voice-header-mic">🎙️</span>
               <span id="voice-header-label" class="voice-header-label">Squad Voice</span>
               <span id="voice-header-badge" class="voice-status-badge off">OFF</span>
@@ -3183,68 +3183,58 @@ class StationMaintenanceAgent {
     };
 
     // Open/Close Voice Modal
-    const voiceModal = document.getElementById('voice-modal');
+    const getModal = () => document.getElementById('voice-modal');
     const openVoiceModal = () => {
       this.isVoiceModalOpen = true;
-      if (voiceModal) {
-        voiceModal.classList.add('visible');
-        voiceModal.style.display = 'flex';
+      const modal = getModal();
+      if (modal) {
+        modal.classList.add('visible');
+        modal.style.display = 'flex';
       }
+      this.logMessage('[VOICE] Opened Voice Comms Modal (modal found: ' + !!modal + ')');
       this.socket?.emit('voice:get-rooms');
       this.renderVoiceCommsUi();
     };
 
     const closeVoiceModal = () => {
       this.isVoiceModalOpen = false;
-      if (voiceModal) {
-        voiceModal.classList.remove('visible');
-        voiceModal.style.display = 'none';
+      const modal = getModal();
+      if (modal) {
+        modal.classList.remove('visible');
+        modal.style.display = 'none';
       }
+      this.logMessage('[VOICE] Closed Voice Comms Modal');
     };
 
-    const toggleVoiceModal = () => {
-      if (this.isVoiceModalOpen) {
-        closeVoiceModal();
-      } else {
-        openVoiceModal();
-      }
-    };
+    (window as any).__openSquadVoice = () => openVoiceModal();
+    (window as any).__closeSquadVoice = () => closeVoiceModal();
 
-    (window as any).__toggleSquadVoice = () => {
-      toggleVoiceModal();
-    };
-
-    // Delegated click on document in case of re-rendering
+    // Unified Document-Level Click Handler (prevents bubbling double-toggles)
     document.addEventListener('click', (e) => {
       const target = e.target as HTMLElement | null;
-      if (target && (target.id === 'btn-launcher-voice' || target.closest('#btn-launcher-voice'))) {
+      if (!target) return;
+
+      // Click to OPEN Voice Modal
+      if (target.id === 'btn-launcher-voice' || target.closest('#btn-launcher-voice') || target.id === 'btn-hud-expand' || target.closest('#btn-hud-expand')) {
         e.preventDefault();
         e.stopPropagation();
-        toggleVoiceModal();
+        openVoiceModal();
+        return;
       }
-    });
 
-    document.getElementById('btn-launcher-voice')?.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleVoiceModal();
-    });
-
-    document.getElementById('btn-hud-expand')?.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      openVoiceModal();
-    });
-
-    document.getElementById('btn-voice-modal-close')?.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      closeVoiceModal();
-    });
-
-    voiceModal?.addEventListener('click', (e) => {
-      if (e.target === voiceModal) {
+      // Click to CLOSE Voice Modal (Close button ✕)
+      if (target.id === 'btn-voice-modal-close' || target.closest('#btn-voice-modal-close')) {
+        e.preventDefault();
+        e.stopPropagation();
         closeVoiceModal();
+        return;
+      }
+
+      // Click outside dialog on modal overlay backdrop to close
+      const modal = getModal();
+      if (modal && target === modal) {
+        closeVoiceModal();
+        return;
       }
     });
 
