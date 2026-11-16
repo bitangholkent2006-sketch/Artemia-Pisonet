@@ -1084,6 +1084,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   // Bound window capture listener to intercept physical keys
   private boundWindowKeyDown = (e: KeyboardEvent) => this.onGlobalWindowKeyDown(e);
+  private boundWindowKeyUp = (e: KeyboardEvent) => this.onGlobalWindowKeyUp(e);
 
   constructor(
     public adminState: AdminStateService,
@@ -1290,10 +1291,12 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
   private addGlobalKeyListeners() {
     window.addEventListener('keydown', this.boundWindowKeyDown, { capture: true });
+    window.addEventListener('keyup', this.boundWindowKeyUp, { capture: true });
   }
 
   private removeGlobalKeyListeners() {
     window.removeEventListener('keydown', this.boundWindowKeyDown, { capture: true });
+    window.removeEventListener('keyup', this.boundWindowKeyUp, { capture: true });
   }
 
   onStreamRateChange() {
@@ -1740,6 +1743,33 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     }
   }
 
+  private normalizeGameKey(event: KeyboardEvent): string {
+    const code = event.code || '';
+    if (code.startsWith('Key') && code.length === 4) {
+      return code.substring(3).toLowerCase();
+    }
+    if (code.startsWith('Digit') && code.length === 6) {
+      return code.substring(5);
+    }
+    if (code.startsWith('Numpad') && code.length === 7) {
+      return code.substring(6);
+    }
+    if (code === 'Space') return 'space';
+    if (code === 'ShiftLeft' || code === 'ShiftRight') return 'shift';
+    if (code === 'ControlLeft' || code === 'ControlRight') return 'ctrl';
+    if (code === 'AltLeft' || code === 'AltRight') return 'alt';
+    if (code === 'Tab') return 'tab';
+    if (code === 'Enter' || code === 'NumpadEnter') return 'enter';
+    if (code === 'Backspace') return 'backspace';
+    if (code === 'Escape') return 'esc';
+    if (code === 'ArrowUp') return 'up';
+    if (code === 'ArrowDown') return 'down';
+    if (code === 'ArrowLeft') return 'left';
+    if (code === 'ArrowRight') return 'right';
+    if (/^F[1-9]|F1[0-2]$/i.test(event.key)) return event.key.toLowerCase();
+    return (event.key || '').toLowerCase();
+  }
+
   // AnyDesk-Style Global Window Keyboard Capture (Direct Hardware Keyboard Passthrough)
   private onGlobalWindowKeyDown(event: KeyboardEvent) {
     if (!this.isControlEnabled || !this.selectedPc) return;
@@ -1803,33 +1833,37 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       if (k === 'r') { this.sendKey('f5'); return; }
     }
 
-    // Standard Navigation & Edit Keys
-    if (event.key === 'Tab') { this.sendKey('tab'); return; }
-    if (event.key === 'Enter') { this.sendKey('enter'); return; }
-    if (event.key === 'Backspace') { this.sendKey('backspace'); return; }
-    if (event.key === 'Escape') { this.sendKey('esc'); return; }
-    if (event.key === ' ' || event.code === 'Space') { this.sendKey('space'); return; }
-    if (event.key === 'Delete') { this.sendKey('delete'); return; }
-    if (event.key === 'Insert') { this.sendKey('insert'); return; }
-    if (event.key === 'Home') { this.sendKey('home'); return; }
-    if (event.key === 'End') { this.sendKey('end'); return; }
-    if (event.key === 'PageUp') { this.sendKey('pageup'); return; }
-    if (event.key === 'PageDown') { this.sendKey('pagedown'); return; }
-    if (event.key === 'ArrowUp') { this.sendKey('up'); return; }
-    if (event.key === 'ArrowDown') { this.sendKey('down'); return; }
-    if (event.key === 'ArrowLeft') { this.sendKey('left'); return; }
-    if (event.key === 'ArrowRight') { this.sendKey('right'); return; }
+    const keyName = this.normalizeGameKey(event);
+    if (!keyName) return;
 
-    // F-Keys
-    if (/^F[1-9]|F1[0-2]$/i.test(event.key)) {
-      this.sendKey(event.key.toLowerCase());
-      return;
+    this.lastActionMessage = `🎮 Key: ${keyName.toUpperCase()}`;
+    this.adminState.sendRemoteInput({
+      pcId: this.selectedPc.id,
+      type: 'keydown',
+      key: keyName
+    });
+  }
+
+  private onGlobalWindowKeyUp(event: KeyboardEvent) {
+    if (!this.isControlEnabled || !this.selectedPc) return;
+
+    const activeElem = document.activeElement;
+    if (activeElem && (activeElem.tagName === 'INPUT' || activeElem.tagName === 'TEXTAREA')) {
+      if (activeElem.classList.contains('mobile-text-input')) return;
     }
 
-    // Direct Character Typing (letters, numbers, symbols)
-    if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
-      this.sendDirectChar(event.key);
-    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    const keyName = this.normalizeGameKey(event);
+    if (!keyName) return;
+
+    this.adminState.sendRemoteInput({
+      pcId: this.selectedPc.id,
+      type: 'keyup',
+      key: keyName
+    });
   }
 
   sendDirectChar(char: string) {

@@ -908,7 +908,7 @@ export class AdminStateService {
 
   public sendRemoteInput(payload: {
     pcId: string;
-    type: 'click' | 'dclick' | 'rclick' | 'move' | 'down' | 'up' | 'scroll' | 'key' | 'text';
+    type: 'click' | 'dclick' | 'rclick' | 'move' | 'down' | 'up' | 'scroll' | 'key' | 'keydown' | 'keyup' | 'text';
     xPercent?: number;
     yPercent?: number;
     delta?: number;

@@ -3028,6 +3028,7 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
       const possiblePaths = [
         path.join(process.resourcesPath, 'native', 'RemoteInput.exe'),
         path.join(appBaseDir, 'resources', 'native', 'RemoteInput.exe'),
+        'C:\\Artemia-Customer-Terminal\\resources\\native\\RemoteInput.exe',
         path.join(appBaseDir, 'native', 'RemoteInput.exe'),
         path.join(__dirname, '../../native/RemoteInput.exe'),
         path.join(__dirname, '../native/RemoteInput.exe'),
@@ -3071,6 +3072,10 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
           const delta = payload.delta || 120;
           cmdLine = `scroll ${delta}`;
           args = ['scroll', String(delta)];
+        } else if (type === 'keydown' || type === 'keyup') {
+          const keyVal = payload.key || '';
+          cmdLine = `${type} ${keyVal}`;
+          args = [type, keyVal];
         } else if (type === 'key') {
           const keyVal = payload.key || '{ENTER}';
           cmdLine = `key ${keyVal}`;
@@ -3081,9 +3086,8 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
             resolve({ success: true });
             return;
           }
-          const escaped = escapeSendKeysText(rawText);
-          cmdLine = `text ${escaped}`;
-          args = ['text', escaped];
+          cmdLine = `text ${rawText}`;
+          args = ['text', rawText];
         }
 
         // Try persistent worker first for sub-millisecond execution!

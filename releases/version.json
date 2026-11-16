@@ -1,9 +1,9 @@
 {
-  "version": "1.0.29",
+  "version": "1.0.30",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-16T13:20:00.000Z",
+  "releaseDate": "2026-11-16T13:52:00.000Z",
   "asarFileName": "app.asar",
-  "size": 470616,
-  "sha256": "212CEF09049E136EA949D4413568FB71438167C10B9C90AC0B5DBB13DBA674C9",
-  "changelog": "HD Voice Audio Tuning & Admin Laptop Gaming Access: 24,000 Hz studio wideband voice engine with area-weighted fractional anti-aliasing resampling to eliminate microphone static/crackle ('karat'), per-speaker independent jitter buffers, soft-knee limiter, Admin Squad Voice Comms web panel in Admin Dashboard, and Admin Laptop Gamer Mode (Ctrl+Alt+L) for unshielded gaming."
+  "size": 470869,
+  "sha256": "8B10B9995687632D9BE26146D26EFAA8A8A31E38976E6BE3FBC0460B05680B40",
+  "changelog": "DirectX & Fullscreen Game Remote Control Overhaul: SendInput kernel-level simulation with hardware scan codes (KEYEVENTF_SCANCODE), MOUSEEVENTF_ABSOLUTE coordinate normalization, 30ms frame-buffered mouse clicks, keydown/keyup continuous hold for in-game movement (WASD, shift, space), and automatic foreground window activation."
 }
