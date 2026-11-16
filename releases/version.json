@@ -1,9 +1,9 @@
 {
-  "version": "1.0.32",
+  "version": "1.0.33",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-16T14:35:00.000Z",
+  "releaseDate": "2026-11-16T14:55:00.000Z",
   "asarFileName": "app.asar",
-  "size": 471928,
-  "sha256": "25C1434F0081214C0ABBF0E98652B88CE2585C0547FC9B060CADF5F3881ED849",
-  "changelog": "Persistent Voice Comms & Zero-Drop Reconnect Overhaul: Socket.IO ping timeout extended to 30s, 15-second disconnection grace period prevents abrupt voice leaves, background tab persistence in Admin Dashboard via AdminVoiceService, automatic voice room rejoin on reconnect, and persistent navbar voice status pill."
+  "size": 474991,
+  "sha256": "711F97C28D995FDF97251D1A7386E4516F18B08751A82A9DE19514778CF3286C",
+  "changelog": "Remote Controller Sub-Millisecond Latency & 100% Precision Accuracy Overhaul: SetProcessDPIAware native injection eliminates 25% display scaling offset, pixel-perfect aspect ratio & letterbox compensation, direct percentage pass-through (clickp/movep/downp/upp) bypassing Electron DIP distortion, fire-and-forget input transmission eliminating socket listener bottlenecks, and ultra-low latency (<2ms) local LAN server on port 4242."
 }

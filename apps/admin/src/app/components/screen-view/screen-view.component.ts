@@ -1063,6 +1063,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   private hasDragged = false;
   private lastMouseMoveTime = 0;
   private lastWheelTime = 0;
+  private lastMouseClientX = 0;
+  private lastMouseClientY = 0;
 
   // Touch & Mobile Input State
   activeClickType: 'click' | 'rclick' | 'dclick' = 'click';
@@ -1135,6 +1137,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.lastActionMessage = `⌨️ Sent text: "${txt}"`;
     this.adminState.sendRemoteInput({
       pcId: this.selectedPc.id,
+      targetIp: this.selectedPc.ipAddress,
       type: 'text',
       text: txt
     });
@@ -1147,6 +1150,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.lastActionMessage = `📜 Scroll ${dir}`;
     this.adminState.sendRemoteInput({
       pcId: this.selectedPc.id,
+      targetIp: this.selectedPc.ipAddress,
       type: 'scroll',
       delta
     });
@@ -1391,6 +1395,58 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     }
   }
 
+  // Pixel-Perfect Screen Coordinate Normalizer with Aspect Ratio & Letterbox/Pillarbox Compensation
+  private getEventNormalizedCoords(event: MouseEvent | Touch, targetElement?: HTMLElement): { xPercent: number; yPercent: number; rippleX: number; rippleY: number } {
+    const img = (targetElement || (event as any).currentTarget || (this.viewportElem?.nativeElement?.querySelector('.live-screen-image'))) as HTMLImageElement;
+    if (!img || !img.getBoundingClientRect) {
+      return { xPercent: 50, yPercent: 50, rippleX: 0, rippleY: 0 };
+    }
+
+    const rect = img.getBoundingClientRect();
+    const clientX = 'clientX' in event ? event.clientX : (event as Touch).clientX;
+    const clientY = 'clientY' in event ? event.clientY : (event as Touch).clientY;
+
+    const clickX = clientX - rect.left;
+    const clickY = clientY - rect.top;
+
+    const nw = img.naturalWidth || rect.width || 1;
+    const nh = img.naturalHeight || rect.height || 1;
+
+    // Detect actual rendered image size inside <img> with object-fit: contain or aspect-ratio constraints
+    const containerRatio = rect.width / (rect.height || 1);
+    const naturalRatio = nw / nh;
+
+    let renderWidth = rect.width;
+    let renderHeight = rect.height;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (containerRatio > naturalRatio) {
+      // Pillarboxed: Black bars on left and right
+      renderHeight = rect.height;
+      renderWidth = renderHeight * naturalRatio;
+      offsetX = (rect.width - renderWidth) / 2;
+    } else {
+      // Letterboxed: Black bars on top and bottom
+      renderWidth = rect.width;
+      renderHeight = renderWidth / naturalRatio;
+      offsetY = (rect.height - renderHeight) / 2;
+    }
+
+    const clampedX = Math.max(0, Math.min(renderWidth, clickX - offsetX));
+    const clampedY = Math.max(0, Math.min(renderHeight, clickY - offsetY));
+
+    const xPercent = (clampedX / (renderWidth || 1)) * 100;
+    const yPercent = (clampedY / (renderHeight || 1)) * 100;
+
+    return {
+      xPercent: Math.max(0, Math.min(100, xPercent)),
+      yPercent: Math.max(0, Math.min(100, yPercent)),
+      rippleX: clickX,
+      rippleY: clickY
+    };
+  }
+
   // Mouse Down (Starts Dragging or Press - Left or Right Button)
   onScreenMouseDown(event: MouseEvent) {
     if (Date.now() - this.lastTouchTime < 500) return;
@@ -1400,58 +1456,57 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     const isRight = event.button === 2;
     this.activeMouseButton = isRight ? 'right' : 'left';
 
-    const target = event.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+    const coords = this.getEventNormalizedCoords(event);
 
     this.isMouseDown = true;
     this.hasDragged = false;
-    this.mouseDownX = x;
-    this.mouseDownY = y;
+    this.mouseDownX = coords.rippleX;
+    this.mouseDownY = coords.rippleY;
+    this.lastMouseClientX = event.clientX;
+    this.lastMouseClientY = event.clientY;
     this.mouseDownTime = Date.now();
 
     const inputType = isRight ? 'rdown' : 'down';
     this.adminState.sendRemoteInput({
       pcId: this.selectedPc.id,
+      targetIp: this.selectedPc.ipAddress,
       type: inputType,
-      xPercent,
-      yPercent
+      xPercent: coords.xPercent,
+      yPercent: coords.yPercent
     });
-    this.addRipple(x, y);
+    this.addRipple(coords.rippleX, coords.rippleY);
   }
 
   // Mouse Move (Handles Dragging & Live Pointer - 3D Camera / Pan)
   onScreenMouseMove(event: MouseEvent) {
     if (!this.isControlEnabled || !this.selectedPc || !this.isMouseDown) return;
 
-    const target = event.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-
-    const dist = Math.hypot(x - this.mouseDownX, y - this.mouseDownY);
-    if (dist > 4) {
+    const coords = this.getEventNormalizedCoords(event);
+    const dist = Math.hypot(coords.rippleX - this.mouseDownX, coords.rippleY - this.mouseDownY);
+    if (dist > 3) {
       this.hasDragged = true;
     }
 
     const now = Date.now();
-    // Throttle move events to ~30ms (~33 updates/sec)
-    if (now - this.lastMouseMoveTime > 30) {
+    // 20ms throttle (~50 updates/sec for ultra-smooth AnyDesk tracking & 3D FPS camera look)
+    if (now - this.lastMouseMoveTime > 20) {
       this.lastMouseMoveTime = now;
-      const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-      const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+      const dx = Math.round(event.clientX - this.lastMouseClientX);
+      const dy = Math.round(event.clientY - this.lastMouseClientY);
+      this.lastMouseClientX = event.clientX;
+      this.lastMouseClientY = event.clientY;
 
       this.adminState.sendRemoteInput({
         pcId: this.selectedPc.id,
+        targetIp: this.selectedPc.ipAddress,
         type: 'move',
-        xPercent,
-        yPercent
+        xPercent: coords.xPercent,
+        yPercent: coords.yPercent,
+        dx,
+        dy
       });
       const mode = this.activeMouseButton === 'right' ? '🎥 3D Camera Look' : '🖐️ Dragging';
-      this.lastActionMessage = `${mode} at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+      this.lastActionMessage = `${mode} at (${Math.round(coords.xPercent)}%, ${Math.round(coords.yPercent)}%)`;
     }
   }
 
@@ -1461,45 +1516,35 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (!this.isControlEnabled || !this.selectedPc || !this.isMouseDown) return;
     this.isMouseDown = false;
 
-    const target = event.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
-
+    const coords = this.getEventNormalizedCoords(event);
     const inputType = this.activeMouseButton === 'right' ? 'rup' : 'up';
     this.adminState.sendRemoteInput({
       pcId: this.selectedPc.id,
+      targetIp: this.selectedPc.ipAddress,
       type: inputType,
-      xPercent,
-      yPercent
+      xPercent: coords.xPercent,
+      yPercent: coords.yPercent
     });
 
     if (this.hasDragged) {
-      this.lastActionMessage = `🖐️ Drag released at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+      this.lastActionMessage = `🖐️ Drag released at (${Math.round(coords.xPercent)}%, ${Math.round(coords.yPercent)}%)`;
     } else {
       const btnName = this.activeMouseButton === 'right' ? 'Right Click' : 'Click';
-      this.lastActionMessage = `🖱️ ${btnName} at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+      this.lastActionMessage = `🖱️ ${btnName} at (${Math.round(coords.xPercent)}%, ${Math.round(coords.yPercent)}%)`;
     }
   }
 
   onScreenMouseLeave(event: MouseEvent) {
     if (this.isMouseDown && this.selectedPc) {
       this.isMouseDown = false;
-      const target = event.currentTarget as HTMLElement;
-      const rect = target.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-      const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
-
+      const coords = this.getEventNormalizedCoords(event);
       const inputType = this.activeMouseButton === 'right' ? 'rup' : 'up';
       this.adminState.sendRemoteInput({
         pcId: this.selectedPc.id,
+        targetIp: this.selectedPc.ipAddress,
         type: inputType,
-        xPercent,
-        yPercent
+        xPercent: coords.xPercent,
+        yPercent: coords.yPercent
       });
     }
   }
@@ -1520,6 +1565,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
     this.adminState.sendRemoteInput({
       pcId: this.selectedPc.id,
+      targetIp: this.selectedPc.ipAddress,
       type: 'scroll',
       delta
     });
@@ -1538,22 +1584,16 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     event.preventDefault();
     event.stopPropagation();
 
-    const targetId = this.selectedPc.id;
-    const target = event.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
-
-    this.addRipple(x, y);
-    this.lastActionMessage = `⚡ Double-click sent at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+    const coords = this.getEventNormalizedCoords(event);
+    this.addRipple(coords.rippleX, coords.rippleY);
+    this.lastActionMessage = `⚡ Double-click sent at (${Math.round(coords.xPercent)}%, ${Math.round(coords.yPercent)}%)`;
 
     this.adminState.sendRemoteInput({
-      pcId: targetId,
+      pcId: this.selectedPc.id,
+      targetIp: this.selectedPc.ipAddress,
       type: 'dclick',
-      xPercent,
-      yPercent
+      xPercent: coords.xPercent,
+      yPercent: coords.yPercent
     });
 
     this.scheduleQuickCapture(300);
@@ -1570,22 +1610,16 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       return;
     }
 
-    const targetId = this.selectedPc.id;
-    const target = event.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
-
-    this.addRipple(x, y);
-    this.lastActionMessage = `🔘 Right-click sent at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+    const coords = this.getEventNormalizedCoords(event);
+    this.addRipple(coords.rippleX, coords.rippleY);
+    this.lastActionMessage = `🔘 Right-click sent at (${Math.round(coords.xPercent)}%, ${Math.round(coords.yPercent)}%)`;
 
     this.adminState.sendRemoteInput({
-      pcId: targetId,
+      pcId: this.selectedPc.id,
+      targetIp: this.selectedPc.ipAddress,
       type: 'rclick',
-      xPercent,
-      yPercent
+      xPercent: coords.xPercent,
+      yPercent: coords.yPercent
     });
 
     this.scheduleQuickCapture(250);
@@ -1613,21 +1647,17 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       this.longPressTimer = null;
     }
 
-    const target = event.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const x = touch.clientX - rect.left;
-    const y = touch.clientY - rect.top;
-    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+    const coords = this.getEventNormalizedCoords(touch, event.currentTarget as HTMLElement);
 
     if (this.touchInteractionMode === 'drag') {
       this.adminState.sendRemoteInput({
         pcId: this.selectedPc.id,
+        targetIp: this.selectedPc.ipAddress,
         type: 'down',
-        xPercent,
-        yPercent
+        xPercent: coords.xPercent,
+        yPercent: coords.yPercent
       });
-      this.addRipple(x, y);
+      this.addRipple(coords.rippleX, coords.rippleY);
       return;
     }
 
@@ -1635,16 +1665,17 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.longPressTimer = setTimeout(() => {
       this.longPressTimer = null;
       this.lastTouchTime = Date.now();
-      this.addRipple(x, y);
-      this.lastActionMessage = `🔘 Right-click (Long-press) at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+      this.addRipple(coords.rippleX, coords.rippleY);
+      this.lastActionMessage = `🔘 Right-click (Long-press) at (${Math.round(coords.xPercent)}%, ${Math.round(coords.yPercent)}%)`;
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         try { navigator.vibrate(50); } catch { }
       }
       this.adminState.sendRemoteInput({
         pcId: this.selectedPc!.id,
+        targetIp: this.selectedPc!.ipAddress,
         type: 'rclick',
-        xPercent,
-        yPercent
+        xPercent: coords.xPercent,
+        yPercent: coords.yPercent
       });
     }, 450);
   }
@@ -1677,20 +1708,16 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
     if (this.touchInteractionMode === 'drag' && this.isTouchDown) {
       const now = Date.now();
-      if (now - this.lastMouseMoveTime > 40) {
+      if (now - this.lastMouseMoveTime > 30) {
         this.lastMouseMoveTime = now;
-        const target = event.currentTarget as HTMLElement;
-        const rect = target.getBoundingClientRect();
-        const x = touch.clientX - rect.left;
-        const y = touch.clientY - rect.top;
-        const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-        const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+        const coords = this.getEventNormalizedCoords(touch, event.currentTarget as HTMLElement);
 
         this.adminState.sendRemoteInput({
           pcId: this.selectedPc.id,
+          targetIp: this.selectedPc.ipAddress,
           type: 'move',
-          xPercent,
-          yPercent
+          xPercent: coords.xPercent,
+          yPercent: coords.yPercent
         });
       }
     }
@@ -1704,22 +1731,17 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     if (!this.isControlEnabled || !this.selectedPc) return;
     this.isTouchDown = false;
 
-    const target = event.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
     const touch = event.changedTouches[0];
     if (!touch) return;
-
-    const x = touch.clientX - rect.left;
-    const y = touch.clientY - rect.top;
-    const xPercent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-    const yPercent = Math.max(0, Math.min(100, (y / rect.height) * 100));
+    const coords = this.getEventNormalizedCoords(touch, event.currentTarget as HTMLElement);
 
     if (this.touchInteractionMode === 'drag') {
       this.adminState.sendRemoteInput({
         pcId: this.selectedPc.id,
+        targetIp: this.selectedPc.ipAddress,
         type: 'up',
-        xPercent,
-        yPercent
+        xPercent: coords.xPercent,
+        yPercent: coords.yPercent
       });
       return;
     }
@@ -1735,7 +1757,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     event.preventDefault();
     event.stopPropagation();
     this.lastTouchTime = Date.now();
-    this.addRipple(x, y);
+    this.addRipple(coords.rippleX, coords.rippleY);
 
     const now = Date.now();
     const isDoubleTap = (now - this.lastTapTime < 320);
@@ -1743,13 +1765,14 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
     const type = isDoubleTap ? 'dclick' : this.activeClickType;
     const typeLabel = type === 'rclick' ? '🔘 Right-click' : type === 'dclick' ? '⚡ Double-click' : '🖱️ Click';
-    this.lastActionMessage = `${typeLabel} at (${Math.round(xPercent)}%, ${Math.round(yPercent)}%)`;
+    this.lastActionMessage = `${typeLabel} at (${Math.round(coords.xPercent)}%, ${Math.round(coords.yPercent)}%)`;
 
     this.adminState.sendRemoteInput({
       pcId: this.selectedPc.id,
+      targetIp: this.selectedPc.ipAddress,
       type,
-      xPercent,
-      yPercent
+      xPercent: coords.xPercent,
+      yPercent: coords.yPercent
     });
 
     if (this.activeClickType !== 'click') {
@@ -1853,6 +1876,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.lastActionMessage = `🎮 Key: ${keyName.toUpperCase()}`;
     this.adminState.sendRemoteInput({
       pcId: this.selectedPc.id,
+      targetIp: this.selectedPc.ipAddress,
       type: 'keydown',
       key: keyName
     });
@@ -1875,6 +1899,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
     this.adminState.sendRemoteInput({
       pcId: this.selectedPc.id,
+      targetIp: this.selectedPc.ipAddress,
       type: 'keyup',
       key: keyName
     });
@@ -1886,6 +1911,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.lastActionMessage = `⌨️ Typed: "${char}"`;
     this.adminState.sendRemoteInput({
       pcId: targetId,
+      targetIp: this.selectedPc.ipAddress,
       type: 'text',
       text: char
     });
@@ -1911,6 +1937,7 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
     this.adminState.sendRemoteInput({
       pcId: targetId,
+      targetIp: this.selectedPc.ipAddress,
       type: 'key',
       key: normalizedKey
     });

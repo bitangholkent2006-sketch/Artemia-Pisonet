@@ -908,6 +908,7 @@ export class AdminStateService {
 
   public sendRemoteInput(payload: {
     pcId: string;
+    targetIp?: string;
     type: 'click' | 'dclick' | 'rclick' | 'mclick' | 'move' | 'down' | 'up' | 'rdown' | 'rup' | 'mdown' | 'mup' | 'relmove' | 'scroll' | 'key' | 'keydown' | 'keyup' | 'text';
     xPercent?: number;
     yPercent?: number;
@@ -917,21 +918,50 @@ export class AdminStateService {
     key?: string;
     text?: string;
   }): Promise<{ success: boolean; error?: string }> {
+    const reqId = 'inp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+
+    // 1. Ultra-Low Latency (<2ms) Direct LAN Dispatch if PC is on Local Network
+    if (payload.targetIp && typeof window !== 'undefined' && typeof (window as any).fetch === 'function') {
+      const isLanIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|127\.0\.0\.1|localhost)/.test(payload.targetIp);
+      if (isLanIp) {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 120);
+        fetch(`http://${payload.targetIp}:4242/api/remote-input`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reqId, ...payload }),
+          signal: ctrl.signal
+        }).then(r => {
+          clearTimeout(tid);
+        }).catch(() => {
+          clearTimeout(tid);
+        });
+      }
+    }
+
+    // 2. Continuous & High-Frequency Events: Fire-and-Forget to eliminate socket listener bottlenecks
+    const isContinuous = (payload.type === 'move' || payload.type === 'down' || payload.type === 'up' ||
+                          payload.type === 'rdown' || payload.type === 'rup' || payload.type === 'mdown' ||
+                          payload.type === 'mup' || payload.type === 'relmove' || payload.type === 'scroll' ||
+                          payload.type === 'keydown' || payload.type === 'keyup' || payload.type === 'click' ||
+                          payload.type === 'rclick' || payload.type === 'dclick');
+
+    if (isContinuous) {
+      this.apiClient.emitSocket('maintenance:remote-input:req', { reqId, targetPcId: payload.pcId, ...payload });
+      return Promise.resolve({ success: true });
+    }
+
+    // 3. Discrete actions that expect ack (e.g. typing text blocks)
     return new Promise((resolve) => {
-      const reqId = 'inp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
       const timer = setTimeout(() => {
         cleanup();
         resolve({ success: true });
-      }, 3000);
+      }, 2500);
 
       const cleanup = this.apiClient.onSocketEvent('maintenance:remote-input:res', (data: any) => {
         const dId = (data.pcId || '').toLowerCase();
         const pId = payload.pcId.toLowerCase();
-        const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId ||
-                        (pId === 'pc-02' && (dId === 'artemiapisonet' || dId.includes('artemia'))) ||
-                        (pId.includes('artemia') && (dId === 'pc-02' || dId.includes('artemia'))) ||
-                        (pId === 'pc-01' && (dId === 'kent' || dId.includes('kent'))) ||
-                        (pId.includes('kent') && (dId === 'pc-01' || dId.includes('kent')));
+        const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId;
 
         if (data.reqId === reqId || matchId) {
           clearTimeout(timer);

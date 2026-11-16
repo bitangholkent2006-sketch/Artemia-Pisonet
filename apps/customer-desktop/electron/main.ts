@@ -3000,7 +3000,7 @@ function ensureRemoteInputWorker(helperExe: string): any {
 }
 
 // 8.1 Remote Desktop Input Simulator (Mouse clicks, double-clicks, right-clicks, typing, shortcuts)
-ipcMain.handle('maintenance:remote-input', async (_event, payload: {
+function executeRemoteInputDirect(payload: {
   type: string;
   xPercent?: number;
   yPercent?: number;
@@ -3011,7 +3011,7 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
   key?: string;
   text?: string;
   delta?: number;
-}) => {
+}): Promise<{ success: boolean; x?: number; y?: number; error?: string }> {
   return new Promise((resolve) => {
     try {
       const type = (payload.type || 'click').toLowerCase();
@@ -3021,8 +3021,9 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
       if (payload.xPercent != null && payload.yPercent != null) {
         const primary = screen.getPrimaryDisplay();
         const { width, height } = primary.bounds || primary.size;
-        targetX = Math.max(0, Math.min(width - 1, Math.round(width * (payload.xPercent / 100))));
-        targetY = Math.max(0, Math.min(height - 1, Math.round(height * (payload.yPercent / 100))));
+        const scale = primary.scaleFactor || 1;
+        targetX = Math.max(0, Math.min(Math.round(width * scale) - 1, Math.round(width * scale * (payload.xPercent / 100))));
+        targetY = Math.max(0, Math.min(Math.round(height * scale) - 1, Math.round(height * scale * (payload.yPercent / 100))));
       }
 
       // Locate RemoteInput.exe helper
@@ -3067,9 +3068,17 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
       if (helperExe && process.platform === 'win32') {
         let cmdLine = '';
         let args: string[] = [];
-        if (type === 'click' || type === 'dclick' || type === 'rclick' || type === 'mclick' || type === 'move' || type === 'down' || type === 'up' || type === 'rdown' || type === 'rup' || type === 'mdown' || type === 'mup') {
-          cmdLine = `${type} ${targetX} ${targetY}`;
-          args = [type, String(targetX), String(targetY)];
+        const isMouseAction = (type === 'click' || type === 'dclick' || type === 'rclick' || type === 'mclick' || type === 'move' || type === 'down' || type === 'up' || type === 'rdown' || type === 'rup' || type === 'mdown' || type === 'mup');
+
+        if (isMouseAction) {
+          if (payload.xPercent != null && payload.yPercent != null) {
+            // Direct percentage pass-through to DPI-aware native injector!
+            cmdLine = `${type}p ${payload.xPercent.toFixed(4)} ${payload.yPercent.toFixed(4)}`;
+            args = [`${type}p`, payload.xPercent.toFixed(4), payload.yPercent.toFixed(4)];
+          } else {
+            cmdLine = `${type} ${targetX} ${targetY}`;
+            args = [type, String(targetX), String(targetY)];
+          }
         } else if (type === 'relmove') {
           const dx = Math.round(payload.dx || 0);
           const dy = Math.round(payload.dy || 0);
@@ -3165,6 +3174,68 @@ ipcMain.handle('maintenance:remote-input', async (_event, payload: {
       resolve({ success: false, error: err?.message || 'Remote input error' });
     }
   });
+}
+
+// Ultra-Low Latency (<2ms) Local LAN Remote Controller Server on Port 4242
+let localHttpServer: http.Server | null = null;
+function startLocalRemoteServer() {
+  if (localHttpServer) return;
+  try {
+    localHttpServer = http.createServer(async (req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      if (req.url === '/api/remote-input' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => {
+          body += chunk;
+          if (body.length > 65536) req.destroy();
+        });
+        req.on('end', async () => {
+          try {
+            const payload = JSON.parse(body || '{}');
+            const result = await executeRemoteInputDirect(payload);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          } catch (e: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: e?.message }));
+          }
+        });
+        return;
+      }
+
+      if (req.url === '/api/ping') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', station: 'Artemia-Station' }));
+        return;
+      }
+
+      res.writeHead(404);
+      res.end();
+    });
+
+    localHttpServer.listen(4242, '0.0.0.0', () => {
+      console.log('[LocalServer] Ultra-low latency LAN server listening on 0.0.0.0:4242');
+    });
+
+    localHttpServer.on('error', (err: any) => {
+      console.warn('[LocalServer] Port 4242 busy or error:', err?.message);
+    });
+  } catch (err: any) {
+    console.warn('[LocalServer] Initialization error:', err?.message);
+  }
+}
+
+ipcMain.handle('maintenance:remote-input', async (_event, payload: any) => {
+  return executeRemoteInputDirect(payload);
 });
 
 // 9. Get Disk Drives Usage (Cached for 60 seconds to eliminate CPU spikes & process spawning lag)
@@ -5199,6 +5270,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     logToFile('app.whenReady resolved, initializing UI and background agents...');
+    startLocalRemoteServer();
     // Auto-grant microphone & media capture permissions for Party Voice Chat & Intercom
     try {
       session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {

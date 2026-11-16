@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -104,6 +105,9 @@ namespace ArtemiaRemoteInput {
 
         [DllImport("user32.dll")]
         static extern IntPtr GetMessageExtraInfo();
+
+        [DllImport("user32.dll")]
+        static extern bool SetProcessDPIAware();
 
         const uint INPUT_MOUSE = 0;
         const uint INPUT_KEYBOARD = 1;
@@ -396,6 +400,17 @@ namespace ArtemiaRemoteInput {
             }
         }
 
+        static void ParsePercentCoords(string argX, string argY, out int x, out int y) {
+            double px = double.Parse(argX, CultureInfo.InvariantCulture);
+            double py = double.Parse(argY, CultureInfo.InvariantCulture);
+            px = Math.Max(0.0, Math.Min(100.0, px));
+            py = Math.Max(0.0, Math.Min(100.0, py));
+            int screenW = GetSystemMetrics(0);
+            int screenH = GetSystemMetrics(1);
+            x = (int)Math.Round((px / 100.0) * Math.Max(1, screenW - 1));
+            y = (int)Math.Round((py / 100.0) * Math.Max(1, screenH - 1));
+        }
+
         static void SendHardwareMouseDown(int x, int y, string button = "left") {
             SendHardwareMouseMove(x, y);
 
@@ -418,9 +433,11 @@ namespace ArtemiaRemoteInput {
             down[0].u.mi.dwFlags = downFlag | MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
             down[0].u.mi.time = 0;
             down[0].u.mi.dwExtraInfo = GetMessageExtraInfo();
-            SendInput(1, down, Marshal.SizeOf(typeof(INPUT)));
+            uint sent = SendInput(1, down, Marshal.SizeOf(typeof(INPUT)));
 
-            mouse_event(downFlag, 0, 0, 0, 0);
+            if (sent == 0) {
+                mouse_event(downFlag, 0, 0, 0, 0);
+            }
         }
 
         static void SendHardwareMouseUp(int x, int y, string button = "left") {
@@ -438,9 +455,11 @@ namespace ArtemiaRemoteInput {
             up[0].u.mi.dwFlags = upFlag | MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
             up[0].u.mi.time = 0;
             up[0].u.mi.dwExtraInfo = GetMessageExtraInfo();
-            SendInput(1, up, Marshal.SizeOf(typeof(INPUT)));
+            uint sent = SendInput(1, up, Marshal.SizeOf(typeof(INPUT)));
 
-            mouse_event(upFlag, 0, 0, 0, 0);
+            if (sent == 0) {
+                mouse_event(upFlag, 0, 0, 0, 0);
+            }
         }
 
         static void SendHardwareMouseClick(int x, int y, string button = "left") {
@@ -515,37 +534,45 @@ namespace ArtemiaRemoteInput {
                 return;
             }
 
-            // Mouse Actions
-            if (cmd == "click" || cmd == "dclick" || cmd == "rclick" || cmd == "mclick" ||
-                cmd == "move" || cmd == "down" || cmd == "up" || cmd == "rdown" || cmd == "rup" ||
-                cmd == "mdown" || cmd == "mup") {
-                if (args.Length >= 3) {
-                    int x = int.Parse(args[1]);
-                    int y = int.Parse(args[2]);
+            // Mouse Actions (Direct Pixels or Normalized Percentage)
+            bool isPercent = cmd.EndsWith("p");
+            string baseCmd = isPercent ? cmd.Substring(0, cmd.Length - 1) : cmd;
 
-                    if (cmd == "click") {
+            if (baseCmd == "click" || baseCmd == "dclick" || baseCmd == "rclick" || baseCmd == "mclick" ||
+                baseCmd == "move" || baseCmd == "down" || baseCmd == "up" || baseCmd == "rdown" || baseCmd == "rup" ||
+                baseCmd == "mdown" || baseCmd == "mup") {
+                if (args.Length >= 3) {
+                    int x = 0, y = 0;
+                    if (isPercent) {
+                        ParsePercentCoords(args[1], args[2], out x, out y);
+                    } else {
+                        x = int.Parse(args[1]);
+                        y = int.Parse(args[2]);
+                    }
+
+                    if (baseCmd == "click") {
                         SendHardwareMouseClick(x, y, "left");
-                    } else if (cmd == "dclick") {
+                    } else if (baseCmd == "dclick") {
                         SendHardwareMouseClick(x, y, "left");
                         Thread.Sleep(45);
                         SendHardwareMouseClick(x, y, "left");
-                    } else if (cmd == "rclick") {
+                    } else if (baseCmd == "rclick") {
                         SendHardwareMouseClick(x, y, "right");
-                    } else if (cmd == "mclick") {
+                    } else if (baseCmd == "mclick") {
                         SendHardwareMouseClick(x, y, "middle");
-                    } else if (cmd == "move") {
+                    } else if (baseCmd == "move") {
                         SendHardwareMouseMove(x, y);
-                    } else if (cmd == "down") {
+                    } else if (baseCmd == "down") {
                         SendHardwareMouseDown(x, y, "left");
-                    } else if (cmd == "up") {
+                    } else if (baseCmd == "up") {
                         SendHardwareMouseUp(x, y, "left");
-                    } else if (cmd == "rdown") {
+                    } else if (baseCmd == "rdown") {
                         SendHardwareMouseDown(x, y, "right");
-                    } else if (cmd == "rup") {
+                    } else if (baseCmd == "rup") {
                         SendHardwareMouseUp(x, y, "right");
-                    } else if (cmd == "mdown") {
+                    } else if (baseCmd == "mdown") {
                         SendHardwareMouseDown(x, y, "middle");
-                    } else if (cmd == "mup") {
+                    } else if (baseCmd == "mup") {
                         SendHardwareMouseUp(x, y, "middle");
                     }
                 }
@@ -563,8 +590,10 @@ namespace ArtemiaRemoteInput {
                 rel[0].u.mi.dwFlags = MOUSEEVENTF_MOVE;
                 rel[0].u.mi.time = 0;
                 rel[0].u.mi.dwExtraInfo = GetMessageExtraInfo();
-                SendInput(1, rel, Marshal.SizeOf(typeof(INPUT)));
-                mouse_event(MOUSEEVENTF_MOVE, (uint)dx, (uint)dy, 0, 0);
+                uint sent = SendInput(1, rel, Marshal.SizeOf(typeof(INPUT)));
+                if (sent == 0) {
+                    mouse_event(MOUSEEVENTF_MOVE, (uint)dx, (uint)dy, 0, 0);
+                }
                 return;
             }
 
@@ -657,6 +686,7 @@ namespace ArtemiaRemoteInput {
 
         [STAThread]
         static void Main(string[] args) {
+            try { SetProcessDPIAware(); } catch {}
             if (args.Length == 0) return;
 
             // Persistent Worker / Daemon Mode for Microsecond Latency
