@@ -325,6 +325,9 @@ import { PC, PCStatus } from '@pisonet/shared';
             <button class="module-btn" (click)="openMessageModal(pc)" title="Flash Announcement">
               💬 Msg
             </button>
+            <button class="module-btn" (click)="navigateToModule('screen-view', pc.id)" title="Remote YouTube Video & Jumpscare" style="color: #fca5a5; border-color: rgba(239, 68, 68, 0.4);">
+              🎬 Video
+            </button>
             <button class="module-btn download-btn" (click)="navigateToModule('game-updater', pc.id)" title="Remote App Downloader">
               📥 Down
             </button>
