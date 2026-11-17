@@ -65,6 +65,7 @@ interface WindowWithDesktop extends Window {
     launchGame?: (item: any) => Promise<{ success: boolean; resolvedPath?: string; error?: string }>;
     applyWallpaper?: (wallpaperUrl: string) => Promise<{ success: boolean; localPath?: string; error?: string }>;
     setVolumePercent?: (percent: number) => Promise<{ success: boolean; error?: string }>;
+    getVolumePercent?: () => Promise<number>;
     setUiMode?: (mode: 'launcher' | 'agent') => Promise<boolean>;
     peekWindowsDesktop?: (password: string) => Promise<{ success: boolean; error?: string }>;
     onLauncherRestoredIdle?: (callback: () => void) => void;
@@ -107,6 +108,10 @@ class StationMaintenanceAgent {
   private lastUpdateLog: string = 'Station ready. No active background jobs.';
   private announcementTimeout: any = null;
   private announcementInterval: any = null;
+  private remoteVideoActive = false;
+  private remoteVideoPreviousVolume: number | null = null;
+  private remoteVideoTimer: any = null;
+  private remoteVideoInterval: any = null;
 
   public matchesThisStation(targetId?: string): boolean {
     if (!targetId || targetId === 'all' || targetId === 'fleet') return true;
@@ -739,6 +744,164 @@ class StationMaintenanceAgent {
     }
   }
 
+  public async playRemoteVideo(payload: {
+    targetPcId?: string;
+    pcId?: string;
+    youtubeUrl: string;
+    volume?: number;
+    durationSeconds?: number;
+    title?: string;
+  }) {
+    if (!payload || !payload.youtubeUrl) return;
+
+    this.logMessage(`[RemoteVideo] Video play request: "${payload.youtubeUrl}", Vol: ${payload.volume}%, Duration: ${payload.durationSeconds}s`);
+
+    // Clean up any currently running video first
+    if (this.remoteVideoActive) {
+      await this.stopRemoteVideo(false);
+    }
+
+    this.remoteVideoActive = true;
+
+    // 1. Save previous volume and set requested volume
+    try {
+      if (desktopWindow.pisonetDesktop?.getVolumePercent) {
+        this.remoteVideoPreviousVolume = await desktopWindow.pisonetDesktop.getVolumePercent();
+      }
+    } catch {
+      this.remoteVideoPreviousVolume = 50;
+    }
+
+    const targetVol = typeof payload.volume === 'number' ? Math.max(0, Math.min(100, Math.round(payload.volume))) : 100;
+    if (desktopWindow.pisonetDesktop?.setVolumePercent) {
+      desktopWindow.pisonetDesktop.setVolumePercent(targetVol).catch(() => {});
+    }
+
+    // 2. Bring window to topmost fullscreen overlay (above full-screen games)
+    if (desktopWindow.pisonetDesktop?.setAnnouncementMode) {
+      desktopWindow.pisonetDesktop.setAnnouncementMode(true).catch(() => {});
+    }
+
+    // 3. Inject video iframe or HTML5 video
+    const container = document.getElementById('remote-video-container');
+    const overlay = document.getElementById('remote-video-overlay');
+    const titleEl = document.getElementById('remote-video-title');
+    const countdownEl = document.getElementById('remote-video-countdown');
+
+    if (titleEl) {
+      titleEl.innerText = payload.title ? `🎬 ${payload.title.toUpperCase()}` : '🎬 REMOTE VIDEO BROADCAST';
+    }
+
+    if (container) {
+      container.innerHTML = '';
+      const ytId = this.parseYouTubeId(payload.youtubeUrl);
+      if (ytId) {
+        const iframe = document.createElement('iframe');
+        iframe.className = 'remote-video-iframe';
+        iframe.src = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&controls=0&mute=0&rel=0&loop=1&playsinline=1&enablejsapi=1`;
+        iframe.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+        iframe.setAttribute('allowfullscreen', 'true');
+        container.appendChild(iframe);
+      } else {
+        const video = document.createElement('video');
+        video.className = 'remote-video-element';
+        video.src = payload.youtubeUrl;
+        video.autoplay = true;
+        video.controls = false;
+        video.playsInline = true;
+        video.loop = true;
+        container.appendChild(video);
+        video.play().catch(() => {});
+      }
+    }
+
+    if (overlay) {
+      overlay.classList.add('visible');
+    }
+
+    // 4. Handle duration countdown & auto-dismiss
+    const duration = typeof payload.durationSeconds === 'number' ? payload.durationSeconds : 5;
+    let remaining = duration;
+
+    if (this.remoteVideoTimer) clearTimeout(this.remoteVideoTimer);
+    if (this.remoteVideoInterval) clearInterval(this.remoteVideoInterval);
+
+    if (countdownEl) {
+      countdownEl.innerText = remaining > 0 ? `${remaining}s` : 'Playing...';
+      countdownEl.style.display = remaining > 0 ? 'inline-block' : 'none';
+    }
+
+    if (remaining > 0) {
+      this.remoteVideoInterval = setInterval(() => {
+        remaining--;
+        if (countdownEl) {
+          countdownEl.innerText = remaining > 0 ? `${remaining}s` : 'Ending...';
+        }
+        if (remaining <= 0) {
+          if (this.remoteVideoInterval) clearInterval(this.remoteVideoInterval);
+        }
+      }, 1000);
+
+      this.remoteVideoTimer = setTimeout(() => {
+        this.stopRemoteVideo();
+      }, duration * 1000);
+    }
+
+    // 5. Report status back to admin
+    if (this.socket?.connected) {
+      this.socket.emit('agent:remote-video:status', {
+        pcId: this.pcId,
+        status: 'playing',
+        url: payload.youtubeUrl,
+        title: payload.title || 'Video'
+      });
+    }
+  }
+
+  public async stopRemoteVideo(restoreVolume: boolean = true) {
+    if (this.remoteVideoTimer) clearTimeout(this.remoteVideoTimer);
+    if (this.remoteVideoInterval) clearInterval(this.remoteVideoInterval);
+    this.remoteVideoTimer = null;
+    this.remoteVideoInterval = null;
+
+    const overlay = document.getElementById('remote-video-overlay');
+    const container = document.getElementById('remote-video-container');
+
+    if (overlay) overlay.classList.remove('visible');
+    if (container) container.innerHTML = '';
+
+    // Revert announcement mode (lowers window back down if not locked)
+    if (desktopWindow.pisonetDesktop?.setAnnouncementMode) {
+      desktopWindow.pisonetDesktop.setAnnouncementMode(false).catch(() => {});
+    }
+
+    // Restore previous volume
+    if (restoreVolume && this.remoteVideoPreviousVolume !== null && desktopWindow.pisonetDesktop?.setVolumePercent) {
+      desktopWindow.pisonetDesktop.setVolumePercent(this.remoteVideoPreviousVolume).catch(() => {});
+      this.remoteVideoPreviousVolume = null;
+    }
+
+    this.remoteVideoActive = false;
+    this.logMessage('[RemoteVideo] Stopped remote video and restored state.');
+
+    if (this.socket?.connected) {
+      this.socket.emit('agent:remote-video:status', {
+        pcId: this.pcId,
+        status: 'stopped'
+      });
+    }
+  }
+
+  private parseYouTubeId(urlOrId: string): string | null {
+    if (!urlOrId) return null;
+    const trimmed = urlOrId.trim();
+    if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+      return trimmed;
+    }
+    const match = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/i);
+    return match ? match[1] : null;
+  }
+
   public showToast(msg: string, type: 'info' | 'success' | 'warn' = 'info', durationSec: number = 5) {
     const toast = document.getElementById('toast-notification');
     if (toast) {
@@ -894,6 +1057,27 @@ class StationMaintenanceAgent {
           return;
         }
         this.showAnnouncement(payload.message, payload.sender || 'Counter Operator', payload.durationSeconds || 8);
+      });
+
+      // Remote Video & YouTube Jumpscare Broadcast Relay
+      this.socket.on('agent:remote-video:play', async (payload: {
+        targetPcId?: string;
+        pcId?: string;
+        youtubeUrl: string;
+        volume?: number;
+        durationSeconds?: number;
+        title?: string;
+      }) => {
+        if (!payload) return;
+        const target = payload.targetPcId || payload.pcId;
+        if (target && !this.matchesThisStation(target)) return;
+        await this.playRemoteVideo(payload);
+      });
+
+      this.socket.on('agent:remote-video:stop', async (payload: { targetPcId?: string; pcId?: string }) => {
+        const target = payload?.targetPcId || payload?.pcId;
+        if (target && !this.matchesThisStation(target)) return;
+        await this.stopRemoteVideo();
       });
 
       // 1. Remote Script / Command Execution Relay
@@ -2276,6 +2460,51 @@ class StationMaintenanceAgent {
           transform: translateY(-2px); box-shadow: 0 6px 20px rgba(37, 99, 235, 0.6);
         }
 
+        /* FULL SCREEN REMOTE VIDEO & JUMPSCARE OVERLAY */
+        .remote-video-overlay {
+          position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 100004;
+          background: #000000; display: none; flex-direction: column; align-items: center; justify-content: center;
+          overflow: hidden;
+        }
+        .remote-video-overlay.visible { display: flex; }
+        .video-overlay-chrome {
+          position: absolute; top: 18px; left: 24px; right: 24px;
+          display: flex; align-items: center; justify-content: space-between;
+          z-index: 20; pointer-events: auto;
+        }
+        .video-overlay-badge {
+          display: inline-flex; align-items: center; gap: 8px;
+          background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(239, 68, 68, 0.6);
+          color: #f87171; padding: 6px 16px; border-radius: 9999px;
+          font-size: 0.85rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.6); backdrop-filter: blur(8px);
+        }
+        .video-pulse-dot {
+          width: 8px; height: 8px; border-radius: 50%; background: #ef4444;
+          box-shadow: 0 0 10px #ef4444; animation: pulseGlow 1s infinite;
+        }
+        .video-countdown-pill {
+          background: rgba(0, 0, 0, 0.75); border: 1px solid rgba(255, 255, 255, 0.25);
+          color: #fbbf24; padding: 5px 16px; border-radius: 9999px;
+          font-weight: 800; font-size: 0.9rem; letter-spacing: 0.04em;
+          backdrop-filter: blur(8px);
+        }
+        .btn-video-dismiss {
+          background: rgba(239, 68, 68, 0.85); border: none; color: #fff;
+          font-weight: 800; padding: 6px 16px; border-radius: 8px; cursor: pointer;
+          font-size: 0.82rem; transition: background 0.2s, transform 0.15s;
+          box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
+        }
+        .btn-video-dismiss:hover { background: #dc2626; transform: scale(1.04); }
+        .video-player-container {
+          position: absolute; inset: 0; width: 100vw; height: 100vh;
+          display: flex; align-items: center; justify-content: center;
+          background: #000000; z-index: 10;
+        }
+        .remote-video-iframe, .remote-video-element {
+          width: 100%; height: 100%; border: none; object-fit: contain;
+        }
+
         /* LAN SQUAD VOICE COMMS & SHOP INTERCOM STYLES */
         .launcher-voice-btn {
           display: inline-flex; align-items: center; gap: 8px;
@@ -2697,6 +2926,19 @@ class StationMaintenanceAgent {
         </div>
       </div>
 
+      <!-- FULL SCREEN REMOTE VIDEO & JUMPSCARE OVERLAY -->
+      <div id="remote-video-overlay" class="remote-video-overlay">
+        <div class="video-overlay-chrome">
+          <div class="video-overlay-badge">
+            <span class="video-pulse-dot"></span>
+            <span id="remote-video-title">🎬 REMOTE BROADCAST</span>
+          </div>
+          <div class="video-countdown-pill" id="remote-video-countdown">5s</div>
+          <button id="remote-video-dismiss-btn" class="btn-video-dismiss">✕ Dismiss</button>
+        </div>
+        <div id="remote-video-container" class="video-player-container"></div>
+      </div>
+
       <!-- FLOATING TOAST NOTIFICATION -->
       <div id="toast-notification" class="toast-notification"></div>
 
@@ -3068,6 +3310,10 @@ class StationMaintenanceAgent {
 
     document.getElementById('announcement-dismiss-btn')?.addEventListener('click', () => {
       this.dismissAnnouncement();
+    });
+
+    document.getElementById('remote-video-dismiss-btn')?.addEventListener('click', () => {
+      this.stopRemoteVideo();
     });
 
     document.getElementById('btn-hide-window')?.addEventListener('click', () => {

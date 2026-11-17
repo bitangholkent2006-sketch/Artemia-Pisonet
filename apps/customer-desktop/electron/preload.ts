@@ -77,6 +77,7 @@ export interface PisonetDesktopApi {
   launchGame?: (item: any) => Promise<{ success: boolean; resolvedPath?: string; error?: string }>;
   applyWallpaper?: (wallpaperUrl: string) => Promise<{ success: boolean; localPath?: string; error?: string }>;
   setVolumePercent?: (percent: number) => Promise<{ success: boolean; error?: string }>;
+  getVolumePercent?: () => Promise<number>;
   setUiMode?: (mode: 'launcher' | 'agent') => Promise<boolean>;
   peekWindowsDesktop?: (password: string) => Promise<{ success: boolean; error?: string }>;
   onLauncherRestoredIdle?: (callback: () => void) => void;
@@ -138,6 +139,7 @@ const api: PisonetDesktopApi = {
   launchGame: (item) => ipcRenderer.invoke('launcher:launch-item', item),
   applyWallpaper: (wallpaperUrl) => ipcRenderer.invoke('launcher:apply-wallpaper', wallpaperUrl),
   setVolumePercent: (percent) => ipcRenderer.invoke('system:set-volume', percent),
+  getVolumePercent: () => ipcRenderer.invoke('system:get-volume'),
   setUiMode: (mode) => ipcRenderer.invoke('window:set-ui-mode', mode),
   peekWindowsDesktop: (password) => ipcRenderer.invoke('operator:peek-desktop', password),
   onLauncherRestoredIdle: (callback) => {

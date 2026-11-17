@@ -88,6 +88,17 @@ export interface ClickRipple {
             <span>📸</span>
             <span>{{ isCapturing ? 'Connecting...' : 'Capture' }}</span>
           </button>
+
+          <!-- YouTube Video & Jumpscare Modal Trigger Button -->
+          <button
+            type="button"
+            class="btn btn-jumpscare"
+            (click)="openVideoModal()"
+            title="I-play ang YouTube video o jumpscare sa PC nga dunay custom volume"
+          >
+            <span>🎬</span>
+            <span>Jumpscare / Video</span>
+          </button>
         </div>
       </div>
 
@@ -225,6 +236,14 @@ export interface ClickRipple {
             >
               ⌨️ Mobile Keyboard
             </button>
+            <button
+              type="button"
+              class="tool-btn jumpscare-quick-btn"
+              (click)="openVideoModal()"
+              title="Remote YouTube / Jumpscare overlay"
+            >
+              🎬 Video / Jumpscare
+            </button>
           </div>
 
           <!-- Shop & Station Intercom / Voice Broadcast -->
@@ -240,7 +259,7 @@ export interface ClickRipple {
               (touchstart)="startIntercom('station')"
               (touchend)="stopIntercom(true)"
               (click)="toggleIntercom('station')"
-              title="Pindota o hupti aron makigsulti direkta sa headset/speaker sa {{ selectedPc?.name || 'PC' }}"
+              title="Pindota o hupti aron makigsulti direkta sa headset/speaker sa {{ selectedPc.name }}"
             >
               <span>🎙️</span>
               <span>{{ isIntercomTransmitting && intercomTargetMode === 'station' ? 'TRANSMITTING...' : 'Hold / Click (Station)' }}</span>
@@ -332,6 +351,225 @@ export interface ClickRipple {
               [style.left.px]="r.x"
               [style.top.px]="r.y"
             ></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- YouTube Video & Jumpscare Remote Controller Modal -->
+      <div *ngIf="showVideoModal" class="modal-backdrop" (click)="closeVideoModal()">
+        <div class="modal-dialog video-modal-card" style="max-width: 580px;" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 1.5rem;">🎬</span>
+              <div>
+                <h3 class="modal-title-text">Remote YouTube & Jumpscare Player</h3>
+                <span class="modal-subtitle">
+                  I-take over ang screen sa <strong>{{ getVideoTargetLabel() }}</strong> ug i-play ang YouTube video nga dunay custom volume control.
+                </span>
+              </div>
+            </div>
+            <button class="btn btn-sm btn-secondary" (click)="closeVideoModal()">✕</button>
+          </div>
+
+          <div class="modal-body">
+            <!-- Target PC Selection -->
+            <div class="form-group" style="margin-bottom: 14px;">
+              <label class="form-label">Target Station(s):</label>
+              <select class="form-select" [(ngModel)]="videoTargetPcId">
+                <option *ngFor="let p of state.pcs" [value]="p.id">
+                  🖥️ {{ p.name }} ({{ p.identifier }}) - {{ p.status }}
+                </option>
+                <option value="all">📢 All PCs (Broadcast Entire Shop)</option>
+              </select>
+            </div>
+
+            <!-- 1-Click Quick Jumpscare / Prank Presets -->
+            <div class="form-group" style="margin-bottom: 16px;">
+              <label class="form-label">⚡ 1-Click Instant Jumpscare Presets:</label>
+              <div class="preset-chips">
+                <button
+                  type="button"
+                  class="preset-chip scream"
+                  (click)="applyVideoPreset('ghost')"
+                  title="Scary Exorcist scream sound and face"
+                >
+                  👻 Scary Screamer (5s)
+                </button>
+                <button
+                  type="button"
+                  class="preset-chip fnaf"
+                  (click)="applyVideoPreset('fnaf')"
+                  title="FNAF Jumpscare"
+                >
+                  👹 FNAF Screamer (4s)
+                </button>
+                <button
+                  type="button"
+                  class="preset-chip rickroll"
+                  (click)="applyVideoPreset('rickroll')"
+                  title="Never Gonna Give You Up"
+                >
+                  🕺 Rickroll Prank
+                </button>
+                <button
+                  type="button"
+                  class="preset-chip siren"
+                  (click)="applyVideoPreset('siren')"
+                  title="Emergency Alarm Siren"
+                >
+                  🚨 Air Raid Siren (10s)
+                </button>
+                <button
+                  type="button"
+                  class="preset-chip laugh"
+                  (click)="applyVideoPreset('laugh')"
+                  title="Creepy Evil Laugh"
+                >
+                  😈 Evil Laugh (6s)
+                </button>
+              </div>
+            </div>
+
+            <!-- YouTube URL or Video Link Input -->
+            <div class="form-group" style="margin-bottom: 16px;">
+              <label class="form-label">
+                <span>🔗 YouTube URL / Video Link:</span>
+                <span class="label-hint">(Bisan unsang link sa YouTube o direct .mp4)</span>
+              </label>
+              <div class="input-with-clear">
+                <input
+                  type="text"
+                  class="form-control"
+                  [(ngModel)]="videoUrl"
+                  placeholder="https://www.youtube.com/watch?v=... o https://youtu.be/..."
+                />
+                <button
+                  *ngIf="videoUrl"
+                  type="button"
+                  class="btn-clear"
+                  (click)="videoUrl = ''"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <!-- Custom Volume Control Slider -->
+            <div class="form-group" style="margin-bottom: 16px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label class="form-label" style="margin: 0;">🔊 Remote Master Volume:</label>
+                <span class="volume-badge" [ngClass]="{'vol-max': videoVolume >= 90, 'vol-med': videoVolume < 90 && videoVolume >= 50, 'vol-low': videoVolume < 50}">
+                  {{ videoVolume }}% {{ videoVolume === 100 ? '🔥 MAXIMUM FULL VOLUME' : '' }}
+                </span>
+              </div>
+              <input
+                type="range"
+                class="form-range custom-slider"
+                min="0"
+                max="100"
+                step="5"
+                [(ngModel)]="videoVolume"
+              />
+              <div class="slider-ticks">
+                <span (click)="videoVolume = 25">25% (Hinay)</span>
+                <span (click)="videoVolume = 50">50% (Normal)</span>
+                <span (click)="videoVolume = 80">80% (Kusog)</span>
+                <span (click)="videoVolume = 100" style="color: #ef4444; font-weight: 800;">100% (Jumpscare Full)</span>
+              </div>
+              <div class="volume-restore-note">
+                ℹ️ <em>Awtomatikong ibalik sa Artemia ang orihinal nga volume sa PC inig kahuman sa video.</em>
+              </div>
+            </div>
+
+            <!-- Duration Selector -->
+            <div class="form-group" style="margin-bottom: 16px;">
+              <label class="form-label">⏱️ Duration (Mawala human sa):</label>
+              <div class="duration-pills">
+                <button
+                  type="button"
+                  class="dur-pill"
+                  [ngClass]="{'active': videoDuration === 3}"
+                  (click)="videoDuration = 3"
+                >
+                  ⚡ 3s
+                </button>
+                <button
+                  type="button"
+                  class="dur-pill"
+                  [ngClass]="{'active': videoDuration === 5}"
+                  (click)="videoDuration = 5"
+                >
+                  👻 5s (Recommended)
+                </button>
+                <button
+                  type="button"
+                  class="dur-pill"
+                  [ngClass]="{'active': videoDuration === 10}"
+                  (click)="videoDuration = 10"
+                >
+                  ⏱️ 10s
+                </button>
+                <button
+                  type="button"
+                  class="dur-pill"
+                  [ngClass]="{'active': videoDuration === 30}"
+                  (click)="videoDuration = 30"
+                >
+                  📺 30s
+                </button>
+                <button
+                  type="button"
+                  class="dur-pill"
+                  [ngClass]="{'active': videoDuration === 0}"
+                  (click)="videoDuration = 0"
+                >
+                  ♾️ Full Video (Manual Stop)
+                </button>
+              </div>
+            </div>
+
+            <!-- Optional Custom Title -->
+            <div class="form-group" style="margin-bottom: 8px;">
+              <label class="form-label">🏷️ Overlay Banner Title (Optional):</label>
+              <input
+                type="text"
+                class="form-control"
+                [(ngModel)]="videoTitle"
+                placeholder="e.g. Jumpscare Prank, Pahibalo, Video Alert..."
+              />
+            </div>
+
+            <!-- Active Status Feedback Banner -->
+            <div *ngIf="videoStatusMessage" class="video-status-alert">
+              <span>{{ videoStatusMessage }}</span>
+            </div>
+          </div>
+
+          <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px;">
+            <button
+              type="button"
+              class="btn btn-danger-subtle"
+              (click)="stopActiveRemoteVideo()"
+              title="I-stop dayon ang video sa target PC ug i-restore ang volume"
+            >
+              ⏹️ Stop Video Now
+            </button>
+
+            <div style="display: flex; gap: 8px;">
+              <button type="button" class="btn btn-secondary" (click)="closeVideoModal()">
+                Close
+              </button>
+              <button
+                type="button"
+                class="btn btn-danger"
+                style="background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); font-weight: 800;"
+                (click)="launchRemoteVideo()"
+                [disabled]="!videoUrl || isSendingVideo"
+              >
+                <span>🚀</span>
+                <span>{{ isSendingVideo ? 'Sending...' : 'Play on Station' }}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1004,6 +1242,288 @@ export interface ClickRipple {
         touch-action: none;
       }
     }
+
+    /* Jumpscare & Remote Video Button & Modal */
+    .btn-jumpscare {
+      background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+      color: #fff;
+      border: 1px solid #ef4444;
+      font-weight: 700;
+      box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35);
+      transition: all 0.2s ease;
+    }
+    .btn-jumpscare:hover {
+      background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(220, 38, 38, 0.5);
+    }
+    .jumpscare-quick-btn {
+      background: rgba(220, 38, 38, 0.25) !important;
+      border-color: #ef4444 !important;
+      color: #fca5a5 !important;
+      font-weight: 700 !important;
+    }
+    .jumpscare-quick-btn:hover {
+      background: rgba(220, 38, 38, 0.45) !important;
+      color: #fff !important;
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.82);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 99999;
+      padding: 16px;
+    }
+    .video-modal-card {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      width: 100%;
+      padding: 24px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.8), 0 0 25px rgba(220, 38, 38, 0.2);
+      color: #f8fafc;
+      animation: modalFadeIn 0.2s ease-out;
+    }
+    @keyframes modalFadeIn {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #1e293b;
+    }
+    .modal-title-text {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #f8fafc;
+      margin: 0;
+    }
+    .modal-subtitle {
+      font-size: 0.82rem;
+      color: #94a3b8;
+      display: block;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .modal-body {
+      padding: 8px 0;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+    }
+    .form-label {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .label-hint {
+      font-size: 0.75rem;
+      font-weight: 400;
+      color: #94a3b8;
+    }
+    .form-select, .form-control {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #f8fafc;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      width: 100%;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-select:focus, .form-control:focus {
+      border-color: #38bdf8;
+    }
+    .preset-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .preset-chip {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      padding: 6px 12px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .preset-chip:hover {
+      background: #334155;
+      color: #fff;
+      transform: translateY(-1px);
+    }
+    .preset-chip.scream {
+      border-color: #ef4444;
+      background: rgba(239, 68, 68, 0.15);
+      color: #fca5a5;
+    }
+    .preset-chip.scream:hover {
+      background: rgba(239, 68, 68, 0.3);
+    }
+    .preset-chip.fnaf {
+      border-color: #f97316;
+      background: rgba(249, 115, 22, 0.15);
+      color: #fdba74;
+    }
+    .preset-chip.rickroll {
+      border-color: #3b82f6;
+      background: rgba(59, 130, 246, 0.15);
+      color: #93c5fd;
+    }
+    .preset-chip.siren {
+      border-color: #eab308;
+      background: rgba(234, 179, 8, 0.15);
+      color: #fde047;
+    }
+    .preset-chip.laugh {
+      border-color: #a855f7;
+      background: rgba(168, 85, 247, 0.15);
+      color: #d8b4fe;
+    }
+    .input-with-clear {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .btn-clear {
+      position: absolute;
+      right: 10px;
+      background: none;
+      border: none;
+      color: #94a3b8;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    .volume-badge {
+      font-size: 0.78rem;
+      font-weight: 800;
+      padding: 3px 10px;
+      border-radius: 6px;
+      letter-spacing: 0.02em;
+    }
+    .volume-badge.vol-max {
+      background: rgba(239, 68, 68, 0.25);
+      color: #fca5a5;
+      border: 1px solid #ef4444;
+    }
+    .volume-badge.vol-med {
+      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
+      border: 1px solid #0284c7;
+    }
+    .volume-badge.vol-low {
+      background: rgba(100, 116, 139, 0.2);
+      color: #cbd5e1;
+      border: 1px solid #475569;
+    }
+    .custom-slider {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 8px;
+      border-radius: 4px;
+      background: #334155;
+      outline: none;
+      margin: 8px 0;
+      cursor: pointer;
+    }
+    .custom-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #ef4444;
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(239, 68, 68, 0.7);
+      transition: transform 0.15s;
+    }
+    .custom-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+    }
+    .slider-ticks {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      margin-top: 2px;
+      cursor: pointer;
+    }
+    .slider-ticks span:hover {
+      color: #38bdf8;
+    }
+    .volume-restore-note {
+      font-size: 0.76rem;
+      color: #64748b;
+      margin-top: 6px;
+    }
+    .duration-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .dur-pill {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .dur-pill:hover {
+      background: #334155;
+      color: #fff;
+    }
+    .dur-pill.active {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: #38bdf8;
+      color: #38bdf8;
+    }
+    .video-status-alert {
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid #0284c7;
+      color: #7dd3fc;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-danger-subtle {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-danger-subtle:hover {
+      background: rgba(239, 68, 68, 0.35);
+      color: #fff;
+    }
   `]
 })
 export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
@@ -1042,6 +1562,17 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   lastActionMessage: string | null = null;
   clickRipples: ClickRipple[] = [];
   private rippleCounter = 0;
+
+  // YouTube Video & Jumpscare Modal State
+  showVideoModal = false;
+  videoTargetPcId: string = '';
+  videoUrl = 'https://www.youtube.com/watch?v=0k_P_b_lJ5A';
+  videoVolume = 100;
+  videoDuration = 5;
+  videoTitle = 'Jumpscare';
+  isSendingVideo = false;
+  videoStatusMessage = '';
+  private videoStatusSub?: () => void;
 
   // Stream Resolution & Quality settings
   streamWidth = 960;
@@ -1199,6 +1730,15 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
 
     this.streamSub = this.adminState.onScreenStreamFrame((data) => this.handleStreamFrame(data));
 
+    this.videoStatusSub = this.adminState.onRemoteVideoStatus((res) => {
+      if (res?.status === 'playing') {
+        this.videoStatusMessage = `🎬 PC ${res.pcId} is playing: "${res.title || 'Video'}"`;
+      } else if (res?.status === 'stopped') {
+        this.videoStatusMessage = `✅ PC ${res.pcId} video finished / stopped. Normal volume restored.`;
+      }
+      this.cdr.markForCheck();
+    });
+
     this.sub = this.adminState.state$.subscribe((s) => {
       this.state = s;
       if (this.state.pcs?.length > 0) {
@@ -1221,6 +1761,9 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.sub?.unsubscribe();
     if (this.streamSub) {
       this.streamSub();
+    }
+    if (this.videoStatusSub) {
+      this.videoStatusSub();
     }
     this.stopStreaming(true);
     this.removeGlobalKeyListeners();
@@ -2046,5 +2589,88 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
       result[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
     }
     return result;
+  }
+
+  // -------------------------------------------------------------
+  // Remote YouTube Video & Jumpscare Player Actions
+  // -------------------------------------------------------------
+  openVideoModal() {
+    this.videoTargetPcId = this.selectedPc?.id || (this.state.pcs?.length > 0 ? this.state.pcs[0].id : 'all');
+    this.showVideoModal = true;
+    this.videoStatusMessage = '';
+  }
+
+  closeVideoModal() {
+    this.showVideoModal = false;
+    this.videoStatusMessage = '';
+  }
+
+  getVideoTargetLabel(): string {
+    if (this.videoTargetPcId === 'all') return 'All PCs (Entire Fleet)';
+    const pc = this.state.pcs?.find((p: any) => this.matchesStation(p, this.videoTargetPcId));
+    return pc ? `${pc.name} (${pc.identifier})` : (this.selectedPc?.name || 'Target Station');
+  }
+
+  applyVideoPreset(type: 'ghost' | 'fnaf' | 'rickroll' | 'siren' | 'laugh') {
+    switch (type) {
+      case 'ghost':
+        this.videoUrl = 'https://www.youtube.com/watch?v=0k_P_b_lJ5A';
+        this.videoVolume = 100;
+        this.videoDuration = 5;
+        this.videoTitle = 'Scary Ghost Screamer';
+        break;
+      case 'fnaf':
+        this.videoUrl = 'https://www.youtube.com/watch?v=k-aR_qM3s8k';
+        this.videoVolume = 100;
+        this.videoDuration = 4;
+        this.videoTitle = 'FNAF Screamer';
+        break;
+      case 'rickroll':
+        this.videoUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+        this.videoVolume = 80;
+        this.videoDuration = 30;
+        this.videoTitle = 'Rick Astley - Never Gonna Give You Up';
+        break;
+      case 'siren':
+        this.videoUrl = 'https://www.youtube.com/watch?v=rIos0Bl6sVc';
+        this.videoVolume = 100;
+        this.videoDuration = 10;
+        this.videoTitle = 'Air Raid Alarm Siren';
+        break;
+      case 'laugh':
+        this.videoUrl = 'https://www.youtube.com/watch?v=Sk-US6n_D-A';
+        this.videoVolume = 95;
+        this.videoDuration = 6;
+        this.videoTitle = 'Creepy Evil Laugh';
+        break;
+    }
+    this.videoStatusMessage = `Loaded preset: ${this.videoTitle}`;
+  }
+
+  launchRemoteVideo() {
+    if (!this.videoUrl) return;
+    this.isSendingVideo = true;
+    const target = this.videoTargetPcId || this.selectedPc?.id || 'all';
+
+    this.adminState.playRemoteVideo({
+      targetPcId: target,
+      youtubeUrl: this.videoUrl.trim(),
+      volume: this.videoVolume,
+      durationSeconds: this.videoDuration,
+      title: this.videoTitle
+    });
+
+    this.videoStatusMessage = `🚀 Video launched on ${this.getVideoTargetLabel()} with ${this.videoVolume}% Volume (${this.videoDuration > 0 ? this.videoDuration + 's' : 'Full Video'})!`;
+    setTimeout(() => {
+      this.isSendingVideo = false;
+      this.cdr.markForCheck();
+    }, 600);
+  }
+
+  stopActiveRemoteVideo() {
+    const target = this.videoTargetPcId || this.selectedPc?.id || 'all';
+    this.adminState.stopRemoteVideo(target);
+    this.videoStatusMessage = `⏹️ Stopped video on ${this.getVideoTargetLabel()}. Normal volume restored.`;
+    this.cdr.markForCheck();
   }
 }

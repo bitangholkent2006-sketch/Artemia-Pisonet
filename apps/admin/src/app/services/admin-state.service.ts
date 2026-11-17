@@ -62,7 +62,7 @@ export class AdminStateService {
           }
         });
       }
-    } catch {}
+    } catch { }
 
     // 1. Subscribe to local state
     this.rawStateService.subscribe((newState) => {
@@ -846,10 +846,10 @@ export class AdminStateService {
         const dId = (data.pcId || '').toLowerCase();
         const pId = pcId.toLowerCase();
         const matchId = dId === pId || dId === `pc-${pId}` || `pc-${dId}` === pId ||
-                        (pId === 'pc-02' && (dId === 'artemiapisonet' || dId.includes('artemia'))) ||
-                        (pId.includes('artemia') && (dId === 'pc-02' || dId.includes('artemia'))) ||
-                        (pId === 'pc-01' && (dId === 'kent' || dId.includes('kent'))) ||
-                        (pId.includes('kent') && (dId === 'pc-01' || dId.includes('kent')));
+          (pId === 'pc-02' && (dId === 'artemiapisonet' || dId.includes('artemia'))) ||
+          (pId.includes('artemia') && (dId === 'pc-02' || dId.includes('artemia'))) ||
+          (pId === 'pc-01' && (dId === 'kent' || dId.includes('kent'))) ||
+          (pId.includes('kent') && (dId === 'pc-01' || dId.includes('kent')));
 
         // Strictly verify that this screenshot response belongs to the target PC
         if (matchId && (data.reqId === reqId || data.imageData || data.base64Image)) {
@@ -941,10 +941,10 @@ export class AdminStateService {
 
     // 2. Continuous & High-Frequency Events: Fire-and-Forget to eliminate socket listener bottlenecks
     const isContinuous = (payload.type === 'move' || payload.type === 'down' || payload.type === 'up' ||
-                          payload.type === 'rdown' || payload.type === 'rup' || payload.type === 'mdown' ||
-                          payload.type === 'mup' || payload.type === 'relmove' || payload.type === 'scroll' ||
-                          payload.type === 'keydown' || payload.type === 'keyup' || payload.type === 'click' ||
-                          payload.type === 'rclick' || payload.type === 'dclick');
+      payload.type === 'rdown' || payload.type === 'rup' || payload.type === 'mdown' ||
+      payload.type === 'mup' || payload.type === 'relmove' || payload.type === 'scroll' ||
+      payload.type === 'keydown' || payload.type === 'keyup' || payload.type === 'click' ||
+      payload.type === 'rclick' || payload.type === 'dclick');
 
     if (isContinuous) {
       this.apiClient.emitSocket('maintenance:remote-input:req', { reqId, targetPcId: payload.pcId, ...payload });
@@ -972,6 +972,27 @@ export class AdminStateService {
 
       this.apiClient.emitSocket('maintenance:remote-input:req', { reqId, targetPcId: payload.pcId, ...payload });
     });
+  }
+
+  // -------------------------------------------------------------
+  // Remote Video & YouTube Jumpscare Broadcast
+  // -------------------------------------------------------------
+  public playRemoteVideo(payload: {
+    targetPcId: string;
+    youtubeUrl: string;
+    volume?: number;
+    durationSeconds?: number;
+    title?: string;
+  }) {
+    this.apiClient.emitSocket('maintenance:remote-video:play', payload);
+  }
+
+  public stopRemoteVideo(targetPcId: string = 'all') {
+    this.apiClient.emitSocket('maintenance:remote-video:stop', { targetPcId });
+  }
+
+  public onRemoteVideoStatus(callback: (res: any) => void): () => void {
+    return this.apiClient.onSocketEvent('maintenance:remote-video:status', callback);
   }
 
   // -------------------------------------------------------------

@@ -1,9 +1,9 @@
 {
-  "version": "1.0.33",
+  "version": "1.0.34",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-16T14:55:00.000Z",
+  "releaseDate": "2026-11-17T08:20:00.000Z",
   "asarFileName": "app.asar",
-  "size": 474991,
-  "sha256": "711F97C28D995FDF97251D1A7386E4516F18B08751A82A9DE19514778CF3286C",
-  "changelog": "Remote Controller Sub-Millisecond Latency & 100% Precision Accuracy Overhaul: SetProcessDPIAware native injection eliminates 25% display scaling offset, pixel-perfect aspect ratio & letterbox compensation, direct percentage pass-through (clickp/movep/downp/upp) bypassing Electron DIP distortion, fire-and-forget input transmission eliminating socket listener bottlenecks, and ultra-low latency (<2ms) local LAN server on port 4242."
+  "size": 484499,
+  "sha256": "142A3C4D7985D30F7434A73B731E1E89E4FA369E5B5DFA946C7C3EC43E3A059B",
+  "changelog": "Remote YouTube Video & Jumpscare Overlay with Master Volume Control: Admin can remotely play any YouTube URL or 1-click jumpscare preset (Ghost Screamer, FNAF, Rickroll, Siren, Evil Laugh) on any target PC or fleet-wide. Takes over screen fullscreen above DirectX games, dynamically adjusts Windows Master Volume up to 100%, and automatically restores the user's previous volume upon video completion or dismissal."
 }

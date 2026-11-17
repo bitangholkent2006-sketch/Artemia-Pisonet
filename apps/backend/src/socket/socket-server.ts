@@ -754,6 +754,19 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
       io?.to('staff').emit('maintenance:fps-boost:result', payload);
     });
 
+    // Remote Video & YouTube Jumpscare Broadcast Relays
+    authSocket.on('maintenance:remote-video:play', (payload: any) => {
+      emitToPcTarget('agent:remote-video:play', payload, payload.targetPcId || payload.pcId || 'all');
+    });
+
+    authSocket.on('maintenance:remote-video:stop', (payload: any) => {
+      emitToPcTarget('agent:remote-video:stop', payload, payload.targetPcId || payload.pcId || 'all');
+    });
+
+    authSocket.on('agent:remote-video:status', (payload: any) => {
+      io?.to('staff').emit('maintenance:remote-video:status', payload);
+    });
+
     // -----------------------------------------------------------------
     // LOCAL LAN PARTY VOICE COMMS & SHOP INTERCOM RELAYS
     // -----------------------------------------------------------------

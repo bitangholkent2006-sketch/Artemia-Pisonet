@@ -13,6 +13,7 @@ if (app?.commandLine) {
   app.commandLine.appendSwitch('disable-background-timer-throttling');
   app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+  app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 }
 
 function logToFile(msg: string) {
@@ -4981,6 +4982,23 @@ async function setWindowsMasterVolume(percent: number): Promise<{ success: boole
 
 ipcMain.handle('system:set-volume', async (_event, percent: number) => {
   return setWindowsMasterVolume(percent);
+});
+
+async function getWindowsMasterVolume(): Promise<number> {
+  if (process.platform !== 'win32') return 50;
+  const bin = await ensureVolumeCtlBinary();
+  if (!bin) return 50;
+  return new Promise((resolve) => {
+    execFile(bin, ['--get'], { timeout: 4000, windowsHide: true }, (err, stdout) => {
+      if (err) return resolve(50);
+      const parsed = parseInt(String(stdout || '').trim(), 10);
+      resolve(isNaN(parsed) ? 50 : parsed);
+    });
+  });
+}
+
+ipcMain.handle('system:get-volume', async () => {
+  return getWindowsMasterVolume();
 });
 
 // 12. OTA Client Updater: Download app.asar, write detached updater batch script, and restart
