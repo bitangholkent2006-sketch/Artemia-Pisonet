@@ -748,13 +748,15 @@ class StationMaintenanceAgent {
     targetPcId?: string;
     pcId?: string;
     youtubeUrl: string;
+    imageUrl?: string;
+    imageEffect?: string;
     volume?: number;
     durationSeconds?: number;
     title?: string;
   }) {
-    if (!payload || !payload.youtubeUrl) return;
+    if (!payload || (!payload.youtubeUrl && !payload.imageUrl)) return;
 
-    this.logMessage(`[RemoteVideo] Video play request: "${payload.youtubeUrl}", Vol: ${payload.volume}%, Duration: ${payload.durationSeconds}s`);
+    this.logMessage(`[RemoteVideo] Video play request: Audio="${payload.youtubeUrl}", Img="${payload.imageUrl || 'none'}", Fx="${payload.imageEffect || 'default'}", Vol: ${payload.volume}%, Duration: ${payload.durationSeconds}s`);
 
     // Clean up any currently running video first
     if (this.remoteVideoActive) {
@@ -782,36 +784,76 @@ class StationMaintenanceAgent {
       desktopWindow.pisonetDesktop.setAnnouncementMode(true).catch(() => {});
     }
 
-    // 3. Inject video iframe or HTML5 video
+    // 3. Inject video iframe or HTML5 video, or Image with YouTube Audio
     const container = document.getElementById('remote-video-container');
     const overlay = document.getElementById('remote-video-overlay');
     const titleEl = document.getElementById('remote-video-title');
     const countdownEl = document.getElementById('remote-video-countdown');
 
     if (titleEl) {
-      titleEl.innerText = payload.title ? `🎬 ${payload.title.toUpperCase()}` : '🎬 REMOTE VIDEO BROADCAST';
+      titleEl.innerText = payload.title ? `🎬 ${payload.title.toUpperCase()}` : (payload.imageUrl ? '👻 JUMPSCARE ALERT' : '🎬 REMOTE VIDEO BROADCAST');
     }
 
     if (container) {
       container.innerHTML = '';
-      const ytId = this.parseYouTubeId(payload.youtubeUrl);
-      if (ytId) {
-        const iframe = document.createElement('iframe');
-        iframe.className = 'remote-video-iframe';
-        iframe.src = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&controls=0&mute=0&rel=0&loop=1&playsinline=1&enablejsapi=1`;
-        iframe.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
-        iframe.setAttribute('allowfullscreen', 'true');
-        container.appendChild(iframe);
+      const ytId = this.parseYouTubeId(payload.youtubeUrl || '');
+
+      // CASE A: Custom Image provided -> Display image with visual effects + YouTube as background audio
+      if (payload.imageUrl) {
+        // Audio soundtrack (YouTube embed or direct audio)
+        if (ytId) {
+          const audioFrame = document.createElement('iframe');
+          audioFrame.className = 'remote-audio-soundtrack';
+          audioFrame.src = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&controls=0&mute=0&rel=0&loop=1&playsinline=1&enablejsapi=1`;
+          audioFrame.allow = 'autoplay; encrypted-media';
+          audioFrame.style.cssText = 'position:absolute; width:1px; height:1px; opacity:0.001; pointer-events:none; left:-9999px;';
+          container.appendChild(audioFrame);
+        } else if (payload.youtubeUrl) {
+          const audioElem = document.createElement('audio');
+          audioElem.src = payload.youtubeUrl;
+          audioElem.autoplay = true;
+          audioElem.style.display = 'none';
+          container.appendChild(audioElem);
+          audioElem.play().catch(() => {});
+        }
+
+        // Image display with selected jumpscare effect animation
+        const imgWrap = document.createElement('div');
+        imgWrap.className = 'jumpscare-image-wrapper';
+
+        const img = document.createElement('img');
+        img.src = payload.imageUrl;
+        const effectClass = payload.imageEffect && payload.imageEffect !== 'none' ? `fx-${payload.imageEffect}` : 'fx-glitch-shake';
+        img.className = `remote-jumpscare-img ${effectClass}`;
+        img.alt = 'Jumpscare';
+        imgWrap.appendChild(img);
+
+        // Pulsing horror vignette overlay
+        const vignette = document.createElement('div');
+        vignette.className = 'jumpscare-vignette';
+        imgWrap.appendChild(vignette);
+
+        container.appendChild(imgWrap);
       } else {
-        const video = document.createElement('video');
-        video.className = 'remote-video-element';
-        video.src = payload.youtubeUrl;
-        video.autoplay = true;
-        video.controls = false;
-        video.playsInline = true;
-        video.loop = true;
-        container.appendChild(video);
-        video.play().catch(() => {});
+        // CASE B: Standard video player on screen
+        if (ytId) {
+          const iframe = document.createElement('iframe');
+          iframe.className = 'remote-video-iframe';
+          iframe.src = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&controls=0&mute=0&rel=0&loop=1&playsinline=1&enablejsapi=1`;
+          iframe.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+          iframe.setAttribute('allowfullscreen', 'true');
+          container.appendChild(iframe);
+        } else if (payload.youtubeUrl) {
+          const video = document.createElement('video');
+          video.className = 'remote-video-element';
+          video.src = payload.youtubeUrl;
+          video.autoplay = true;
+          video.controls = false;
+          video.playsInline = true;
+          video.loop = true;
+          container.appendChild(video);
+          video.play().catch(() => {});
+        }
       }
     }
 
@@ -1064,6 +1106,8 @@ class StationMaintenanceAgent {
         targetPcId?: string;
         pcId?: string;
         youtubeUrl: string;
+        imageUrl?: string;
+        imageEffect?: string;
         volume?: number;
         durationSeconds?: number;
         title?: string;
@@ -2503,6 +2547,81 @@ class StationMaintenanceAgent {
         }
         .remote-video-iframe, .remote-video-element {
           width: 100%; height: 100%; border: none; object-fit: contain;
+        }
+
+        /* JUMPSCARE IMAGE & VISUAL HORROR EFFECTS */
+        .jumpscare-image-wrapper {
+          position: relative; width: 100vw; height: 100vh;
+          display: flex; align-items: center; justify-content: center;
+          overflow: hidden; background: #000000;
+        }
+        .remote-jumpscare-img {
+          max-width: 95vw; max-height: 95vh; object-fit: contain;
+          user-select: none; pointer-events: none;
+        }
+        .jumpscare-vignette {
+          position: absolute; inset: 0; pointer-events: none; z-index: 15;
+          box-shadow: inset 0 0 140px 50px rgba(220, 38, 38, 0.8);
+          animation: vignetteFlash 0.4s infinite alternate ease-in-out;
+        }
+        @keyframes vignetteFlash {
+          from { opacity: 0.35; }
+          to { opacity: 0.95; }
+        }
+
+        /* Effect 1: Violent Glitch & Earthquake Shake */
+        .fx-glitch-shake {
+          animation: jumpscareShake 0.12s infinite alternate ease-in-out, jumpscareGlitch 0.35s infinite;
+        }
+        @keyframes jumpscareShake {
+          0% { transform: translate(-18px, 14px) scale(1.08) rotate(-2deg); }
+          50% { transform: translate(22px, -18px) scale(1.15) rotate(2deg); }
+          100% { transform: translate(-15px, -15px) scale(1.12) rotate(-1deg); }
+        }
+        @keyframes jumpscareGlitch {
+          0% { filter: contrast(180%) hue-rotate(0deg); }
+          25% { filter: invert(90%) contrast(250%); }
+          50% { filter: contrast(300%) saturate(300%) drop-shadow(0 0 45px red); }
+          75% { filter: invert(100%) hue-rotate(180deg); }
+          100% { filter: contrast(180%) hue-rotate(0deg); }
+        }
+
+        /* Effect 2: Sudden Fast Zoom Pop */
+        .fx-zoom-in {
+          animation: jumpscareZoom 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards, jumpscareZoomTremor 0.14s 0.25s infinite alternate;
+        }
+        @keyframes jumpscareZoom {
+          0% { transform: scale(0.25); opacity: 0; filter: blur(12px); }
+          40% { transform: scale(1.45); opacity: 1; filter: contrast(250%) drop-shadow(0 0 50px red); }
+          70% { transform: scale(1.18); filter: invert(80%); }
+          100% { transform: scale(1.28); filter: contrast(180%); }
+        }
+        @keyframes jumpscareZoomTremor {
+          0% { transform: scale(1.28) translate(-10px, 8px); }
+          100% { transform: scale(1.33) translate(10px, -8px); filter: contrast(220%) drop-shadow(0 0 35px #ef4444); }
+        }
+
+        /* Effect 3: Strobe Flash */
+        .fx-strobe-flash {
+          animation: jumpscareStrobe 0.14s infinite alternate;
+        }
+        @keyframes jumpscareStrobe {
+          0% { opacity: 1; transform: scale(1.08); filter: contrast(200%) brightness(120%); }
+          49% { opacity: 0.1; filter: invert(100%) brightness(250%); }
+          50% { opacity: 1; transform: scale(1.16) rotate(1deg); filter: contrast(350%) drop-shadow(0 0 60px red); }
+          100% { opacity: 0.2; transform: scale(1.1) rotate(-1deg); filter: invert(100%); }
+        }
+
+        /* Effect 4: Demon Pulse */
+        .fx-pulse-demon {
+          animation: jumpscarePulse 0.45s infinite ease-in-out;
+        }
+        @keyframes jumpscarePulse {
+          0% { transform: scale(1); filter: contrast(140%); }
+          30% { transform: scale(1.26) rotate(2deg); filter: contrast(280%) saturate(350%) drop-shadow(0 0 50px #dc2626); }
+          50% { transform: scale(1.08); filter: invert(85%); }
+          75% { transform: scale(1.32) rotate(-2deg); filter: contrast(300%) hue-rotate(180deg); }
+          100% { transform: scale(1); filter: contrast(140%); }
         }
 
         /* LAN SQUAD VOICE COMMS & SHOP INTERCOM STYLES */

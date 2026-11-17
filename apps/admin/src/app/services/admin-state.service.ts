@@ -980,6 +980,8 @@ export class AdminStateService {
   public playRemoteVideo(payload: {
     targetPcId: string;
     youtubeUrl: string;
+    imageUrl?: string;
+    imageEffect?: string;
     volume?: number;
     durationSeconds?: number;
     title?: string;

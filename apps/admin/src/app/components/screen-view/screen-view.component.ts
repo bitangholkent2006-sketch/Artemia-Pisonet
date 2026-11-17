@@ -391,7 +391,7 @@ export interface ClickRipple {
                   type="button"
                   class="preset-chip scream"
                   (click)="applyVideoPreset('ghost')"
-                  title="Scary Exorcist scream sound and face"
+                  title="Scary Exorcist scream sound and face with violent shake"
                 >
                   👻 Scary Screamer (5s)
                 </button>
@@ -399,9 +399,25 @@ export interface ClickRipple {
                   type="button"
                   class="preset-chip fnaf"
                   (click)="applyVideoPreset('fnaf')"
-                  title="FNAF Jumpscare"
+                  title="FNAF Jumpscare face with fast zoom pop"
                 >
                   👹 FNAF Screamer (4s)
+                </button>
+                <button
+                  type="button"
+                  class="preset-chip laugh"
+                  (click)="applyVideoPreset('nun')"
+                  title="The Nun horror face with strobe flash"
+                >
+                  🧟 The Nun (5s)
+                </button>
+                <button
+                  type="button"
+                  class="preset-chip siren"
+                  (click)="applyVideoPreset('clown')"
+                  title="Killer Clown face with demon pulse"
+                >
+                  🤡 Creepy Clown (6s)
                 </button>
                 <button
                   type="button"
@@ -411,30 +427,109 @@ export interface ClickRipple {
                 >
                   🕺 Rickroll Prank
                 </button>
+              </div>
+            </div>
+
+            <!-- Jumpscare Screen Image & Visual Effect -->
+            <div class="form-group" style="margin-bottom: 16px;">
+              <label class="form-label">
+                <span>🖼️ Screen Display Image:</span>
+                <span class="label-hint">(Mao kini ang mo-display sa screen sa customer PC)</span>
+              </label>
+              <div class="input-with-clear">
+                <input
+                  type="text"
+                  class="form-control"
+                  [(ngModel)]="imageUrl"
+                  placeholder="https://... (Link sa image, o pilia sa ubos nga presets)"
+                />
                 <button
+                  *ngIf="imageUrl"
                   type="button"
-                  class="preset-chip siren"
-                  (click)="applyVideoPreset('siren')"
-                  title="Emergency Alarm Siren"
+                  class="btn-clear"
+                  (click)="imageUrl = ''"
                 >
-                  🚨 Air Raid Siren (10s)
+                  ✕
                 </button>
-                <button
-                  type="button"
-                  class="preset-chip laugh"
-                  (click)="applyVideoPreset('laugh')"
-                  title="Creepy Evil Laugh"
-                >
-                  😈 Evil Laugh (6s)
-                </button>
+              </div>
+
+              <!-- Quick Image Presets -->
+              <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">
+                <button type="button" class="preset-chip" (click)="imageUrl = 'https://i.imgur.com/K7kZ9sK.jpeg'">👻 Exorcist</button>
+                <button type="button" class="preset-chip" (click)="imageUrl = 'https://i.imgur.com/8Qp5YgD.png'">👹 FNAF</button>
+                <button type="button" class="preset-chip" (click)="imageUrl = 'https://i.imgur.com/QhXj5kE.jpeg'">🧟 The Nun</button>
+                <button type="button" class="preset-chip" (click)="imageUrl = 'https://i.imgur.com/39WJjVd.jpeg'">🤡 Clown</button>
+                <button type="button" class="preset-chip" (click)="imageUrl = 'https://i.imgur.com/0Fw3WfK.png'">💀 Skull</button>
+                <button type="button" class="preset-chip" (click)="imageUrl = ''" style="border-color:#64748b; color:#94a3b8;">🚫 None (Video Only)</button>
+              </div>
+
+              <!-- Visual Effect Selector & Mini Preview -->
+              <div *ngIf="imageUrl" style="margin-top: 10px;">
+                <label class="form-label" style="font-size: 0.8rem; margin-bottom: 4px;">
+                  <span>✨ Image Animation Effect:</span>
+                </label>
+                <div class="effect-pills">
+                  <button
+                    type="button"
+                    class="fx-pill"
+                    [ngClass]="{'active': imageEffect === 'glitch-shake'}"
+                    (click)="imageEffect = 'glitch-shake'"
+                  >
+                    ⚡ Violent Glitch &amp; Shake
+                  </button>
+                  <button
+                    type="button"
+                    class="fx-pill"
+                    [ngClass]="{'active': imageEffect === 'zoom-in'}"
+                    (click)="imageEffect = 'zoom-in'"
+                  >
+                    💥 Fast Zoom Pop
+                  </button>
+                  <button
+                    type="button"
+                    class="fx-pill"
+                    [ngClass]="{'active': imageEffect === 'strobe-flash'}"
+                    (click)="imageEffect = 'strobe-flash'"
+                  >
+                    🚨 Strobe Flash
+                  </button>
+                  <button
+                    type="button"
+                    class="fx-pill"
+                    [ngClass]="{'active': imageEffect === 'pulse-demon'}"
+                    (click)="imageEffect = 'pulse-demon'"
+                  >
+                    🩸 Demon Pulse
+                  </button>
+                  <button
+                    type="button"
+                    class="fx-pill"
+                    [ngClass]="{'active': imageEffect === 'none'}"
+                    (click)="imageEffect = 'none'"
+                  >
+                    🖼️ Plain Image
+                  </button>
+                </div>
+
+                <!-- Live Mini Preview -->
+                <div class="preview-box">
+                  <img
+                    [src]="imageUrl"
+                    class="preview-img"
+                    [ngClass]="imageEffect !== 'none' ? 'fx-' + imageEffect : ''"
+                    alt="Preview"
+                  />
+                  <div class="preview-tag">Live Effect Preview ({{ imageEffect }})</div>
+                </div>
               </div>
             </div>
 
             <!-- YouTube URL or Video Link Input -->
             <div class="form-group" style="margin-bottom: 16px;">
               <label class="form-label">
-                <span>🔗 YouTube URL / Video Link:</span>
-                <span class="label-hint">(Bisan unsang link sa YouTube o direct .mp4)</span>
+                <span>🔊 YouTube Audio / Sound Link:</span>
+                <span class="label-hint" *ngIf="imageUrl">(Mo-play kini isip background audio samtang naga-display ang image)</span>
+                <span class="label-hint" *ngIf="!imageUrl">(Direct video sa screen)</span>
               </label>
               <div class="input-with-clear">
                 <input
@@ -1524,6 +1619,109 @@ export interface ClickRipple {
       background: rgba(239, 68, 68, 0.35);
       color: #fff;
     }
+    .preview-box {
+      width: 100%;
+      height: 130px;
+      background: #000;
+      border: 1.5px solid #ef4444;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      margin-top: 8px;
+      box-shadow: inset 0 0 20px rgba(220, 38, 38, 0.4);
+    }
+    .preview-img {
+      max-height: 110px;
+      max-width: 90%;
+      object-fit: contain;
+    }
+    .preview-tag {
+      position: absolute;
+      bottom: 4px;
+      right: 6px;
+      background: rgba(0,0,0,0.8);
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .effect-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .fx-pill {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .fx-pill:hover {
+      background: #334155;
+      color: #fff;
+    }
+    .fx-pill.active {
+      background: rgba(220, 38, 38, 0.25);
+      border-color: #ef4444;
+      color: #fca5a5;
+    }
+    .fx-glitch-shake {
+      animation: jumpscareShake 0.12s infinite alternate ease-in-out, jumpscareGlitch 0.35s infinite;
+    }
+    .fx-zoom-in {
+      animation: jumpscareZoom 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards, jumpscareZoomTremor 0.14s 0.25s infinite alternate;
+    }
+    .fx-strobe-flash {
+      animation: jumpscareStrobe 0.14s infinite alternate;
+    }
+    .fx-pulse-demon {
+      animation: jumpscarePulse 0.45s infinite ease-in-out;
+    }
+    @keyframes jumpscareShake {
+      0% { transform: translate(-10px, 8px) scale(1.04) rotate(-2deg); }
+      50% { transform: translate(12px, -10px) scale(1.08) rotate(2deg); }
+      100% { transform: translate(-8px, -8px) scale(1.06) rotate(-1deg); }
+    }
+    @keyframes jumpscareGlitch {
+      0% { filter: contrast(180%) hue-rotate(0deg); }
+      25% { filter: invert(90%) contrast(250%); }
+      50% { filter: contrast(300%) saturate(300%) drop-shadow(0 0 25px red); }
+      75% { filter: invert(100%) hue-rotate(180deg); }
+      100% { filter: contrast(180%) hue-rotate(0deg); }
+    }
+    @keyframes jumpscareZoom {
+      0% { transform: scale(0.4); opacity: 0; }
+      40% { transform: scale(1.25); opacity: 1; filter: contrast(220%) drop-shadow(0 0 30px red); }
+      100% { transform: scale(1.15); filter: contrast(160%); }
+    }
+    @keyframes jumpscareZoomTremor {
+      0% { transform: scale(1.15) translate(-4px, 4px); }
+      100% { transform: scale(1.18) translate(4px, -4px); filter: contrast(200%) drop-shadow(0 0 20px #ef4444); }
+    }
+    @keyframes jumpscareStrobe {
+      0% { opacity: 1; transform: scale(1.04); filter: contrast(180%) brightness(120%); }
+      49% { opacity: 0.1; filter: invert(100%) brightness(200%); }
+      50% { opacity: 1; transform: scale(1.1) rotate(1deg); filter: contrast(280%) drop-shadow(0 0 30px red); }
+      100% { opacity: 0.2; transform: scale(1.06) rotate(-1deg); filter: invert(100%); }
+    }
+    @keyframes jumpscarePulse {
+      0% { transform: scale(1); filter: contrast(140%); }
+      30% { transform: scale(1.18) rotate(2deg); filter: contrast(250%) saturate(300%) drop-shadow(0 0 30px #dc2626); }
+      50% { transform: scale(1.05); filter: invert(80%); }
+      75% { transform: scale(1.22) rotate(-2deg); filter: contrast(280%) hue-rotate(180deg); }
+      100% { transform: scale(1); filter: contrast(140%); }
+    }
   `]
 })
 export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
@@ -1567,6 +1765,8 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   showVideoModal = false;
   videoTargetPcId: string = '';
   videoUrl = 'https://www.youtube.com/watch?v=0k_P_b_lJ5A';
+  imageUrl = 'https://i.imgur.com/K7kZ9sK.jpeg'; // Default scary screamer face
+  imageEffect = 'glitch-shake'; // 'glitch-shake' | 'zoom-in' | 'strobe-flash' | 'pulse-demon' | 'none'
   videoVolume = 100;
   videoDuration = 5;
   videoTitle = 'Jumpscare';
@@ -2611,56 +2811,69 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     return pc ? `${pc.name} (${pc.identifier})` : (this.selectedPc?.name || 'Target Station');
   }
 
-  applyVideoPreset(type: 'ghost' | 'fnaf' | 'rickroll' | 'siren' | 'laugh') {
+  applyVideoPreset(type: 'ghost' | 'fnaf' | 'nun' | 'clown' | 'rickroll') {
     switch (type) {
       case 'ghost':
         this.videoUrl = 'https://www.youtube.com/watch?v=0k_P_b_lJ5A';
+        this.imageUrl = 'https://i.imgur.com/K7kZ9sK.jpeg';
+        this.imageEffect = 'glitch-shake';
         this.videoVolume = 100;
         this.videoDuration = 5;
         this.videoTitle = 'Scary Ghost Screamer';
         break;
       case 'fnaf':
         this.videoUrl = 'https://www.youtube.com/watch?v=k-aR_qM3s8k';
+        this.imageUrl = 'https://i.imgur.com/8Qp5YgD.png';
+        this.imageEffect = 'zoom-in';
         this.videoVolume = 100;
         this.videoDuration = 4;
         this.videoTitle = 'FNAF Screamer';
         break;
+      case 'nun':
+        this.videoUrl = 'https://www.youtube.com/watch?v=0k_P_b_lJ5A';
+        this.imageUrl = 'https://i.imgur.com/QhXj5kE.jpeg';
+        this.imageEffect = 'strobe-flash';
+        this.videoVolume = 100;
+        this.videoDuration = 5;
+        this.videoTitle = 'The Nun Jumpscare';
+        break;
+      case 'clown':
+        this.videoUrl = 'https://www.youtube.com/watch?v=Sk-US6n_D-A';
+        this.imageUrl = 'https://i.imgur.com/39WJjVd.jpeg';
+        this.imageEffect = 'pulse-demon';
+        this.videoVolume = 95;
+        this.videoDuration = 6;
+        this.videoTitle = 'Killer Clown Jumpscare';
+        break;
       case 'rickroll':
         this.videoUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+        this.imageUrl = '';
+        this.imageEffect = 'none';
         this.videoVolume = 80;
         this.videoDuration = 30;
         this.videoTitle = 'Rick Astley - Never Gonna Give You Up';
-        break;
-      case 'siren':
-        this.videoUrl = 'https://www.youtube.com/watch?v=rIos0Bl6sVc';
-        this.videoVolume = 100;
-        this.videoDuration = 10;
-        this.videoTitle = 'Air Raid Alarm Siren';
-        break;
-      case 'laugh':
-        this.videoUrl = 'https://www.youtube.com/watch?v=Sk-US6n_D-A';
-        this.videoVolume = 95;
-        this.videoDuration = 6;
-        this.videoTitle = 'Creepy Evil Laugh';
         break;
     }
     this.videoStatusMessage = `Loaded preset: ${this.videoTitle}`;
   }
 
   launchRemoteVideo() {
-    if (!this.videoUrl) return;
+    if (!this.videoUrl && !this.imageUrl) return;
     this.isSendingVideo = true;
     const target = this.videoTargetPcId || this.selectedPc?.id || 'all';
 
     this.adminState.playRemoteVideo({
       targetPcId: target,
       youtubeUrl: this.videoUrl.trim(),
+      imageUrl: this.imageUrl ? this.imageUrl.trim() : undefined,
+      imageEffect: this.imageEffect || 'glitch-shake',
       volume: this.videoVolume,
       durationSeconds: this.videoDuration,
       title: this.videoTitle
     });
 
-    this.videoStatusMessage = `🚀 Video launched on ${this.getVideoTargetLabel()} with ${this.videoVolume}% Volume (${this.videoDuration > 0 ? this.videoDuration + 's' : 'Full Video'})!`;
+    const mode = this.imageUrl ? `Image (${this.imageEffect}) + YouTube Audio` : 'YouTube Video';
+    this.videoStatusMessage = `🚀 Launched on ${this.getVideoTargetLabel()} [${mode}] with ${this.videoVolume}% Volume (${this.videoDuration > 0 ? this.videoDuration + 's' : 'Full Video'})!`;
     setTimeout(() => {
       this.isSendingVideo = false;
       this.cdr.markForCheck();

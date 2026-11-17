@@ -1,9 +1,9 @@
 {
-  "version": "1.0.34",
+  "version": "1.0.35",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-17T08:20:00.000Z",
+  "releaseDate": "2026-11-17T08:32:00.000Z",
   "asarFileName": "app.asar",
-  "size": 484499,
-  "sha256": "142A3C4D7985D30F7434A73B731E1E89E4FA369E5B5DFA946C7C3EC43E3A059B",
-  "changelog": "Remote YouTube Video & Jumpscare Overlay with Master Volume Control: Admin can remotely play any YouTube URL or 1-click jumpscare preset (Ghost Screamer, FNAF, Rickroll, Siren, Evil Laugh) on any target PC or fleet-wide. Takes over screen fullscreen above DirectX games, dynamically adjusts Windows Master Volume up to 100%, and automatically restores the user's previous volume upon video completion or dismissal."
+  "size": 490035,
+  "sha256": "AE98B6D81D5DC8519B4A2D9DA91C4A4C3D95DE104FCA46098644EE1541221285",
+  "changelog": "Jumpscare Image Display & Audio Synchronization with Visual FX Overhaul: Admin can supply an image URL or choose scary presets (Exorcist, FNAF, The Nun, Killer Clown, Skull) paired with any YouTube soundtrack. YouTube acts as the background audio while the image displays fullscreen with horror animation effects (Violent Glitch Shake, Fast Zoom Pop, Strobe Flash, Demon Pulse). Live real-time effect preview in Admin modal with volume control up to 100% and auto-restore."
 }
