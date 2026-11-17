@@ -430,37 +430,87 @@ export interface ClickRipple {
               </div>
             </div>
 
-            <!-- Jumpscare Screen Image & Visual Effect -->
+            <!-- Jumpscare Screen Image Drag & Drop / Upload Zone -->
             <div class="form-group" style="margin-bottom: 16px;">
               <label class="form-label">
-                <span>🖼️ Screen Display Image:</span>
+                <span>🖼️ Screen Display Image (Drag &amp; Drop):</span>
                 <span class="label-hint">(Mao kini ang mo-display sa screen sa customer PC)</span>
               </label>
-              <div class="input-with-clear">
+
+              <!-- Drag and Drop Target Box -->
+              <div
+                class="image-dropzone"
+                [ngClass]="{'drag-over': isDraggingImage, 'has-image': !!imageUrl}"
+                (dragover)="onImageDragOver($event)"
+                (dragleave)="onImageDragLeave($event)"
+                (drop)="onImageDrop($event)"
+                (click)="fileInput.click()"
+              >
+                <input
+                  #fileInput
+                  type="file"
+                  accept="image/*"
+                  style="display: none;"
+                  (change)="onImageFileSelected($event)"
+                />
+
+                <div *ngIf="!imageUrl" class="dropzone-empty-state">
+                  <span class="drop-icon">📥</span>
+                  <div class="drop-primary-text">I-drag &amp; drop ang imong Image diri</div>
+                  <div class="drop-sub-text">o i-click aron mamili og file gikan sa computer (PNG, JPG, GIF, WEBP)</div>
+                </div>
+
+                <div *ngIf="imageUrl" class="dropzone-loaded-state">
+                  <div class="loaded-chip">
+                    <span>📷 {{ imageFileName || 'Image Loaded' }}</span>
+                    <button
+                      type="button"
+                      class="btn-remove-loaded"
+                      (click)="removeLoadedImage($event)"
+                      title="Tangtanga ang image"
+                    >
+                      ✕ Tangtang
+                    </button>
+                  </div>
+                  <div class="drop-change-hint">I-click o i-drop og bag-ong picture aron ilisan</div>
+                </div>
+              </div>
+
+              <!-- Quick Presets & Paste URL Input Toggle -->
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                  <button type="button" class="preset-chip" (click)="setPresetImage('https://i.imgur.com/K7kZ9sK.jpeg', 'Exorcist Face')">👻 Exorcist</button>
+                  <button type="button" class="preset-chip" (click)="setPresetImage('https://i.imgur.com/8Qp5YgD.png', 'FNAF Screamer')">👹 FNAF</button>
+                  <button type="button" class="preset-chip" (click)="setPresetImage('https://i.imgur.com/QhXj5kE.jpeg', 'The Nun Face')">🧟 The Nun</button>
+                  <button type="button" class="preset-chip" (click)="setPresetImage('https://i.imgur.com/39WJjVd.jpeg', 'Killer Clown')">🤡 Clown</button>
+                  <button type="button" class="preset-chip" (click)="setPresetImage('https://i.imgur.com/0Fw3WfK.png', 'Skull Screamer')">💀 Skull</button>
+                  <button type="button" class="preset-chip" (click)="clearImage()" style="border-color:#64748b; color:#94a3b8;">🚫 None (Video Only)</button>
+                </div>
+                <button
+                  type="button"
+                  class="btn-text-toggle"
+                  (click)="showUrlInput = !showUrlInput"
+                >
+                  {{ showUrlInput ? 'Tago-a ang URL' : '🔗 Paste URL' }}
+                </button>
+              </div>
+
+              <!-- Optional Manual URL input -->
+              <div *ngIf="showUrlInput" class="input-with-clear" style="margin-top: 8px;">
                 <input
                   type="text"
                   class="form-control"
                   [(ngModel)]="imageUrl"
-                  placeholder="https://... (Link sa image, o pilia sa ubos nga presets)"
+                  placeholder="https://... (o i-paste ang direct image link)"
                 />
                 <button
                   *ngIf="imageUrl"
                   type="button"
                   class="btn-clear"
-                  (click)="imageUrl = ''"
+                  (click)="clearImage()"
                 >
                   ✕
                 </button>
-              </div>
-
-              <!-- Quick Image Presets -->
-              <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">
-                <button type="button" class="preset-chip" (click)="imageUrl = 'https://i.imgur.com/K7kZ9sK.jpeg'">👻 Exorcist</button>
-                <button type="button" class="preset-chip" (click)="imageUrl = 'https://i.imgur.com/8Qp5YgD.png'">👹 FNAF</button>
-                <button type="button" class="preset-chip" (click)="imageUrl = 'https://i.imgur.com/QhXj5kE.jpeg'">🧟 The Nun</button>
-                <button type="button" class="preset-chip" (click)="imageUrl = 'https://i.imgur.com/39WJjVd.jpeg'">🤡 Clown</button>
-                <button type="button" class="preset-chip" (click)="imageUrl = 'https://i.imgur.com/0Fw3WfK.png'">💀 Skull</button>
-                <button type="button" class="preset-chip" (click)="imageUrl = ''" style="border-color:#64748b; color:#94a3b8;">🚫 None (Video Only)</button>
               </div>
 
               <!-- Visual Effect Selector & Mini Preview -->
@@ -1619,6 +1669,98 @@ export interface ClickRipple {
       background: rgba(239, 68, 68, 0.35);
       color: #fff;
     }
+    .image-dropzone {
+      border: 2px dashed #475569;
+      background: #1e293b;
+      border-radius: 10px;
+      padding: 16px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+    .image-dropzone:hover {
+      border-color: #38bdf8;
+      background: rgba(30, 41, 59, 0.9);
+    }
+    .image-dropzone.drag-over {
+      border-color: #ef4444;
+      background: rgba(239, 68, 68, 0.15);
+      transform: scale(1.02);
+      box-shadow: 0 0 20px rgba(239, 68, 68, 0.35);
+    }
+    .image-dropzone.has-image {
+      border-color: #10b981;
+      background: rgba(16, 185, 129, 0.08);
+      padding: 10px 16px;
+    }
+    .dropzone-empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    .drop-icon {
+      font-size: 1.8rem;
+      margin-bottom: 2px;
+    }
+    .drop-primary-text {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+    .drop-sub-text {
+      font-size: 0.74rem;
+      color: #94a3b8;
+    }
+    .dropzone-loaded-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    .loaded-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #0f172a;
+      border: 1px solid #10b981;
+      color: #34d399;
+      font-size: 0.82rem;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 9999px;
+    }
+    .btn-remove-loaded {
+      background: rgba(239, 68, 68, 0.25);
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+      font-size: 0.72rem;
+      font-weight: 700;
+      border-radius: 9999px;
+      padding: 2px 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-remove-loaded:hover {
+      background: #ef4444;
+      color: #fff;
+    }
+    .drop-change-hint {
+      font-size: 0.72rem;
+      color: #64748b;
+    }
+    .btn-text-toggle {
+      background: none;
+      border: none;
+      color: #38bdf8;
+      font-size: 0.78rem;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .btn-text-toggle:hover {
+      color: #7dd3fc;
+    }
     .preview-box {
       width: 100%;
       height: 130px;
@@ -1767,6 +1909,9 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   videoUrl = 'https://www.youtube.com/watch?v=0k_P_b_lJ5A';
   imageUrl = 'https://i.imgur.com/K7kZ9sK.jpeg'; // Default scary screamer face
   imageEffect = 'glitch-shake'; // 'glitch-shake' | 'zoom-in' | 'strobe-flash' | 'pulse-demon' | 'none'
+  isDraggingImage = false;
+  imageFileName = 'Exorcist Face';
+  showUrlInput = false;
   videoVolume = 100;
   videoDuration = 5;
   videoTitle = 'Jumpscare';
@@ -2885,5 +3030,103 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     this.adminState.stopRemoteVideo(target);
     this.videoStatusMessage = `⏹️ Stopped video on ${this.getVideoTargetLabel()}. Normal volume restored.`;
     this.cdr.markForCheck();
+  }
+
+  // Drag and Drop & Image Upload Handlers
+  onImageDragOver(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.isDraggingImage = true;
+  }
+
+  onImageDragLeave(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.isDraggingImage = false;
+  }
+
+  onImageDrop(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.isDraggingImage = false;
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      this.processImageFile(files[0]);
+    }
+  }
+
+  onImageFileSelected(e: Event) {
+    const input = e.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      this.processImageFile(input.files[0]);
+    }
+  }
+
+  private processImageFile(file: File) {
+    if (!file.type.startsWith('image/')) {
+      this.videoStatusMessage = '⚠️ Palihog pagpili og image file (PNG, JPG, WEBP, GIF).';
+      this.cdr.markForCheck();
+      return;
+    }
+    this.imageFileName = file.name;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      if (!dataUrl) return;
+
+      // Scale down if larger than 1.5MB to ensure fast socket delivery across LAN
+      if (file.size > 1.5 * 1024 * 1024) {
+        this.scaleDownImage(dataUrl, (scaled) => {
+          this.imageUrl = scaled;
+          this.videoStatusMessage = `✅ Na-load ang image: "${file.name}"`;
+          this.cdr.markForCheck();
+        });
+      } else {
+        this.imageUrl = dataUrl;
+        this.videoStatusMessage = `✅ Na-load ang image: "${file.name}"`;
+        this.cdr.markForCheck();
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  private scaleDownImage(dataUrl: string, callback: (result: string) => void) {
+    const img = new Image();
+    img.onload = () => {
+      const maxDim = 1280;
+      let w = img.width;
+      let h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) {
+          h = Math.round((h * maxDim) / w);
+          w = maxDim;
+        } else {
+          w = Math.round((w * maxDim) / h);
+          h = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(img, 0, 0, w, h);
+      callback(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.src = dataUrl;
+  }
+
+  removeLoadedImage(e: Event) {
+    e.stopPropagation();
+    this.clearImage();
+  }
+
+  setPresetImage(url: string, name: string) {
+    this.imageUrl = url;
+    this.imageFileName = name;
+  }
+
+  clearImage() {
+    this.imageUrl = '';
+    this.imageFileName = '';
   }
 }
