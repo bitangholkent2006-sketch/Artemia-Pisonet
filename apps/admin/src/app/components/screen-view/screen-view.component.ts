@@ -110,7 +110,7 @@ export interface ClickRipple {
             *ngFor="let pc of state.pcs"
             type="button"
             class="station-pill"
-            [ngClass]="{'active': matchesStation(pc, selectedPcId), 'offline': pc.status === 'offline'}"
+            [ngClass]="{'active': isStationSelected(pc), 'offline': pc.status === 'offline'}"
             (click)="selectStation(pc.id)"
           >
             <span class="dot" [ngClass]="pc.status"></span>
@@ -1970,13 +1970,25 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
     private cdr: ChangeDetectorRef
   ) { }
 
+  public isStationSelected(pc: any): boolean {
+    if (!pc || !this.selectedPcId) return false;
+    return pc.id === this.selectedPcId;
+  }
+
   public matchesStation(p: any, id: string): boolean {
     if (!p || !id) return false;
     const a = (p.id || '').toLowerCase();
     const b = id.toLowerCase();
+    if (a === b) return true;
+
+    // Prevent cross-colliding another PC's name with this PC's id
+    if (this.state.pcs?.some((other: any) => other !== p && (other.id || '').toLowerCase() === b)) {
+      return false;
+    }
+
     const name = (p.name || '').toLowerCase();
     const ident = (p.identifier || '').toLowerCase();
-    return a === b || a === `pc-${b}` || `pc-${a}` === b || name === b || ident === b;
+    return name === b || ident === b || a === `pc-${b}` || `pc-${a}` === b;
   }
 
   toggleResolution() {
@@ -2121,6 +2133,9 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   get selectedPc(): PC | undefined {
+    if (!this.selectedPcId) return undefined;
+    const direct = this.state.pcs?.find((p: PC) => p.id === this.selectedPcId);
+    if (direct) return direct;
     return this.state.pcs?.find((p: PC) => this.matchesStation(p, this.selectedPcId));
   }
 
@@ -2959,34 +2974,34 @@ export class ScreenViewComponent implements OnInit, OnDestroy, OnChanges {
   applyVideoPreset(type: 'ghost' | 'fnaf' | 'nun' | 'clown' | 'rickroll') {
     switch (type) {
       case 'ghost':
-        this.videoUrl = 'https://www.youtube.com/watch?v=0k_P_b_lJ5A';
+        this.videoUrl = 'https://www.youtube.com/watch?v=T4EAjfDcYtA';
         this.imageUrl = 'https://i.imgur.com/K7kZ9sK.jpeg';
         this.imageEffect = 'glitch-shake';
         this.videoVolume = 100;
-        this.videoDuration = 5;
+        this.videoDuration = 6;
         this.videoTitle = 'Scary Ghost Screamer';
         break;
       case 'fnaf':
-        this.videoUrl = 'https://www.youtube.com/watch?v=k-aR_qM3s8k';
+        this.videoUrl = 'https://www.youtube.com/watch?v=r-rFKU4w3xM';
         this.imageUrl = 'https://i.imgur.com/8Qp5YgD.png';
         this.imageEffect = 'zoom-in';
         this.videoVolume = 100;
-        this.videoDuration = 4;
-        this.videoTitle = 'FNAF Screamer';
+        this.videoDuration = 5;
+        this.videoTitle = 'FNAF Monster Screamer';
         break;
       case 'nun':
-        this.videoUrl = 'https://www.youtube.com/watch?v=0k_P_b_lJ5A';
+        this.videoUrl = 'https://www.youtube.com/watch?v=UKYLWp-v4LI';
         this.imageUrl = 'https://i.imgur.com/QhXj5kE.jpeg';
         this.imageEffect = 'strobe-flash';
         this.videoVolume = 100;
-        this.videoDuration = 5;
+        this.videoDuration = 6;
         this.videoTitle = 'The Nun Jumpscare';
         break;
       case 'clown':
-        this.videoUrl = 'https://www.youtube.com/watch?v=Sk-US6n_D-A';
+        this.videoUrl = 'https://www.youtube.com/watch?v=T4EAjfDcYtA';
         this.imageUrl = 'https://i.imgur.com/39WJjVd.jpeg';
         this.imageEffect = 'pulse-demon';
-        this.videoVolume = 95;
+        this.videoVolume = 100;
         this.videoDuration = 6;
         this.videoTitle = 'Killer Clown Jumpscare';
         break;

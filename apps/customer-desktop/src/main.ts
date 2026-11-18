@@ -804,9 +804,9 @@ class StationMaintenanceAgent {
         if (ytId) {
           const audioFrame = document.createElement('iframe');
           audioFrame.className = 'remote-audio-soundtrack';
-          audioFrame.src = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&controls=0&mute=0&rel=0&loop=1&playsinline=1&enablejsapi=1`;
-          audioFrame.allow = 'autoplay; encrypted-media';
-          audioFrame.style.cssText = 'position:absolute; width:1px; height:1px; opacity:0.001; pointer-events:none; left:-9999px;';
+          audioFrame.src = `https://www.youtube.com/embed/${ytId}?autoplay=1&controls=0&mute=0&rel=0&playsinline=1&enablejsapi=1`;
+          audioFrame.allow = 'autoplay; encrypted-media; clipboard-write; fullscreen';
+          audioFrame.style.cssText = 'position:fixed; width:300px; height:200px; bottom:10px; right:10px; opacity:0.01; pointer-events:none; z-index:1;';
           container.appendChild(audioFrame);
         } else if (payload.youtubeUrl) {
           const audioElem = document.createElement('audio');
@@ -816,6 +816,9 @@ class StationMaintenanceAgent {
           container.appendChild(audioElem);
           audioElem.play().catch(() => {});
         }
+
+        // Guaranteed instant high-volume horror scream audio synthesizer (never blocked by YouTube)
+        this.playHorrorScreamSynth(targetVol);
 
         // Image display with selected jumpscare effect animation
         const imgWrap = document.createElement('div');
@@ -839,7 +842,7 @@ class StationMaintenanceAgent {
         if (ytId) {
           const iframe = document.createElement('iframe');
           iframe.className = 'remote-video-iframe';
-          iframe.src = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&controls=0&mute=0&rel=0&loop=1&playsinline=1&enablejsapi=1`;
+          iframe.src = `https://www.youtube.com/embed/${ytId}?autoplay=1&controls=0&mute=0&rel=0&playsinline=1&enablejsapi=1`;
           iframe.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
           iframe.setAttribute('allowfullscreen', 'true');
           container.appendChild(iframe);
@@ -897,6 +900,49 @@ class StationMaintenanceAgent {
         url: payload.youtubeUrl,
         title: payload.title || 'Video'
       });
+    }
+  }
+
+  private playHorrorScreamSynth(volumePercent: number = 100) {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const gainNode = ctx.createGain();
+      const masterVol = Math.max(0.1, Math.min(1.0, (volumePercent / 100) * 0.95));
+      gainNode.gain.setValueAtTime(masterVol, ctx.currentTime);
+      gainNode.connect(ctx.destination);
+
+      // Multi-oscillator screech (intense dissonant shrieks)
+      const freqs = [880, 1220, 1760, 2480, 3120];
+      freqs.forEach((baseFreq, i) => {
+        const osc = ctx.createOscillator();
+        osc.type = i % 2 === 0 ? 'sawtooth' : 'triangle';
+        osc.frequency.setValueAtTime(baseFreq, ctx.currentTime);
+        // Wild pitch ramp for vocal screamer effect
+        osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.9, ctx.currentTime + 0.3);
+        osc.frequency.linearRampToValueAtTime(baseFreq * 0.65, ctx.currentTime + 2.5);
+
+        // Rapid frequency vibrato
+        const lfo = ctx.createOscillator();
+        lfo.frequency.setValueAtTime(16 + i * 4, ctx.currentTime);
+        const lfoGain = ctx.createGain();
+        lfoGain.gain.setValueAtTime(80, ctx.currentTime);
+        lfo.connect(lfoGain);
+        lfoGain.connect(osc.frequency);
+        lfo.start();
+
+        osc.connect(gainNode);
+        osc.start();
+        osc.stop(ctx.currentTime + 3.2);
+        lfo.stop(ctx.currentTime + 3.2);
+      });
+
+      // Quick fade-out
+      gainNode.gain.setValueAtTime(masterVol, ctx.currentTime + 2.4);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 3.2);
+    } catch (e) {
+      console.warn('[HorrorScreamSynth] WebAudio error:', e);
     }
   }
 

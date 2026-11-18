@@ -1,9 +1,9 @@
 {
-  "version": "1.0.36",
+  "version": "1.0.37",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-18T03:00:00.000Z",
+  "releaseDate": "2026-11-18T03:52:00.000Z",
   "asarFileName": "app.asar",
-  "size": 489995,
-  "sha256": "96D2B4AC2F9CCE4B3E39B6E38C4F65BC3B731CA9274EDEC8AF665A4BE4B582A8",
-  "changelog": "Cloud Fleet Transition to Permanent Always-On Dedicated Backend: Migrated backend endpoint from artemia-pisonet-backend to artemia-pisonet.onrender.com alongside Vercel permanent admin frontend."
+  "size": 490986,
+  "sha256": "99215AD9D982C47BB0BF9B9823AD763DC95644A365A3A0D34524661D8CAE2E8A",
+  "changelog": "Fix Screen Monitor double-station selection, update active Jumpscare audio links, and embed WebAudio screech synthesizer."
 }
