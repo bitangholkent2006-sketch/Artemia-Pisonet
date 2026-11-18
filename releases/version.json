@@ -1,9 +1,9 @@
 {
-  "version": "1.0.35",
+  "version": "1.0.36",
   "minRequiredVersion": "1.0.0",
-  "releaseDate": "2026-11-17T08:32:00.000Z",
+  "releaseDate": "2026-11-18T03:00:00.000Z",
   "asarFileName": "app.asar",
-  "size": 490035,
-  "sha256": "AE98B6D81D5DC8519B4A2D9DA91C4A4C3D95DE104FCA46098644EE1541221285",
-  "changelog": "Jumpscare Image Display & Audio Synchronization with Visual FX Overhaul: Admin can supply an image URL or choose scary presets (Exorcist, FNAF, The Nun, Killer Clown, Skull) paired with any YouTube soundtrack. YouTube acts as the background audio while the image displays fullscreen with horror animation effects (Violent Glitch Shake, Fast Zoom Pop, Strobe Flash, Demon Pulse). Live real-time effect preview in Admin modal with volume control up to 100% and auto-restore."
+  "size": 489995,
+  "sha256": "96D2B4AC2F9CCE4B3E39B6E38C4F65BC3B731CA9274EDEC8AF665A4BE4B582A8",
+  "changelog": "Cloud Fleet Transition to Permanent Always-On Dedicated Backend: Migrated backend endpoint from artemia-pisonet-backend to artemia-pisonet.onrender.com alongside Vercel permanent admin frontend."
 }

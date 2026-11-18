@@ -635,7 +635,7 @@ maintenanceRoutes.post('/launcher-wallpaper', requireStaff, async (c) => {
   }
 
   const ts = Date.now();
-  const host = c.req.header('host') || 'artemia-pisonet-backend.onrender.com';
+  const host = c.req.header('host') || 'artemia-pisonet.onrender.com';
   const protocol = host.includes('localhost') || host.startsWith('127.') ? 'http' : 'https';
   const publicWallpaperUrl = `${protocol}://${host}/api/v1/maintenance/wallpaper?v=${ts}`;
 
@@ -796,7 +796,7 @@ maintenanceRoutes.post('/push-client-update', requireStaff, async (c) => {
   const sizeBytes = asarInfo.sizeBytes || 212008;
   const version = releaseInfo.version;
 
-  const host = c.req.header('host') || 'artemia-pisonet-backend.onrender.com';
+  const host = c.req.header('host') || 'artemia-pisonet.onrender.com';
   const protocol = host.includes('localhost') ? 'http' : 'https';
   const downloadUrl = `${protocol}://${host}/download/client/app.asar`;
 

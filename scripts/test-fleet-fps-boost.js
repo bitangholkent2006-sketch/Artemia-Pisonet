@@ -1,6 +1,6 @@
 const io = require('socket.io-client');
 
-const socket = io('https://artemia-pisonet-backend.onrender.com', { transports: ['websocket'] });
+const socket = io('https://artemia-pisonet.onrender.com', { transports: ['websocket'] });
 
 const results = [];
 

@@ -47,7 +47,7 @@ export class ApiClientService {
     // Configurable via localStorage or environment, fallback to Render cloud backend
     const stored = localStorage.getItem('pisonet_backend_url');
     if (stored) return stored;
-    return 'https://artemia-pisonet-backend.onrender.com';
+    return 'https://artemia-pisonet.onrender.com';
   }
 
   public setBackendUrl(url: string): void {

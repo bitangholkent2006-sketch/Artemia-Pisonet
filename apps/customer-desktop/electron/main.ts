@@ -152,7 +152,7 @@ function saveLocalLauncherConfigToDisk(cfg: LocalLauncherConfig): LocalLauncherC
 }
 
 let runtimeStationInfo = {
-  apiBase: 'https://artemia-pisonet-backend.onrender.com',
+  apiBase: 'https://artemia-pisonet.onrender.com',
   pcId: '',
   hardwareId: '',
   macAddress: ''
@@ -161,7 +161,7 @@ let runtimeStationInfo = {
 function postJsonKeepalive(endpointPath: string, payload: Record<string, any>): Promise<void> {
   return new Promise((resolve) => {
     try {
-      const targetUrl = new URL(endpointPath, runtimeStationInfo.apiBase || 'https://artemia-pisonet-backend.onrender.com');
+      const targetUrl = new URL(endpointPath, runtimeStationInfo.apiBase || 'https://artemia-pisonet.onrender.com');
       const bodyStr = JSON.stringify(payload);
       const client = targetUrl.protocol === 'https:' ? https : http;
       const req = client.request(
@@ -1420,7 +1420,7 @@ async function verifyOperatorPasswordOnlineOrCached(password: string): Promise<{
   const pwd = String(password || '');
   if (!pwd.trim()) return { success: false, error: 'Palihog isulod ang Operator / Admin Password.' };
 
-  const base = runtimeStationInfo.apiBase || 'https://artemia-pisonet-backend.onrender.com';
+  const base = runtimeStationInfo.apiBase || 'https://artemia-pisonet.onrender.com';
   try {
     const targetUrl = new URL('/api/v1/auth/verify-operator', base);
     const bodyStr = JSON.stringify({ password: pwd });

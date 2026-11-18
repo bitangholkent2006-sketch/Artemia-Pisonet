@@ -82,11 +82,11 @@ function getApiBaseUrl(): string {
   if (saved) return saved.trim().replace(/\/$/, '');
   if (typeof window !== 'undefined' && window.location.origin && !window.location.origin.startsWith('file://')) {
     if (window.location.port === '5173' || window.location.port === '4200') {
-      return 'https://artemia-pisonet-backend.onrender.com';
+      return 'https://artemia-pisonet.onrender.com';
     }
     return window.location.origin;
   }
-  return 'https://artemia-pisonet-backend.onrender.com';
+  return 'https://artemia-pisonet.onrender.com';
 }
 
 class StationMaintenanceAgent {

@@ -227,7 +227,7 @@ function scheduleAutoOtaIfOutdated(authSocket: AuthenticatedSocket, pc: { id: st
     const effectiveVer = liveSocketVersion || normalizedClientVer;
     if (effectiveVer && compareSemver(effectiveVer, latestNow) >= 0) return;
 
-    const downloadUrl = 'https://artemia-pisonet-backend.onrender.com/download/client/app.asar';
+    const downloadUrl = 'https://artemia-pisonet.onrender.com/download/client/app.asar';
     console.log(`[Auto-OTA] Station ${pc.name} (${pc.id}) running version "${effectiveVer || 'legacy-v1.0.0'}". Pushing v${latestNow}...`);
 
     // Agents >= 1.0.12 use WSH GUI-subsystem updater (avoids Windows DETACHED_PROCESS tasklist|find stall).

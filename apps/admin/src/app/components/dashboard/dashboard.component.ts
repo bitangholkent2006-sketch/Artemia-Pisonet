@@ -83,7 +83,7 @@ import { PC, PCStatus } from '@pisonet/shared';
         <div class="bulk-buttons">
           <a
             class="btn btn-sm btn-primary"
-            href="https://artemia-pisonet-backend.onrender.com/download/setup-pc.bat"
+            href="https://artemia-pisonet.onrender.com/download/setup-pc.bat"
             target="_blank"
             rel="noopener noreferrer"
             title="1-Click Auto-Setup & Repair script para sa bag-o o offline nga PC (e.g. PC-06)"

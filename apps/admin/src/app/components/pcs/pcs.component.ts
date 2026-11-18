@@ -51,7 +51,7 @@ import { PisonetAppState, PC, PCStatus } from '@pisonet/shared';
           </div>
         </div>
         <a
-          href="https://artemia-pisonet-backend.onrender.com/download/setup-pc.bat"
+          href="https://artemia-pisonet.onrender.com/download/setup-pc.bat"
           target="_blank"
           rel="noopener noreferrer"
           class="btn btn-sm btn-primary"

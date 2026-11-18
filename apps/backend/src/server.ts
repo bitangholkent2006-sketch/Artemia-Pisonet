@@ -90,7 +90,7 @@ app.get('/api/v1/client-app/update-check', (c) => {
   const changelog = releaseInfo.changelog;
 
   const updateAvailable = compareSemver(currentVersion, latestVersion) < 0;
-  const host = c.req.header('host') || 'artemia-pisonet-backend.onrender.com';
+  const host = c.req.header('host') || 'artemia-pisonet.onrender.com';
   const protocol = host.includes('localhost') ? 'http' : 'https';
 
   return c.json({
@@ -115,7 +115,7 @@ app.get('/download/client/app.asar', (c) => {
 
 // 1-Click Windows Auto-Installer & Repair Script (Installs/updates any new or offline PC to latest v1.0.8+ & sets auto-start)
 app.get('/download/setup-pc.bat', (c) => {
-  const host = c.req.header('host') || 'artemia-pisonet-backend.onrender.com';
+  const host = c.req.header('host') || 'artemia-pisonet.onrender.com';
   const protocol = host.includes('localhost') ? 'http' : 'https';
   const baseUrl = `${protocol}://${host}`;
 
