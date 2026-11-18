@@ -1,0 +1,10 @@
+{
+  "buildCommand": "cd ../.. && npm run build:shared && cd apps/admin && npm run build",
+  "outputDirectory": "dist/admin/browser",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

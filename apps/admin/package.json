@@ -2,6 +2,7 @@
   "name": "admin",
   "version": "0.0.0",
   "scripts": {
+    "prebuild": "node -e \"try { require('child_process').execSync('npm run build:shared', { cwd: require('path').resolve(__dirname, '../..'), stdio: 'inherit' }); } catch(e) {}\"",
     "ng": "ng",
     "start": "ng serve",
     "build": "ng build",
