@@ -47,7 +47,7 @@ export class ApiClientService {
   private sanitizeStoredBackendUrl(): void {
     try {
       const stored = localStorage.getItem('pisonet_backend_url');
-      if (stored && (stored.includes('artemia-pisonet-backend') || !stored.startsWith('http'))) {
+      if (stored && !stored.startsWith('http')) {
         localStorage.removeItem('pisonet_backend_url');
       }
     } catch {}
@@ -56,18 +56,14 @@ export class ApiClientService {
   public get baseUrl(): string {
     // If the admin is served from the backend domain itself, use current origin
     if (typeof window !== 'undefined' && window.location && window.location.origin) {
-      if (window.location.origin.includes('artemia-pisonet.onrender.com')) {
+      if (window.location.origin.includes('onrender.com')) {
         return window.location.origin;
       }
     }
 
     const stored = localStorage.getItem('pisonet_backend_url');
-    if (stored && !stored.includes('artemia-pisonet-backend') && (stored.startsWith('http://') || stored.startsWith('https://'))) {
+    if (stored && (stored.startsWith('http://') || stored.startsWith('https://'))) {
       return stored.replace(/\/+$/, '');
-    }
-
-    if (stored) {
-      try { localStorage.removeItem('pisonet_backend_url'); } catch {}
     }
 
     return 'https://artemia-pisonet.onrender.com';
@@ -160,13 +156,18 @@ export class ApiClientService {
       try {
         res = await fetch(url, { ...options, headers });
       } catch (networkErr: any) {
-        // If baseUrl failed and was not already the primary cloud backend, fallback immediately
-        const primaryFallback = 'https://artemia-pisonet.onrender.com';
-        if (this.baseUrl !== primaryFallback) {
-          console.warn(`[ApiClient] Request to ${url} failed with network error (${networkErr?.message}). Retrying via fallback: ${primaryFallback}...`);
-          try { localStorage.removeItem('pisonet_backend_url'); } catch {}
-          url = `${primaryFallback}${path}`;
-          res = await fetch(url, { ...options, headers });
+        // Automatically try alternate onrender endpoint
+        const alt = url.includes('artemia-pisonet-backend')
+          ? url.replace('artemia-pisonet-backend.onrender.com', 'artemia-pisonet.onrender.com')
+          : url.replace('artemia-pisonet.onrender.com', 'artemia-pisonet-backend.onrender.com');
+
+        if (alt !== url) {
+          console.warn(`[ApiClient] Request to ${url} failed. Retrying alternate endpoint: ${alt}...`);
+          try {
+            res = await fetch(alt, { ...options, headers });
+          } catch {
+            throw networkErr;
+          }
         } else {
           throw networkErr;
         }
