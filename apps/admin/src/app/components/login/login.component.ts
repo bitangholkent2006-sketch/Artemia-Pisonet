@@ -365,7 +365,12 @@ export class LoginComponent {
       }
     } catch (err: any) {
       this.isLoading = false;
-      this.errorMessage = err.message || 'Connection error. Ensure backend is running.';
+      const raw = err?.message || '';
+      if (raw.toLowerCase().includes('failed to fetch') || raw.toLowerCase().includes('networkerror')) {
+        this.errorMessage = 'Network connection error. Palihug i-refresh (Ctrl+F5) ang page aron mo-connect sa bag-ong server.';
+      } else {
+        this.errorMessage = raw || 'Connection error. Ensure backend is running.';
+      }
     }
   }
 }

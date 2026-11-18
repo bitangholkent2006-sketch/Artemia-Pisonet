@@ -242,6 +242,67 @@ app.get('/terminal/*', (c) => {
   return c.text('Terminal interface assets not found.', 404);
 });
 
+// Admin Dashboard UI Static Serving & SPA Routing
+const possibleAdminDirs = [
+  path.resolve(process.cwd(), 'apps/admin/dist/admin/browser'),
+  path.resolve(process.cwd(), 'apps/admin/dist/admin'),
+  path.resolve(process.cwd(), 'dist/admin/browser'),
+  path.resolve(process.cwd(), 'admin/browser'),
+  path.resolve(__dirname, '../../admin/dist/admin/browser'),
+  path.resolve(__dirname, '../../../apps/admin/dist/admin/browser')
+];
+
+function serveStaticAdminFile(dirs: string[], targetFile: string, c: any) {
+  for (const dir of dirs) {
+    const fullPath = path.resolve(dir, targetFile);
+    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+      if (fullPath.endsWith('.html')) c.header('Content-Type', 'text/html; charset=utf-8');
+      else if (fullPath.endsWith('.css')) c.header('Content-Type', 'text/css; charset=utf-8');
+      else if (fullPath.endsWith('.js')) c.header('Content-Type', 'application/javascript; charset=utf-8');
+      else if (fullPath.endsWith('.svg')) c.header('Content-Type', 'image/svg+xml');
+      else if (fullPath.endsWith('.json')) c.header('Content-Type', 'application/json');
+      else if (fullPath.endsWith('.ico')) c.header('Content-Type', 'image/x-icon');
+      else if (fullPath.endsWith('.txt')) c.header('Content-Type', 'text/plain; charset=utf-8');
+      return c.body(fs.readFileSync(fullPath));
+    }
+  }
+  return null;
+}
+
+app.get('/admin', (c) => c.redirect('/'));
+
+// Catch-all route to serve the Admin SPA or client-side assets directly from the backend server
+app.get('/*', async (c, next) => {
+  const reqPath = c.req.path.replace(/^\/+/, '');
+  // Skip API, health, terminal, download, socket.io routes
+  if (
+    reqPath.startsWith('api') ||
+    reqPath.startsWith('health') ||
+    reqPath.startsWith('terminal') ||
+    reqPath.startsWith('download') ||
+    reqPath.startsWith('socket.io')
+  ) {
+    return next();
+  }
+
+  // 1. Try static asset match (e.g., main-*.js, styles-*.css, favicon.ico)
+  if (reqPath !== '') {
+    const served = serveStaticAdminFile(possibleAdminDirs, reqPath, c);
+    if (served) return served;
+  }
+
+  // 2. SPA fallback to index.html for root (/) and all front-end sub-routes (e.g. /login, /dashboard)
+  for (const dir of possibleAdminDirs) {
+    const indexPath = path.resolve(dir, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      c.header('Content-Type', 'text/html; charset=utf-8');
+      return c.body(fs.readFileSync(indexPath));
+    }
+  }
+
+  return next();
+});
+
 
 
 // 404 handler

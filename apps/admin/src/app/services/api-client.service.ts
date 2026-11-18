@@ -40,13 +40,36 @@ export class ApiClientService {
   private eventListeners = new Map<string, Set<(data: any) => void>>();
 
   constructor() {
+    this.sanitizeStoredBackendUrl();
     this.initSocketConnection();
   }
 
+  private sanitizeStoredBackendUrl(): void {
+    try {
+      const stored = localStorage.getItem('pisonet_backend_url');
+      if (stored && (stored.includes('artemia-pisonet-backend') || !stored.startsWith('http'))) {
+        localStorage.removeItem('pisonet_backend_url');
+      }
+    } catch {}
+  }
+
   public get baseUrl(): string {
-    // Configurable via localStorage or environment, fallback to Render cloud backend
+    // If the admin is served from the backend domain itself, use current origin
+    if (typeof window !== 'undefined' && window.location && window.location.origin) {
+      if (window.location.origin.includes('artemia-pisonet.onrender.com')) {
+        return window.location.origin;
+      }
+    }
+
     const stored = localStorage.getItem('pisonet_backend_url');
-    if (stored) return stored;
+    if (stored && !stored.includes('artemia-pisonet-backend') && (stored.startsWith('http://') || stored.startsWith('https://'))) {
+      return stored.replace(/\/+$/, '');
+    }
+
+    if (stored) {
+      try { localStorage.removeItem('pisonet_backend_url'); } catch {}
+    }
+
     return 'https://artemia-pisonet.onrender.com';
   }
 
@@ -122,7 +145,7 @@ export class ApiClientService {
   // REST API Methods
   // -------------------------------------------------------------
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
+    let url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string>)
@@ -133,7 +156,22 @@ export class ApiClientService {
     }
 
     try {
-      const res = await fetch(url, { ...options, headers });
+      let res: Response;
+      try {
+        res = await fetch(url, { ...options, headers });
+      } catch (networkErr: any) {
+        // If baseUrl failed and was not already the primary cloud backend, fallback immediately
+        const primaryFallback = 'https://artemia-pisonet.onrender.com';
+        if (this.baseUrl !== primaryFallback) {
+          console.warn(`[ApiClient] Request to ${url} failed with network error (${networkErr?.message}). Retrying via fallback: ${primaryFallback}...`);
+          try { localStorage.removeItem('pisonet_backend_url'); } catch {}
+          url = `${primaryFallback}${path}`;
+          res = await fetch(url, { ...options, headers });
+        } else {
+          throw networkErr;
+        }
+      }
+
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 401 && !path.includes('/auth/login')) {
